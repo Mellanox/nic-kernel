@@ -2067,7 +2067,59 @@ unlock:
 	return found;
 }
 
+static bool sched_cpus_spread_by_distance(int node, u16 *cpus, int ncpus)
+{
+	cpumask_var_t cpumask;
+	int first, i;
+
+	if (!zalloc_cpumask_var(&cpumask, GFP_KERNEL))
+		return false;
+
+	cpumask_copy(cpumask, cpu_online_mask);
+
+	if (node == NUMA_NO_NODE)
+		first = cpumask_first(cpu_online_mask);
+	else
+		first = cpumask_first(cpumask_of_node(node));
+
+	for (i = 0; i < ncpus; i++) {
+		int cpu;
+
+		cpu = sched_numa_find_closest(cpumask, first);
+		if (cpu >= nr_cpu_ids) {
+			free_cpumask_var(cpumask);
+			return false;
+		}
+		cpus[i] = cpu;
+		__cpumask_clear_cpu(cpu, cpumask);
+	}
+
+	free_cpumask_var(cpumask);
+	return true;
+}
+#else
+static bool sched_cpus_spread_by_distance(int node, u16 *cpus, int ncpus)
+{
+	return false;
+}
 #endif /* CONFIG_NUMA */
+
+static void sched_cpus_by_local_spread(int node, u16 *cpus, int ncpus)
+{
+	int i;
+
+	for (i = 0; i < ncpus; i++)
+		cpus[i] = cpumask_local_spread(i, node);
+}
+
+void sched_cpus_set_spread(int node, u16 *cpus, int ncpus)
+{
+	bool success = sched_cpus_spread_by_distance(node, cpus, ncpus);
+
+	if (!success)
+		sched_cpus_by_local_spread(node, cpus, ncpus);
+}
+EXPORT_SYMBOL_GPL(sched_cpus_set_spread);
 
 static int __sdt_alloc(const struct cpumask *cpu_map)
 {

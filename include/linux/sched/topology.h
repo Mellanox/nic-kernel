@@ -211,6 +211,7 @@ extern void set_sched_topology(struct sched_domain_topology_level *tl);
 # define SD_INIT_NAME(type)
 #endif
 
+void sched_cpus_set_spread(int node, u16 *cpus, int ncpus);
 #else /* CONFIG_SMP */
 
 struct sched_domain_attr;
@@ -232,6 +233,10 @@ static inline bool cpus_share_cache(int this_cpu, int that_cpu)
 	return true;
 }
 
+static inline void sched_cpus_set_spread(int node, u16 *cpus, int ncpus)
+{
+	memset(cpus, 0, ncpus * sizeof(*cpus));
+}
 #endif	/* !CONFIG_SMP */
 
 #if defined(CONFIG_ENERGY_MODEL) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
