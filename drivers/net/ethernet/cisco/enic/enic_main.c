@@ -44,6 +44,7 @@
 #include <linux/cpu_rmap.h>
 #endif
 #include <linux/crash_dump.h>
+#include <linux/sched/topology.h>
 #include <net/busy_poll.h>
 #include <net/vxlan.h>
 
@@ -114,8 +115,14 @@ static struct enic_intr_mod_range mod_range[ENIC_MAX_LINK_SPEEDS] = {
 static void enic_init_affinity_hint(struct enic *enic)
 {
 	int numa_node = dev_to_node(&enic->pdev->dev);
+	u16 *cpus;
 	int i;
 
+	cpus = kcalloc(enic->intr_count, sizeof(*cpus), GFP_KERNEL);
+	if (!cpus)
+		return;
+
+	sched_cpus_set_spread(numa_node, cpus, enic->intr_count);
 	for (i = 0; i < enic->intr_count; i++) {
 		if (enic_is_err_intr(enic, i) || enic_is_notify_intr(enic, i) ||
 		    (cpumask_available(enic->msix[i].affinity_mask) &&
@@ -123,9 +130,10 @@ static void enic_init_affinity_hint(struct enic *enic)
 			continue;
 		if (zalloc_cpumask_var(&enic->msix[i].affinity_mask,
 				       GFP_KERNEL))
-			cpumask_set_cpu(cpumask_local_spread(i, numa_node),
+			cpumask_set_cpu(cpus[i],
 					enic->msix[i].affinity_mask);
 	}
+	kfree(cpus);
 }
 
 static void enic_free_affinity_hint(struct enic *enic)
