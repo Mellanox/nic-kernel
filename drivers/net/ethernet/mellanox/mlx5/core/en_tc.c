@@ -1822,10 +1822,6 @@ mlx5e_tc_add_fdb_flow(struct mlx5e_priv *priv,
 	if (err)
 		goto err_out;
 
-	err = mlx5_eswitch_add_vlan_action(esw, attr);
-	if (err)
-		goto err_out;
-
 	if (attr->action & MLX5_FLOW_CONTEXT_ACTION_MOD_HDR) {
 		if (vf_tun) {
 			err = mlx5e_tc_add_flow_mod_hdr(priv, flow, attr);
@@ -1903,8 +1899,6 @@ static void mlx5e_tc_del_fdb_flow(struct mlx5e_priv *priv,
 
 	if (mlx5_flow_has_geneve_opt(flow))
 		mlx5_geneve_tlv_option_del(priv->mdev->geneve);
-
-	mlx5_eswitch_del_vlan_action(esw, attr);
 
 	if (flow->decap_route)
 		mlx5e_detach_decap_route(priv, flow);
