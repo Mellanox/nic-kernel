@@ -459,32 +459,24 @@ out:
 /* Runs in NAPI.
  * Function elevates the refcount, unless no work is queued.
  */
-static bool resync_queue_get_psv(struct sock *sk)
+static void resync_queue_get_psv(struct mlx5e_ktls_offload_context_rx *priv_rx)
 {
-	struct mlx5e_ktls_offload_context_rx *priv_rx;
 	struct mlx5e_ktls_rx_resync_ctx *resync;
-
-	priv_rx = mlx5e_get_ktls_rx_priv_ctx(tls_get_ctx(sk));
-	if (unlikely(!priv_rx))
-		return false;
-
-	if (unlikely(test_bit(MLX5E_PRIV_RX_FLAG_DELETING, priv_rx->flags)))
-		return false;
 
 	resync = &priv_rx->resync;
 	mlx5e_ktls_priv_rx_get(priv_rx);
 	if (unlikely(!queue_work(resync->priv->tls->rx_wq, &resync->work)))
 		mlx5e_ktls_priv_rx_put(priv_rx);
-
-	return true;
 }
 
 /* Runs in NAPI */
 static void resync_update_sn(struct mlx5e_rq *rq, struct sk_buff *skb)
 {
 	struct ethhdr *eth = (struct ethhdr *)(skb->data);
+	struct mlx5e_ktls_offload_context_rx *priv_rx;
 	struct net_device *netdev = rq->netdev;
 	struct net *net = dev_net(netdev);
+	struct tls_context *tls_ctx;
 	struct sock *sk = NULL;
 	unsigned int datalen;
 	struct iphdr *iph;
@@ -524,8 +516,24 @@ static void resync_update_sn(struct mlx5e_rq *rq, struct sk_buff *skb)
 	if (unlikely(sk->sk_state == TCP_TIME_WAIT))
 		goto unref;
 
-	if (unlikely(!resync_queue_get_psv(sk)))
+	tls_ctx = tls_get_ctx(sk);
+	if (unlikely(!tls_ctx))
 		goto unref;
+
+	if (unlikely(test_bit(TLS_RX_DEV_DEGRADED, &tls_ctx->flags)))
+		goto unref;
+
+	if (unlikely(test_bit(TLS_RX_DEV_CLOSED, &tls_ctx->flags)))
+		goto unref;
+
+	priv_rx = mlx5e_get_ktls_rx_priv_ctx(tls_ctx);
+	if (unlikely(!priv_rx))
+		goto unref;
+
+	if (unlikely(test_bit(MLX5E_PRIV_RX_FLAG_DELETING, priv_rx->flags)))
+		goto unref;
+
+	resync_queue_get_psv(priv_rx);
 
 	seq = th->seq;
 	datalen = skb->len - depth;
