@@ -326,6 +326,40 @@ static int mlx5_ptp_adjtime(struct ptp_clock_info *ptp, s64 delta)
 	return 0;
 }
 
+static int mlx5_ptp_getfine(struct ptp_clock_info *ptp, long *scaled_ppm)
+{
+	struct mlx5_clock *clock = container_of(ptp, struct mlx5_clock, ptp_info);
+	u32 in[MLX5_ST_SZ_DW(mtutc_reg)] = {};
+	u32 out[MLX5_ST_SZ_DW(mtutc_reg)];
+	struct mlx5_core_dev *mdev;
+	s64 delta;
+	int err;
+
+	mdev = container_of(clock, struct mlx5_core_dev, clock);
+
+	err = mlx5_core_access_reg(mdev, in, sizeof(in), out, sizeof(out),
+				   MLX5_REG_MTUTC, 0, 0);
+	if (err)
+		return err;
+
+	delta = MLX5_GET(mtutc_reg, out, freq_adjustment);
+	/* Convert parts-per-billion (10^-9) to parts-per-million (10^-6)
+	 * with a 16 bit binary fractional field
+	 *
+	 *    scaled_ppm = ppb * 2^16 / 1000
+	 *
+	 * which is equivalent to
+	 *
+	 *    scaled_ppm = ppb * 2^13 / 125
+	 */
+	delta <<= 13;
+	delta /= 125;
+
+	*scaled_ppm = delta;
+
+	return 0;
+}
+
 static int mlx5_ptp_adjfreq_real_time(struct mlx5_core_dev *mdev, s32 freq)
 {
 	u32 in[MLX5_ST_SZ_DW(mtutc_reg)] = {};
@@ -688,6 +722,7 @@ static const struct ptp_clock_info mlx5_ptp_clock_info = {
 	.n_pins		= 0,
 	.pps		= 0,
 	.adjfine	= mlx5_ptp_adjfine,
+	.getfine	= mlx5_ptp_getfine,
 	.adjtime	= mlx5_ptp_adjtime,
 	.gettimex64	= mlx5_ptp_gettimex,
 	.settime64	= mlx5_ptp_settime,
