@@ -826,7 +826,7 @@ static int mlx5e_alloc_rq(struct mlx5e_params *params,
 			if (rq->wqe.info.num_frags < (1 << rq->wqe.info.log_num_frags)) {
 				wqe->data[f].byte_count = 0;
 				wqe->data[f].lkey =
-					MLX5_TERMINATE_SCATTER_LIST_LKEY;
+					mdev->terminate_scatter_list_mkey;
 				wqe->data[f].addr = 0;
 			}
 		}

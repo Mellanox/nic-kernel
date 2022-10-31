@@ -803,6 +803,7 @@ struct mlx5_core_dev {
 	struct mlx5_rsc_dump    *rsc_dump;
 	u32                      vsc_addr;
 	struct mlx5_hv_vhca	*hv_vhca;
+	__be32			terminate_scatter_list_mkey;
 };
 
 struct mlx5_db {
