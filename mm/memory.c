@@ -3459,10 +3459,6 @@ reuse:
 		}
 		wp_page_reuse(vmf);
 		return VM_FAULT_WRITE;
-	} else if (unshare) {
-		/* No anonymous page -> nothing to do. */
-		pte_unmap_unlock(vmf->pte, vmf->ptl);
-		return 0;
 	}
 copy:
 	/*
