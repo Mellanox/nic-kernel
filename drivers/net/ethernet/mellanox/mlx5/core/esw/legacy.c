@@ -356,6 +356,7 @@ int esw_legacy_vport_acl_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vpor
 	if (mlx5_esw_is_manager_vport(esw, vport->vport))
 		return 0;
 
+	esw_acl_ingress_lgcy_create_counter(esw, vport);
 	ret = esw_acl_ingress_lgcy_setup(esw, vport);
 	if (ret)
 		goto ingress_err;
@@ -369,6 +370,7 @@ int esw_legacy_vport_acl_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vpor
 egress_err:
 	esw_acl_ingress_lgcy_cleanup(esw, vport);
 ingress_err:
+	esw_acl_ingress_lgcy_destroy_counter(esw, vport);
 	return ret;
 }
 
@@ -379,6 +381,7 @@ void esw_legacy_vport_acl_cleanup(struct mlx5_eswitch *esw, struct mlx5_vport *v
 
 	esw_acl_egress_lgcy_cleanup(esw, vport);
 	esw_acl_ingress_lgcy_cleanup(esw, vport);
+	esw_acl_ingress_lgcy_destroy_counter(esw, vport);
 }
 
 int mlx5_esw_query_vport_drop_stats(struct mlx5_core_dev *dev,
