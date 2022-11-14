@@ -73,7 +73,8 @@ static int esw_acl_egress_ofld_rules_create(struct mlx5_eswitch *esw,
 			  MLX5_FLOW_CONTEXT_ACTION_ALLOW;
 
 		/* prio tag vlan rule - pop it so vport receives untagged packets */
-		err = esw_egress_acl_vlan_create(esw, vport, fwd_dest, 0, action);
+		err = esw_egress_acl_vlan_create(esw, vport, fwd_dest,
+						 ETH_P_8021Q, 0, action);
 		if (err)
 			goto prio_err;
 	}
@@ -109,7 +110,7 @@ static int esw_acl_egress_ofld_groups_create(struct mlx5_eswitch *esw,
 	int ret = 0;
 
 	if (MLX5_CAP_GEN(esw->dev, prio_tag_required)) {
-		ret = esw_acl_egress_vlan_grp_create(esw, vport);
+		ret = esw_acl_egress_vlan_grp_create(esw, vport, ETH_P_8021Q);
 		if (ret)
 			return ret;
 

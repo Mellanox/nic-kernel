@@ -18,10 +18,12 @@ static void esw_acl_ingress_lgcy_rules_destroy(struct mlx5_vport *vport)
 static int esw_acl_ingress_lgcy_groups_create(struct mlx5_eswitch *esw,
 					      struct mlx5_vport *vport)
 {
+	enum esw_vst_mode vst_mode = esw_get_vst_mode(esw);
 	int inlen = MLX5_ST_SZ_BYTES(create_flow_group_in);
 	struct mlx5_core_dev *dev = esw->dev;
 	struct mlx5_flow_group *g;
 	void *match_criteria;
+	bool push_on_any_pkt;
 	u32 *flow_group_in;
 	int err;
 
@@ -31,9 +33,11 @@ static int esw_acl_ingress_lgcy_groups_create(struct mlx5_eswitch *esw,
 
 	match_criteria = MLX5_ADDR_OF(create_flow_group_in, flow_group_in, match_criteria);
 
-	MLX5_SET(create_flow_group_in, flow_group_in, match_criteria_enable,
-		 MLX5_MATCH_OUTER_HEADERS);
-	if (vport->info.vlan || vport->info.qos)
+	push_on_any_pkt = (vst_mode == ESW_VST_MODE_STEERING && !vport->info.spoofchk);
+	if (!push_on_any_pkt)
+		MLX5_SET(create_flow_group_in, flow_group_in, match_criteria_enable,
+			 MLX5_MATCH_OUTER_HEADERS);
+	if (vst_mode == ESW_VST_MODE_BASIC && (vport->info.vlan || vport->info.qos))
 		MLX5_SET_TO_ONES(fte_match_param, match_criteria, outer_headers.cvlan_tag);
 	if (vport->info.spoofchk) {
 		MLX5_SET_TO_ONES(fte_match_param, match_criteria, outer_headers.smac_47_16);
@@ -50,6 +54,8 @@ static int esw_acl_ingress_lgcy_groups_create(struct mlx5_eswitch *esw,
 		goto allow_err;
 	}
 	vport->ingress.legacy.allow_grp = g;
+	if (push_on_any_pkt)
+		goto out;
 
 	memset(flow_group_in, 0, inlen);
 	MLX5_SET(create_flow_group_in, flow_group_in, start_flow_index, 1);
@@ -63,6 +69,7 @@ static int esw_acl_ingress_lgcy_groups_create(struct mlx5_eswitch *esw,
 		goto drop_err;
 	}
 	vport->ingress.legacy.drop_grp = g;
+out:
 	kvfree(flow_group_in);
 	return 0;
 
@@ -91,6 +98,7 @@ static void esw_acl_ingress_lgcy_groups_destroy(struct mlx5_vport *vport)
 int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 			       struct mlx5_vport *vport)
 {
+	enum esw_vst_mode vst_mode = esw_get_vst_mode(esw);
 	struct mlx5_flow_destination drop_ctr_dst = {};
 	struct mlx5_flow_destination *dst = NULL;
 	struct mlx5_flow_act flow_act = {};
@@ -100,6 +108,7 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 	 * 1)Allowed traffic according to tagging and spoofcheck settings
 	 * 2)Drop all other traffic.
 	 */
+	bool push_on_any_pkt;
 	int table_size = 2;
 	int dest_num = 0;
 	int err = 0;
@@ -123,8 +132,8 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 		goto out;
 
 	esw_debug(esw->dev,
-		  "vport[%d] configure ingress rules, vlan(%d) qos(%d)\n",
-		  vport->vport, vport->info.vlan, vport->info.qos);
+		  "vport[%d] configure ingress rules, vlan(%d) qos(%d) vst_mode (%d)\n",
+		  vport->vport, vport->info.vlan, vport->info.qos, vst_mode);
 
 	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec) {
@@ -132,9 +141,21 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 		goto out;
 	}
 
-	if (vport->info.vlan || vport->info.qos)
-		MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria,
-				 outer_headers.cvlan_tag);
+	push_on_any_pkt = (vst_mode == ESW_VST_MODE_STEERING && !vport->info.spoofchk);
+	if (!push_on_any_pkt)
+		spec->match_criteria_enable = MLX5_MATCH_OUTER_HEADERS;
+
+	/* Create ingress allow rule */
+	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_ALLOW;
+	if (vst_mode == ESW_VST_MODE_STEERING && (vport->info.vlan || vport->info.qos)) {
+		flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_VLAN_PUSH;
+		flow_act.vlan[0].prio = vport->info.qos;
+		flow_act.vlan[0].vid = vport->info.vlan;
+		flow_act.vlan[0].ethtype = vport->info.vlan_proto;
+	}
+
+	if (vst_mode == ESW_VST_MODE_BASIC && (vport->info.vlan || vport->info.qos))
+		MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria, outer_headers.cvlan_tag);
 
 	if (vport->info.spoofchk) {
 		MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria,
@@ -147,9 +168,6 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 		ether_addr_copy(smac_v, vport->info.mac);
 	}
 
-	/* Create ingress allow rule */
-	spec->match_criteria_enable = MLX5_MATCH_OUTER_HEADERS;
-	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_ALLOW;
 	vport->ingress.allow_rule = mlx5_add_flow_rules(vport->ingress.acl, spec,
 							&flow_act, NULL, 0);
 	if (IS_ERR(vport->ingress.allow_rule)) {
@@ -161,6 +179,10 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 		goto out;
 	}
 
+	if (push_on_any_pkt)
+		goto out;
+
+	memset(spec, 0, sizeof(*spec));
 	memset(&flow_act, 0, sizeof(flow_act));
 	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_DROP;
 	/* Attach drop flow counter */
@@ -187,7 +209,8 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 	return 0;
 
 out:
-	esw_acl_ingress_lgcy_cleanup(esw, vport);
+	if (err)
+		esw_acl_ingress_lgcy_cleanup(esw, vport);
 	kvfree(spec);
 	return err;
 }

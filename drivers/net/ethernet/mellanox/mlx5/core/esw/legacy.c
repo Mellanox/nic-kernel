@@ -431,8 +431,8 @@ unlock:
 	return err;
 }
 
-int mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
-				u16 vport, u16 vlan, u8 qos)
+int mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw, u16 vport, u16 vlan,
+				u8 qos, u16 vlan_proto)
 {
 	u8 set_flags = 0;
 	int err = 0;
@@ -452,7 +452,7 @@ int mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
 		goto unlock;
 	}
 
-	err = __mlx5_eswitch_set_vport_vlan(esw, vport, vlan, qos, set_flags);
+	err = __mlx5_eswitch_set_vport_vlan(esw, vport, vlan, qos, vlan_proto, set_flags);
 
 unlock:
 	mutex_unlock(&esw->state_lock);
