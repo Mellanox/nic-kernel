@@ -145,7 +145,8 @@ int mlx5_eswitch_modify_esw_vport_context(struct mlx5_core_dev *dev, u16 vport,
 }
 
 static int modify_esw_vport_cvlan(struct mlx5_core_dev *dev, u16 vport,
-				  u16 vlan, u8 qos, u8 set_flags)
+				  u16 vlan, u8 qos, u8 set_flags,
+				  enum esw_vst_mode vst_mode)
 {
 	u32 in[MLX5_ST_SZ_DW(modify_esw_vport_context_in)] = {};
 
@@ -161,10 +162,17 @@ static int modify_esw_vport_cvlan(struct mlx5_core_dev *dev, u16 vport,
 			 esw_vport_context.vport_cvlan_strip, 1);
 
 	if (set_flags & SET_VLAN_INSERT) {
-		/* insert only if no vlan in packet */
-		MLX5_SET(modify_esw_vport_context_in, in,
-			 esw_vport_context.vport_cvlan_insert, 1);
-
+		if (vst_mode == ESW_VST_MODE_INSERT_ALWAYS) {
+			/* insert either if vlan exist in packet or not */
+			MLX5_SET(modify_esw_vport_context_in, in,
+				 esw_vport_context.vport_cvlan_insert,
+				 MLX5_VPORT_CVLAN_INSERT_ALWAYS);
+		} else {
+			/* insert only if no vlan in packet */
+			MLX5_SET(modify_esw_vport_context_in, in,
+				 esw_vport_context.vport_cvlan_insert,
+				 MLX5_VPORT_CVLAN_INSERT_WHEN_NO_CVLAN);
+		}
 		MLX5_SET(modify_esw_vport_context_in, in,
 			 esw_vport_context.cvlan_pcp, qos);
 		MLX5_SET(modify_esw_vport_context_in, in,
@@ -801,9 +809,9 @@ static int esw_vport_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vport)
 
 	flags = (vport->info.vlan || vport->info.qos) ?
 		SET_VLAN_STRIP | SET_VLAN_INSERT : 0;
-	if (vst_mode == ESW_VST_MODE_BASIC)
+	if (vst_mode != ESW_VST_MODE_STEERING)
 		modify_esw_vport_cvlan(esw->dev, vport_num, vport->info.vlan,
-				       vport->info.qos, flags);
+				       vport->info.qos, flags, vst_mode);
 
 	return 0;
 }
@@ -1823,8 +1831,8 @@ int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw, u16 vport, u16 vlan,
 	if (proto == ETH_P_8021AD && vst_mode != ESW_VST_MODE_STEERING)
 		return -EPROTONOSUPPORT;
 
-	if (esw->mode == MLX5_ESWITCH_OFFLOADS || vst_mode == ESW_VST_MODE_BASIC) {
-		err = modify_esw_vport_cvlan(esw->dev, vport, vlan, qos, set_flags);
+	if (esw->mode == MLX5_ESWITCH_OFFLOADS || vst_mode != ESW_VST_MODE_STEERING) {
+		err = modify_esw_vport_cvlan(esw->dev, vport, vlan, qos, set_flags, vst_mode);
 		if (err)
 			return err;
 	}

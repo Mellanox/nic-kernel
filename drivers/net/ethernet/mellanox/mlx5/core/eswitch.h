@@ -520,15 +520,23 @@ int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw, u16 vport, u16 vlan,
 enum esw_vst_mode {
 	ESW_VST_MODE_BASIC,
 	ESW_VST_MODE_STEERING,
+	ESW_VST_MODE_INSERT_ALWAYS,
 };
 
 static inline enum esw_vst_mode esw_get_vst_mode(struct mlx5_eswitch *esw)
 {
+	/*  vst mode precedence:
+	 *  if vst steering mode is supported use it
+	 *  if not, look for vst vport insert always support
+	 *  if both not supported, we use basic vst, can't support QinQ
+	 */
 	if (MLX5_CAP_ESW_EGRESS_ACL(esw->dev, pop_vlan) &&
 	    MLX5_CAP_ESW_INGRESS_ACL(esw->dev, push_vlan))
 		return ESW_VST_MODE_STEERING;
-
-	return ESW_VST_MODE_BASIC;
+	else if (MLX5_CAP_ESW(esw->dev, vport_cvlan_insert_always))
+		return ESW_VST_MODE_INSERT_ALWAYS;
+	else
+		return ESW_VST_MODE_BASIC;
 }
 
 static inline bool mlx5_eswitch_vlan_actions_supported(struct mlx5_core_dev *dev,

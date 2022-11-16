@@ -33,7 +33,7 @@ static int esw_acl_ingress_lgcy_groups_create(struct mlx5_eswitch *esw,
 
 	match_criteria = MLX5_ADDR_OF(create_flow_group_in, flow_group_in, match_criteria);
 
-	push_on_any_pkt = (vst_mode == ESW_VST_MODE_STEERING && !vport->info.spoofchk);
+	push_on_any_pkt = (vst_mode != ESW_VST_MODE_BASIC && !vport->info.spoofchk);
 	if (!push_on_any_pkt)
 		MLX5_SET(create_flow_group_in, flow_group_in, match_criteria_enable,
 			 MLX5_MATCH_OUTER_HEADERS);
@@ -141,7 +141,7 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 		goto out;
 	}
 
-	push_on_any_pkt = (vst_mode == ESW_VST_MODE_STEERING && !vport->info.spoofchk);
+	push_on_any_pkt = (vst_mode != ESW_VST_MODE_BASIC && !vport->info.spoofchk);
 	if (!push_on_any_pkt)
 		spec->match_criteria_enable = MLX5_MATCH_OUTER_HEADERS;
 
