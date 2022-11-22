@@ -9,6 +9,10 @@
 /* Eswitch acl egress external APIs */
 int esw_acl_egress_lgcy_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vport);
 void esw_acl_egress_lgcy_cleanup(struct mlx5_eswitch *esw, struct mlx5_vport *vport);
+void esw_acl_egress_lgcy_create_counter(struct mlx5_eswitch *esw,
+					struct mlx5_vport *vport);
+void esw_acl_egress_lgcy_destroy_counter(struct mlx5_eswitch *esw,
+					 struct mlx5_vport *vport);
 
 /* Eswitch acl ingress external APIs */
 int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vport);
