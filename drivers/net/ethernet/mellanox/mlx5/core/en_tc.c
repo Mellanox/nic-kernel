@@ -1992,8 +1992,6 @@ static void mlx5e_tc_del_fdb_flow(struct mlx5e_priv *priv,
 	if (mlx5_flow_has_geneve_opt(flow))
 		mlx5_geneve_tlv_option_del(priv->mdev->geneve);
 
-	mlx5_eswitch_del_vlan_action(esw, attr);
-
 	if (flow->decap_route)
 		mlx5e_detach_decap_route(priv, flow);
 
