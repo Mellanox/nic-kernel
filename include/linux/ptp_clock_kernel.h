@@ -77,6 +77,11 @@ struct ptp_system_timestamp {
  *            nominal frequency in parts per million, but with a
  *            16 bit binary fractional field.
  *
+ * @getfine:  Reads the current frequency offset from the hardware clock.
+ *            parameter scaled_ppm: Requested frequency offset from
+ *            nominal frequency in parts per million, but with a
+ *            16 bit binary fractional field.
+ *
  * @adjphase:  Adjusts the phase offset of the hardware clock.
  *             parameter delta: Desired change in nanoseconds.
  *
@@ -168,6 +173,7 @@ struct ptp_clock_info {
 	int pps;
 	struct ptp_pin_desc *pin_config;
 	int (*adjfine)(struct ptp_clock_info *ptp, long scaled_ppm);
+	int (*getfine)(struct ptp_clock_info *ptp, long *scaled_ppm);
 	int (*adjphase)(struct ptp_clock_info *ptp, s32 phase);
 	int (*adjtime)(struct ptp_clock_info *ptp, s64 delta);
 	int (*gettime64)(struct ptp_clock_info *ptp, struct timespec64 *ts);

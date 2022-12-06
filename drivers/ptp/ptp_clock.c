@@ -66,6 +66,22 @@ static void enqueue_external_timestamp(struct timestamp_event_queue *queue,
 
 /* posix clock implementation */
 
+static long ptp_get_fine(struct ptp_clock *ptp)
+{
+	struct ptp_clock_info *ops = ptp->info;
+
+	if (ops->getfine) {
+		long fine;
+
+		if (ops->getfine(ops, &fine))
+			return ptp->dialed_frequency;
+
+		return fine;
+	}
+
+	return ptp->dialed_frequency;
+}
+
 static int ptp_clock_getres(struct posix_clock *pc, struct timespec64 *tp)
 {
 	tp->tv_sec = 0;
@@ -143,7 +159,7 @@ static int ptp_clock_adjtime(struct posix_clock *pc, struct __kernel_timex *tx)
 			err = ops->adjphase(ops, offset);
 		}
 	} else if (tx->modes == 0) {
-		tx->freq = ptp->dialed_frequency;
+		tx->freq = ptp_get_fine(ptp);
 		err = 0;
 	}
 
