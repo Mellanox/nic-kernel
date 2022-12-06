@@ -97,9 +97,7 @@ struct vport_ingress {
 	struct mlx5_flow_table *acl;
 	struct mlx5_flow_handle *allow_rule;
 	struct {
-		struct mlx5_flow_group *allow_spoofchk_only_grp;
-		struct mlx5_flow_group *allow_untagged_spoofchk_grp;
-		struct mlx5_flow_group *allow_untagged_only_grp;
+		struct mlx5_flow_group *allow_grp;
 		struct mlx5_flow_group *drop_grp;
 		struct mlx5_flow_handle *drop_rule;
 		struct mlx5_fc *drop_counter;
@@ -151,6 +149,7 @@ struct mlx5_vport_info {
 	u64                     node_guid;
 	int                     link_state;
 	u8                      qos;
+	u16			vlan_proto;
 	u8                      spoofchk: 1;
 	u8                      trusted: 1;
 };
@@ -373,7 +372,7 @@ int mlx5_eswitch_set_vport_mac(struct mlx5_eswitch *esw,
 int mlx5_eswitch_set_vport_state(struct mlx5_eswitch *esw,
 				 u16 vport, int link_state);
 int mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
-				u16 vport, u16 vlan, u8 qos);
+				u16 vport, u16 vlan, u8 qos, u16 vlan_proto);
 int mlx5_eswitch_set_vport_spoofchk(struct mlx5_eswitch *esw,
 				    u16 vport, bool spoofchk);
 int mlx5_eswitch_set_vport_trust(struct mlx5_eswitch *esw,
@@ -515,8 +514,30 @@ int mlx5_eswitch_add_vlan_action(struct mlx5_eswitch *esw,
 				 struct mlx5_flow_attr *attr);
 int mlx5_eswitch_del_vlan_action(struct mlx5_eswitch *esw,
 				 struct mlx5_flow_attr *attr);
-int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
-				  u16 vport, u16 vlan, u8 qos, u8 set_flags);
+int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw, u16 vport, u16 vlan,
+				  u8 qos, u16 proto, u8 set_flags);
+
+enum esw_vst_mode {
+	ESW_VST_MODE_BASIC,
+	ESW_VST_MODE_STEERING,
+	ESW_VST_MODE_INSERT_ALWAYS,
+};
+
+static inline enum esw_vst_mode esw_get_vst_mode(struct mlx5_eswitch *esw)
+{
+	/*  vst mode precedence:
+	 *  if vst steering mode is supported use it
+	 *  if not, look for vst vport insert always support
+	 *  if both not supported, we use basic vst, can't support QinQ
+	 */
+	if (MLX5_CAP_ESW_EGRESS_ACL(esw->dev, pop_vlan) &&
+	    MLX5_CAP_ESW_INGRESS_ACL(esw->dev, push_vlan))
+		return ESW_VST_MODE_STEERING;
+	else if (MLX5_CAP_ESW(esw->dev, vport_cvlan_insert_always))
+		return ESW_VST_MODE_INSERT_ALWAYS;
+	else
+		return ESW_VST_MODE_BASIC;
+}
 
 static inline bool mlx5_eswitch_vlan_actions_supported(struct mlx5_core_dev *dev,
 						       u8 vlan_depth)

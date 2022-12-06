@@ -24,7 +24,7 @@ static int esw_acl_egress_lgcy_groups_create(struct mlx5_eswitch *esw,
 	u32 *flow_group_in;
 	int err = 0;
 
-	err = esw_acl_egress_vlan_grp_create(esw, vport);
+	err = esw_acl_egress_vlan_grp_create(esw, vport, vport->info.vlan_proto);
 	if (err)
 		return err;
 
@@ -67,66 +67,54 @@ static void esw_acl_egress_lgcy_groups_destroy(struct mlx5_vport *vport)
 int esw_acl_egress_lgcy_setup(struct mlx5_eswitch *esw,
 			      struct mlx5_vport *vport)
 {
+	enum esw_vst_mode vst_mode = esw_get_vst_mode(esw);
 	struct mlx5_flow_destination drop_ctr_dst = {};
 	struct mlx5_flow_destination *dst = NULL;
-	struct mlx5_fc *drop_counter = NULL;
 	struct mlx5_flow_act flow_act = {};
+	struct mlx5_fc *drop_counter;
 	/* The egress acl table contains 2 rules:
 	 * 1)Allow traffic with vlan_tag=vst_vlan_id
 	 * 2)Drop all other traffic.
 	 */
 	int table_size = 2;
 	int dest_num = 0;
+	int actions_flag;
 	int err = 0;
 
-	if (vport->egress.legacy.drop_counter) {
-		drop_counter = vport->egress.legacy.drop_counter;
-	} else if (MLX5_CAP_ESW_EGRESS_ACL(esw->dev, flow_counter)) {
-		drop_counter = mlx5_fc_create(esw->dev, false);
-		if (IS_ERR(drop_counter)) {
-			esw_warn(esw->dev,
-				 "vport[%d] configure egress drop rule counter err(%ld)\n",
-				 vport->vport, PTR_ERR(drop_counter));
-			drop_counter = NULL;
-		}
-		vport->egress.legacy.drop_counter = drop_counter;
-	}
-
-	esw_acl_egress_lgcy_rules_destroy(vport);
-
-	if (!vport->info.vlan && !vport->info.qos) {
-		esw_acl_egress_lgcy_cleanup(esw, vport);
+	esw_acl_egress_lgcy_cleanup(esw, vport);
+	if (!vport->info.vlan && !vport->info.qos)
 		return 0;
+
+	vport->egress.acl = esw_acl_table_create(esw, vport,
+						 MLX5_FLOW_NAMESPACE_ESW_EGRESS,
+						 table_size);
+	if (IS_ERR(vport->egress.acl)) {
+		err = PTR_ERR(vport->egress.acl);
+		vport->egress.acl = NULL;
+		goto out;
 	}
 
-	if (!vport->egress.acl) {
-		vport->egress.acl = esw_acl_table_create(esw, vport,
-							 MLX5_FLOW_NAMESPACE_ESW_EGRESS,
-							 table_size);
-		if (IS_ERR(vport->egress.acl)) {
-			err = PTR_ERR(vport->egress.acl);
-			vport->egress.acl = NULL;
-			goto out;
-		}
-
-		err = esw_acl_egress_lgcy_groups_create(esw, vport);
-		if (err)
-			goto out;
-	}
+	err = esw_acl_egress_lgcy_groups_create(esw, vport);
+	if (err)
+		goto out;
 
 	esw_debug(esw->dev,
 		  "vport[%d] configure egress rules, vlan(%d) qos(%d)\n",
 		  vport->vport, vport->info.vlan, vport->info.qos);
 
 	/* Allowed vlan rule */
-	err = esw_egress_acl_vlan_create(esw, vport, NULL, vport->info.vlan,
-					 MLX5_FLOW_CONTEXT_ACTION_ALLOW);
+	actions_flag = MLX5_FLOW_CONTEXT_ACTION_ALLOW;
+	if (vst_mode == ESW_VST_MODE_STEERING)
+		actions_flag |= MLX5_FLOW_CONTEXT_ACTION_VLAN_POP;
+	err = esw_egress_acl_vlan_create(esw, vport, NULL, vport->info.vlan_proto,
+					 vport->info.vlan, actions_flag);
 	if (err)
 		goto out;
 
 	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_DROP;
 
 	/* Attach egress drop flow counter */
+	drop_counter = vport->egress.legacy.drop_counter;
 	if (drop_counter) {
 		flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_COUNT;
 		drop_ctr_dst.type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
@@ -157,17 +145,42 @@ void esw_acl_egress_lgcy_cleanup(struct mlx5_eswitch *esw,
 				 struct mlx5_vport *vport)
 {
 	if (IS_ERR_OR_NULL(vport->egress.acl))
-		goto clean_drop_counter;
+		return;
 
 	esw_debug(esw->dev, "Destroy vport[%d] E-Switch egress ACL\n", vport->vport);
 
 	esw_acl_egress_lgcy_rules_destroy(vport);
 	esw_acl_egress_lgcy_groups_destroy(vport);
 	esw_acl_egress_table_destroy(vport);
+}
 
-clean_drop_counter:
-	if (vport->egress.legacy.drop_counter) {
-		mlx5_fc_destroy(esw->dev, vport->egress.legacy.drop_counter);
-		vport->egress.legacy.drop_counter = NULL;
+void esw_acl_egress_lgcy_create_counter(struct mlx5_eswitch *esw,
+					struct mlx5_vport *vport)
+{
+	struct mlx5_fc *counter;
+
+	vport->egress.legacy.drop_counter = NULL;
+
+	if (!MLX5_CAP_ESW_EGRESS_ACL(esw->dev, flow_counter))
+		return;
+
+	counter = mlx5_fc_create(esw->dev, false);
+	if (IS_ERR(counter)) {
+		esw_warn(esw->dev,
+			 "vport[%d] configure egress drop rule counter failed\n",
+			 vport->vport);
+		return;
 	}
+
+	vport->egress.legacy.drop_counter = counter;
+}
+
+void esw_acl_egress_lgcy_destroy_counter(struct mlx5_eswitch *esw,
+					 struct mlx5_vport *vport)
+{
+	if (!vport->egress.legacy.drop_counter)
+		return;
+
+	mlx5_fc_destroy(esw->dev, vport->egress.legacy.drop_counter);
+	vport->egress.legacy.drop_counter = NULL;
 }

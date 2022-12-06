@@ -356,10 +356,12 @@ int esw_legacy_vport_acl_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vpor
 	if (mlx5_esw_is_manager_vport(esw, vport->vport))
 		return 0;
 
+	esw_acl_ingress_lgcy_create_counter(esw, vport);
 	ret = esw_acl_ingress_lgcy_setup(esw, vport);
 	if (ret)
 		goto ingress_err;
 
+	esw_acl_egress_lgcy_create_counter(esw, vport);
 	ret = esw_acl_egress_lgcy_setup(esw, vport);
 	if (ret)
 		goto egress_err;
@@ -367,8 +369,10 @@ int esw_legacy_vport_acl_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vpor
 	return 0;
 
 egress_err:
+	esw_acl_egress_lgcy_destroy_counter(esw, vport);
 	esw_acl_ingress_lgcy_cleanup(esw, vport);
 ingress_err:
+	esw_acl_ingress_lgcy_destroy_counter(esw, vport);
 	return ret;
 }
 
@@ -378,7 +382,9 @@ void esw_legacy_vport_acl_cleanup(struct mlx5_eswitch *esw, struct mlx5_vport *v
 		return;
 
 	esw_acl_egress_lgcy_cleanup(esw, vport);
+	esw_acl_egress_lgcy_destroy_counter(esw, vport);
 	esw_acl_ingress_lgcy_cleanup(esw, vport);
+	esw_acl_ingress_lgcy_destroy_counter(esw, vport);
 }
 
 int mlx5_esw_query_vport_drop_stats(struct mlx5_core_dev *dev,
@@ -425,8 +431,8 @@ unlock:
 	return err;
 }
 
-int mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
-				u16 vport, u16 vlan, u8 qos)
+int mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw, u16 vport, u16 vlan,
+				u8 qos, u16 vlan_proto)
 {
 	u8 set_flags = 0;
 	int err = 0;
@@ -446,7 +452,7 @@ int mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
 		goto unlock;
 	}
 
-	err = __mlx5_eswitch_set_vport_vlan(esw, vport, vlan, qos, set_flags);
+	err = __mlx5_eswitch_set_vport_vlan(esw, vport, vlan, qos, vlan_proto, set_flags);
 
 unlock:
 	mutex_unlock(&esw->state_lock);

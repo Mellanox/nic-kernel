@@ -48,7 +48,7 @@ esw_acl_table_create(struct mlx5_eswitch *esw, struct mlx5_vport *vport, int ns,
 int esw_egress_acl_vlan_create(struct mlx5_eswitch *esw,
 			       struct mlx5_vport *vport,
 			       struct mlx5_flow_destination *fwd_dest,
-			       u16 vlan_id, u32 flow_action)
+			       u16 vlan_proto, u16 vlan_id, u32 flow_action)
 {
 	struct mlx5_flow_act flow_act = {};
 	struct mlx5_flow_spec *spec;
@@ -61,8 +61,14 @@ int esw_egress_acl_vlan_create(struct mlx5_eswitch *esw,
 	if (!spec)
 		return -ENOMEM;
 
-	MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria, outer_headers.cvlan_tag);
-	MLX5_SET_TO_ONES(fte_match_param, spec->match_value, outer_headers.cvlan_tag);
+	if (vlan_proto == ETH_P_8021AD) {
+		MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria, outer_headers.svlan_tag);
+		MLX5_SET_TO_ONES(fte_match_param, spec->match_value, outer_headers.svlan_tag);
+	} else {
+		MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria, outer_headers.cvlan_tag);
+		MLX5_SET_TO_ONES(fte_match_param, spec->match_value, outer_headers.cvlan_tag);
+	}
+	/* Both outer_headers.cvlan_tag and outer_headers.svlan_tag match only first vlan */
 	MLX5_SET_TO_ONES(fte_match_param, spec->match_criteria, outer_headers.first_vid);
 	MLX5_SET(fte_match_param, spec->match_value, outer_headers.first_vid, vlan_id);
 
@@ -91,7 +97,8 @@ void esw_acl_egress_vlan_destroy(struct mlx5_vport *vport)
 	}
 }
 
-int esw_acl_egress_vlan_grp_create(struct mlx5_eswitch *esw, struct mlx5_vport *vport)
+int esw_acl_egress_vlan_grp_create(struct mlx5_eswitch *esw,
+				   struct mlx5_vport *vport, u16 vlan_proto)
 {
 	int inlen = MLX5_ST_SZ_BYTES(create_flow_group_in);
 	struct mlx5_flow_group *vlan_grp;
@@ -107,7 +114,10 @@ int esw_acl_egress_vlan_grp_create(struct mlx5_eswitch *esw, struct mlx5_vport *
 		 match_criteria_enable, MLX5_MATCH_OUTER_HEADERS);
 	match_criteria = MLX5_ADDR_OF(create_flow_group_in,
 				      flow_group_in, match_criteria);
-	MLX5_SET_TO_ONES(fte_match_param, match_criteria, outer_headers.cvlan_tag);
+	if (vlan_proto == ETH_P_8021AD)
+		MLX5_SET_TO_ONES(fte_match_param, match_criteria, outer_headers.svlan_tag);
+	else
+		MLX5_SET_TO_ONES(fte_match_param, match_criteria, outer_headers.cvlan_tag);
 	MLX5_SET_TO_ONES(fte_match_param, match_criteria, outer_headers.first_vid);
 	MLX5_SET(create_flow_group_in, flow_group_in, start_flow_index, 0);
 	MLX5_SET(create_flow_group_in, flow_group_in, end_flow_index, 0);

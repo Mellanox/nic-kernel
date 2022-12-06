@@ -819,7 +819,8 @@ static int esw_set_global_vlan_pop(struct mlx5_eswitch *esw, u8 val)
 		if (atomic_read(&rep->rep_data[REP_ETH].state) != REP_LOADED)
 			continue;
 
-		err = __mlx5_eswitch_set_vport_vlan(esw, rep->vport, 0, 0, val);
+		err = __mlx5_eswitch_set_vport_vlan(esw, rep->vport, 0, 0,
+						    ETH_P_8021Q, val);
 		if (err)
 			goto out;
 	}
@@ -934,7 +935,8 @@ int mlx5_eswitch_add_vlan_action(struct mlx5_eswitch *esw,
 			goto skip_set_push;
 
 		err = __mlx5_eswitch_set_vport_vlan(esw, vport->vport, esw_attr->vlan_vid[0],
-						    0, SET_VLAN_INSERT | SET_VLAN_STRIP);
+						    0, ETH_P_8021Q,
+						    SET_VLAN_INSERT | SET_VLAN_STRIP);
 		if (err)
 			goto out;
 		vport->vlan = esw_attr->vlan_vid[0];
@@ -987,8 +989,8 @@ int mlx5_eswitch_del_vlan_action(struct mlx5_eswitch *esw,
 			goto skip_unset_push;
 
 		vport->vlan = 0;
-		err = __mlx5_eswitch_set_vport_vlan(esw, vport->vport,
-						    0, 0, SET_VLAN_STRIP);
+		err = __mlx5_eswitch_set_vport_vlan(esw, vport->vport, 0, 0,
+						    ETH_P_8021Q, SET_VLAN_STRIP);
 		if (err)
 			goto out;
 	}

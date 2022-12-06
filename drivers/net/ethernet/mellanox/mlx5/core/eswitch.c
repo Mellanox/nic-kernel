@@ -145,7 +145,8 @@ int mlx5_eswitch_modify_esw_vport_context(struct mlx5_core_dev *dev, u16 vport,
 }
 
 static int modify_esw_vport_cvlan(struct mlx5_core_dev *dev, u16 vport,
-				  u16 vlan, u8 qos, u8 set_flags)
+				  u16 vlan, u8 qos, u8 set_flags,
+				  enum esw_vst_mode vst_mode)
 {
 	u32 in[MLX5_ST_SZ_DW(modify_esw_vport_context_in)] = {};
 
@@ -161,10 +162,17 @@ static int modify_esw_vport_cvlan(struct mlx5_core_dev *dev, u16 vport,
 			 esw_vport_context.vport_cvlan_strip, 1);
 
 	if (set_flags & SET_VLAN_INSERT) {
-		/* insert only if no vlan in packet */
-		MLX5_SET(modify_esw_vport_context_in, in,
-			 esw_vport_context.vport_cvlan_insert, 1);
-
+		if (vst_mode == ESW_VST_MODE_INSERT_ALWAYS) {
+			/* insert either if vlan exist in packet or not */
+			MLX5_SET(modify_esw_vport_context_in, in,
+				 esw_vport_context.vport_cvlan_insert,
+				 MLX5_VPORT_CVLAN_INSERT_ALWAYS);
+		} else {
+			/* insert only if no vlan in packet */
+			MLX5_SET(modify_esw_vport_context_in, in,
+				 esw_vport_context.vport_cvlan_insert,
+				 MLX5_VPORT_CVLAN_INSERT_WHEN_NO_CVLAN);
+		}
 		MLX5_SET(modify_esw_vport_context_in, in,
 			 esw_vport_context.cvlan_pcp, qos);
 		MLX5_SET(modify_esw_vport_context_in, in,
@@ -774,6 +782,7 @@ static void esw_vport_cleanup_acl(struct mlx5_eswitch *esw,
 
 static int esw_vport_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vport)
 {
+	enum esw_vst_mode vst_mode = esw_get_vst_mode(esw);
 	u16 vport_num = vport->vport;
 	int flags;
 	int err;
@@ -800,8 +809,9 @@ static int esw_vport_setup(struct mlx5_eswitch *esw, struct mlx5_vport *vport)
 
 	flags = (vport->info.vlan || vport->info.qos) ?
 		SET_VLAN_STRIP | SET_VLAN_INSERT : 0;
-	modify_esw_vport_cvlan(esw->dev, vport_num, vport->info.vlan,
-			       vport->info.qos, flags);
+	if (vst_mode != ESW_VST_MODE_STEERING)
+		modify_esw_vport_cvlan(esw->dev, vport_num, vport->info.vlan,
+				       vport->info.qos, flags, vst_mode);
 
 	return 0;
 }
@@ -990,6 +1000,7 @@ static void mlx5_eswitch_clear_vf_vports_info(struct mlx5_eswitch *esw)
 		memset(&vport->qos, 0, sizeof(vport->qos));
 		memset(&vport->info, 0, sizeof(vport->info));
 		vport->info.link_state = MLX5_VPORT_ADMIN_STATE_AUTO;
+		vport->info.vlan_proto = ETH_P_8021Q;
 	}
 }
 
@@ -1790,6 +1801,7 @@ int mlx5_eswitch_get_vport_config(struct mlx5_eswitch *esw,
 	ivi->linkstate = evport->info.link_state;
 	ivi->vlan = evport->info.vlan;
 	ivi->qos = evport->info.qos;
+	ivi->vlan_proto = htons(evport->info.vlan_proto);
 	ivi->spoofchk = evport->info.spoofchk;
 	ivi->trusted = evport->info.trusted;
 	if (evport->qos.enabled) {
@@ -1801,23 +1813,33 @@ int mlx5_eswitch_get_vport_config(struct mlx5_eswitch *esw,
 	return 0;
 }
 
-int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
-				  u16 vport, u16 vlan, u8 qos, u8 set_flags)
+int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw, u16 vport, u16 vlan,
+				  u8 qos, u16 proto, u8 set_flags)
 {
 	struct mlx5_vport *evport = mlx5_eswitch_get_vport(esw, vport);
+	enum esw_vst_mode vst_mode;
 	int err = 0;
 
 	if (IS_ERR(evport))
 		return PTR_ERR(evport);
 	if (vlan > 4095 || qos > 7)
 		return -EINVAL;
+	if (proto != ETH_P_8021Q && proto != ETH_P_8021AD)
+		return -EINVAL;
 
-	err = modify_esw_vport_cvlan(esw->dev, vport, vlan, qos, set_flags);
-	if (err)
-		return err;
+	vst_mode = esw_get_vst_mode(esw);
+	if (proto == ETH_P_8021AD && vst_mode != ESW_VST_MODE_STEERING)
+		return -EPROTONOSUPPORT;
+
+	if (esw->mode == MLX5_ESWITCH_OFFLOADS || vst_mode != ESW_VST_MODE_STEERING) {
+		err = modify_esw_vport_cvlan(esw->dev, vport, vlan, qos, set_flags, vst_mode);
+		if (err)
+			return err;
+	}
 
 	evport->info.vlan = vlan;
 	evport->info.qos = qos;
+	evport->info.vlan_proto = proto;
 	if (evport->enabled && esw->mode == MLX5_ESWITCH_LEGACY) {
 		err = esw_acl_ingress_lgcy_setup(esw, evport);
 		if (err)
