@@ -49,8 +49,8 @@
 /* Supports VFIO_DMA_UNMAP_FLAG_ALL */
 #define VFIO_UNMAP_ALL			9
 
-/* Obsolete, not supported by any IOMMU. */
-#define VFIO_UPDATE_VADDR		10
+/* Probe for reverted vaddr removal and update support */
+#define VFIO_UPDATE_VADDR_DEPRECATED	10
 
 /*
  * The IOCTL interface is designed for extensibility by embedding the
@@ -1348,7 +1348,7 @@ struct vfio_iommu_type1_dma_map {
 	__u32	flags;
 #define VFIO_DMA_MAP_FLAG_READ (1 << 0)		/* readable from device */
 #define VFIO_DMA_MAP_FLAG_WRITE (1 << 1)	/* writable from device */
-#define VFIO_DMA_MAP_FLAG_VADDR (1 << 2)
+#define VFIO_DMA_MAP_FLAG_VADDR_DEPRECATED (1 << 2) /* prior vaddr remapping */
 	__u64	vaddr;				/* Process virtual address */
 	__u64	iova;				/* IO virtual address */
 	__u64	size;				/* Size of mapping (bytes) */
@@ -1390,6 +1390,7 @@ struct vfio_iommu_type1_dma_unmap {
 	__u32	flags;
 #define VFIO_DMA_UNMAP_FLAG_GET_DIRTY_BITMAP (1 << 0)
 #define VFIO_DMA_UNMAP_FLAG_ALL		     (1 << 1)
+#define VFIO_DMA_UNMAP_FLAG_VADDR_DEPRECATED (1 << 2) /* prior vaddr removal */
 	__u64	iova;				/* IO virtual address */
 	__u64	size;				/* Size of mapping (bytes) */
 	__u8    data[];

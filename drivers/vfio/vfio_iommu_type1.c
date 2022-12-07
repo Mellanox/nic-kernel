@@ -790,7 +790,6 @@ static int vfio_iommu_type1_pin_pages(void *iommu_data,
 	unsigned long remote_vaddr;
 	struct vfio_dma *dma;
 	bool do_accounting;
-	dma_addr_t iova;
 
 	if (!iommu || !pages)
 		return -EINVAL;
@@ -815,6 +814,7 @@ static int vfio_iommu_type1_pin_pages(void *iommu_data,
 	do_accounting = list_empty(&iommu->domain_list);
 
 	for (i = 0; i < npage; i++) {
+		dma_addr_t iova;
 		unsigned long phys_pfn;
 		struct vfio_pfn *vpfn;
 
@@ -1467,7 +1467,6 @@ static bool vfio_iommu_iova_dma_valid(struct vfio_iommu *iommu,
 static int vfio_dma_do_map(struct vfio_iommu *iommu,
 			   struct vfio_iommu_type1_dma_map *map)
 {
-	bool set_vaddr = map->flags & VFIO_DMA_MAP_FLAG_VADDR;
 	dma_addr_t iova = map->iova;
 	unsigned long vaddr = map->vaddr;
 	size_t size = map->size;
@@ -1485,16 +1484,13 @@ static int vfio_dma_do_map(struct vfio_iommu *iommu,
 	if (map->flags & VFIO_DMA_MAP_FLAG_READ)
 		prot |= IOMMU_READ;
 
-	if ((prot && set_vaddr) || (!prot && !set_vaddr))
-		return -EINVAL;
-
 	mutex_lock(&iommu->lock);
 
 	pgsize = (size_t)1 << __ffs(iommu->pgsize_bitmap);
 
 	WARN_ON((pgsize - 1) & PAGE_MASK);
 
-	if (!size || (size | iova | vaddr) & (pgsize - 1)) {
+	if (!prot || !size || (size | iova | vaddr) & (pgsize - 1)) {
 		ret = -EINVAL;
 		goto out_unlock;
 	}
@@ -1505,17 +1501,7 @@ static int vfio_dma_do_map(struct vfio_iommu *iommu,
 		goto out_unlock;
 	}
 
-	dma = vfio_find_dma(iommu, iova, size);
-	if (set_vaddr) {
-		if (!dma) {
-			ret = -ENOENT;
-		} else if (dma->iova != iova || dma->size != size) {
-			ret = -EINVAL;
-		} else {
-			dma->vaddr = vaddr;
-		}
-		goto out_unlock;
-	} else if (dma) {
+	if (vfio_find_dma(iommu, iova, size)) {
 		ret = -EEXIST;
 		goto out_unlock;
 	}
@@ -2727,8 +2713,7 @@ static int vfio_iommu_type1_map_dma(struct vfio_iommu *iommu,
 {
 	struct vfio_iommu_type1_dma_map map;
 	unsigned long minsz;
-	uint32_t mask = VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE |
-			VFIO_DMA_MAP_FLAG_VADDR;
+	uint32_t mask = VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE;
 
 	minsz = offsetofend(struct vfio_iommu_type1_dma_map, size);
 
