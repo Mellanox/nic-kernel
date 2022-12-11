@@ -3580,8 +3580,11 @@ static int resolve_prepare_src(struct rdma_id_private *id_priv,
 			       struct sockaddr *src_addr,
 			       const struct sockaddr *dst_addr)
 {
+	struct sockaddr org_addr = {};
 	int ret;
 
+	memcpy(&org_addr, cma_dst_addr(id_priv),
+	       rdma_addr_size(cma_dst_addr(id_priv)));
 	memcpy(cma_dst_addr(id_priv), dst_addr, rdma_addr_size(dst_addr));
 	if (!cma_comp_exch(id_priv, RDMA_CM_ADDR_BOUND, RDMA_CM_ADDR_QUERY)) {
 		/* For a well behaved ULP state will be RDMA_CM_IDLE */
@@ -3604,7 +3607,7 @@ static int resolve_prepare_src(struct rdma_id_private *id_priv,
 err_state:
 	cma_comp_exch(id_priv, RDMA_CM_ADDR_QUERY, RDMA_CM_ADDR_BOUND);
 err_dst:
-	memset(cma_dst_addr(id_priv), 0, rdma_addr_size(dst_addr));
+	memcpy(cma_dst_addr(id_priv), &org_addr, rdma_addr_size(&org_addr));
 	return ret;
 }
 
