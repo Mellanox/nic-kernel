@@ -1223,6 +1223,28 @@ static int mlx5_function_teardown(struct mlx5_core_dev *dev, bool boot)
 	return 0;
 }
 
+static int mlx5_get_terminate_scatter_list_mkey(struct mlx5_core_dev *dev)
+{
+	u32 out[MLX5_ST_SZ_DW(query_special_contexts_out)] = {};
+	u32 in[MLX5_ST_SZ_DW(query_special_contexts_in)] = {};
+	int err;
+
+	MLX5_SET(query_special_contexts_in, in, opcode,
+		 MLX5_CMD_OP_QUERY_SPECIAL_CONTEXTS);
+	err = mlx5_cmd_exec_inout(dev, query_special_contexts, in, out);
+	if (err)
+		return err;
+
+	if (MLX5_CAP_GEN(dev, terminate_scatter_list_mkey)) {
+		dev->terminate_scatter_list_mkey =
+			cpu_to_be32(MLX5_GET(query_special_contexts_out, out,
+					     terminate_scatter_list_mkey));
+		return 0;
+	}
+	dev->terminate_scatter_list_mkey = MLX5_TERMINATE_SCATTER_LIST_LKEY;
+	return 0;
+}
+
 static int mlx5_load(struct mlx5_core_dev *dev)
 {
 	int err;
@@ -1237,6 +1259,11 @@ static int mlx5_load(struct mlx5_core_dev *dev)
 	mlx5_events_start(dev);
 	mlx5_pagealloc_start(dev);
 
+	err = mlx5_get_terminate_scatter_list_mkey(dev);
+	if (err) {
+		mlx5_core_err(dev, "Failed to query special contexts\n");
+		goto err_irq_table;
+	}
 	err = mlx5_irq_table_create(dev);
 	if (err) {
 		mlx5_core_err(dev, "Failed to alloc IRQs\n");
