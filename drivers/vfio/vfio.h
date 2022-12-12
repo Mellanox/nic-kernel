@@ -62,11 +62,6 @@ struct vfio_group {
 	struct blocking_notifier_head	notifier;
 };
 
-/* events for the backend driver notify callback */
-enum vfio_iommu_notify_type {
-	VFIO_IOMMU_CONTAINER_CLOSE = 0,
-};
-
 /**
  * struct vfio_iommu_driver_ops - VFIO IOMMU driver callbacks
  */
@@ -97,8 +92,6 @@ struct vfio_iommu_driver_ops {
 				  void *data, size_t count, bool write);
 	struct iommu_domain *(*group_iommu_domain)(void *iommu_data,
 						   struct iommu_group *group);
-	void		(*notify)(void *iommu_data,
-				  enum vfio_iommu_notify_type event);
 };
 
 struct vfio_iommu_driver {
@@ -123,6 +116,19 @@ long vfio_container_ioctl_check_extension(struct vfio_container *container,
 					  unsigned long arg);
 int __init vfio_container_init(void);
 void vfio_container_cleanup(void);
+
+#if IS_ENABLED(CONFIG_VFIO_VIRQFD)
+int __init vfio_virqfd_init(void);
+void vfio_virqfd_exit(void);
+#else
+static inline int __init vfio_virqfd_init(void)
+{
+	return 0;
+}
+static inline void vfio_virqfd_exit(void)
+{
+}
+#endif
 
 #ifdef CONFIG_VFIO_NOIOMMU
 extern bool vfio_noiommu __read_mostly;
