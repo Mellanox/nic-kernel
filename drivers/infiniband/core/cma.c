@@ -47,7 +47,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define CMA_CM_RESPONSE_TIMEOUT 20
 #define CMA_MAX_CM_RETRIES 15
 #define CMA_CM_MRA_SETTING (IB_CM_MRA_FLAG_DELAY | 24)
-#define CMA_IBOE_PACKET_LIFETIME 18
+#define CMA_IBOE_PACKET_LIFETIME 16
 #define CMA_PREFERRED_ROCE_GID_TYPE IB_GID_TYPE_ROCE_UDP_ENCAP
 
 static const char * const cma_events[] = {
@@ -2819,8 +2819,8 @@ int rdma_set_min_rnr_timer(struct rdma_cm_id *id, u8 min_rnr_timer)
 }
 EXPORT_SYMBOL(rdma_set_min_rnr_timer);
 
-static void route_set_path_rec_inbound(struct cma_work *work,
-				       struct sa_path_rec *path_rec)
+static int route_set_path_rec_inbound(struct cma_work *work,
+				      struct sa_path_rec *path_rec)
 {
 	struct rdma_route *route = &work->id->id.route;
 
@@ -2828,14 +2828,15 @@ static void route_set_path_rec_inbound(struct cma_work *work,
 		route->path_rec_inbound =
 			kzalloc(sizeof(*route->path_rec_inbound), GFP_KERNEL);
 		if (!route->path_rec_inbound)
-			return;
+			return -ENOMEM;
 	}
 
 	*route->path_rec_inbound = *path_rec;
+	return 0;
 }
 
-static void route_set_path_rec_outbound(struct cma_work *work,
-					struct sa_path_rec *path_rec)
+static int route_set_path_rec_outbound(struct cma_work *work,
+				       struct sa_path_rec *path_rec)
 {
 	struct rdma_route *route = &work->id->id.route;
 
@@ -2843,14 +2844,15 @@ static void route_set_path_rec_outbound(struct cma_work *work,
 		route->path_rec_outbound =
 			kzalloc(sizeof(*route->path_rec_outbound), GFP_KERNEL);
 		if (!route->path_rec_outbound)
-			return;
+			return -ENOMEM;
 	}
 
 	*route->path_rec_outbound = *path_rec;
+	return 0;
 }
 
 static void cma_query_handler(int status, struct sa_path_rec *path_rec,
-			      int num_prs, void *context)
+			      unsigned int num_prs, void *context)
 {
 	struct cma_work *work = context;
 	struct rdma_route *route;
@@ -2865,13 +2867,15 @@ static void cma_query_handler(int status, struct sa_path_rec *path_rec,
 		if (!path_rec[i].flags || (path_rec[i].flags & IB_PATH_GMP))
 			*route->path_rec = path_rec[i];
 		else if (path_rec[i].flags & IB_PATH_INBOUND)
-			route_set_path_rec_inbound(work, &path_rec[i]);
+			status = route_set_path_rec_inbound(work, &path_rec[i]);
 		else if (path_rec[i].flags & IB_PATH_OUTBOUND)
-			route_set_path_rec_outbound(work, &path_rec[i]);
-	}
-	if (!route->path_rec) {
-		status = -EINVAL;
-		goto fail;
+			status = route_set_path_rec_outbound(work,
+							     &path_rec[i]);
+		else
+			status = -EINVAL;
+
+		if (status)
+			goto fail;
 	}
 
 	route->num_pri_alt_paths = 1;
@@ -3580,8 +3584,11 @@ static int resolve_prepare_src(struct rdma_id_private *id_priv,
 			       struct sockaddr *src_addr,
 			       const struct sockaddr *dst_addr)
 {
+	struct sockaddr org_addr = {};
 	int ret;
 
+	memcpy(&org_addr, cma_dst_addr(id_priv),
+	       rdma_addr_size(cma_dst_addr(id_priv)));
 	memcpy(cma_dst_addr(id_priv), dst_addr, rdma_addr_size(dst_addr));
 	if (!cma_comp_exch(id_priv, RDMA_CM_ADDR_BOUND, RDMA_CM_ADDR_QUERY)) {
 		/* For a well behaved ULP state will be RDMA_CM_IDLE */
@@ -3604,7 +3611,7 @@ static int resolve_prepare_src(struct rdma_id_private *id_priv,
 err_state:
 	cma_comp_exch(id_priv, RDMA_CM_ADDR_QUERY, RDMA_CM_ADDR_BOUND);
 err_dst:
-	memset(cma_dst_addr(id_priv), 0, rdma_addr_size(dst_addr));
+	memcpy(cma_dst_addr(id_priv), &org_addr, rdma_addr_size(&org_addr));
 	return ret;
 }
 

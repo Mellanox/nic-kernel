@@ -1756,13 +1756,9 @@ static int set_ucontext_resp(struct ib_ucontext *uctx,
 	struct mlx5_ib_dev *dev = to_mdev(ibdev);
 	struct mlx5_ib_ucontext *context = to_mucontext(uctx);
 	struct mlx5_bfreg_info *bfregi = &context->bfregi;
-	int err;
 
 	if (MLX5_CAP_GEN(dev->mdev, dump_fill_mkey)) {
-		err = mlx5_cmd_dump_fill_mkey(dev->mdev,
-					      &resp->dump_fill_mkey);
-		if (err)
-			return err;
+		resp->dump_fill_mkey = dev->mkeys.dump_fill_mkey;
 		resp->comp_mask |=
 			MLX5_IB_ALLOC_UCONTEXT_RESP_MASK_DUMP_FILL_MKEY;
 	}
@@ -3634,6 +3630,10 @@ static int mlx5_ib_stage_init_init(struct mlx5_ib_dev *dev)
 		dev->port[i].roce.last_port_state = IB_PORT_DOWN;
 	}
 
+	err = mlx5_cmd_query_special_mkeys(dev);
+	if (err)
+		return err;
+
 	err = mlx5_ib_init_multiport_master(dev);
 	if (err)
 		return err;
@@ -4403,6 +4403,10 @@ static int __init mlx5_ib_init(void)
 		return -ENOMEM;
 	}
 
+	ret = mlx5_ib_qp_event_init();
+	if (ret)
+		goto qp_event_err;
+
 	mlx5_ib_odp_init();
 	ret = mlx5r_rep_init();
 	if (ret)
@@ -4420,6 +4424,8 @@ drv_err:
 mp_err:
 	mlx5r_rep_cleanup();
 rep_err:
+	mlx5_ib_qp_event_cleanup();
+qp_event_err:
 	destroy_workqueue(mlx5_ib_event_wq);
 	free_page((unsigned long)xlt_emergency_page);
 	return ret;
@@ -4431,6 +4437,7 @@ static void __exit mlx5_ib_cleanup(void)
 	auxiliary_driver_unregister(&mlx5r_mp_driver);
 	mlx5r_rep_cleanup();
 
+	mlx5_ib_qp_event_cleanup();
 	destroy_workqueue(mlx5_ib_event_wq);
 	free_page((unsigned long)xlt_emergency_page);
 }
