@@ -642,6 +642,8 @@ enum mlx5_mkey_type {
 	MLX5_MKEY_MR = 1,
 	MLX5_MKEY_MW,
 	MLX5_MKEY_INDIRECT_DEVX,
+	MLX5_MKEY_NULL,
+	MLX5_MKEY_IMPLICIT_CHILD,
 };
 
 struct mlx5r_cache_rb_key {
@@ -727,6 +729,7 @@ struct mlx5_ib_mr {
 			struct mlx5_ib_mr *dd_crossed_mr;
 			struct list_head dd_node;
 			u8 revoked :1;
+			struct mlx5_ib_mkey null_mmkey;
 		};
 	};
 };
