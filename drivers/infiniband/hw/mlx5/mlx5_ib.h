@@ -1136,7 +1136,7 @@ struct mlx5_ib_dev {
 	/* serialize update of capability mask
 	 */
 	struct mutex			cap_mask_mutex;
-	u8				ib_active:1;
+	bool				ib_active;
 	u8				is_rep:1;
 	u8				lag_active:1;
 	u8				fill_delay;
