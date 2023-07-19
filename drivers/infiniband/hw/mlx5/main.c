@@ -161,6 +161,29 @@ static struct mlx5_roce *mlx5_get_rep_roce(struct mlx5_ib_dev *dev,
 	return NULL;
 }
 
+static bool mlx5_netdev_send_event(struct mlx5_ib_dev *dev,
+				   struct net_device *ndev,
+				   struct net_device *upper,
+				   struct mlx5_roce *roce)
+{
+	if (!dev->ib_active)
+		return false;
+
+	/* Event is about our upper device */
+	if (upper == ndev)
+		return true;
+
+	/* RDMA device not in lag and not in switchdev */
+	if (!dev->is_rep && !upper && ndev == roce->netdev)
+		return true;
+
+	/* RDMA device in switchdev */
+	if (dev->is_rep && ndev == roce->netdev)
+		return true;
+
+	return false;
+}
+
 static int mlx5_netdev_event(struct notifier_block *this,
 			     unsigned long event, void *ptr)
 {
@@ -202,7 +225,7 @@ static int mlx5_netdev_event(struct notifier_block *this,
 		if (ibdev->lag_active) {
 			struct net_device *lag_ndev;
 
-			lag_ndev = mlx5_lag_get_roce_netdev(mdev);
+			lag_ndev = mlx5_lag_get_netdev(mdev);
 			if (lag_ndev) {
 				upper = netdev_master_upper_dev_get(lag_ndev);
 				dev_put(lag_ndev);
@@ -211,13 +234,13 @@ static int mlx5_netdev_event(struct notifier_block *this,
 			}
 		}
 
-		if (ibdev->is_rep)
+		if (ibdev->is_rep) {
 			roce = mlx5_get_rep_roce(ibdev, ndev, upper, &port_num);
-		if (!roce)
-			return NOTIFY_DONE;
-		if ((upper == ndev ||
-		     ((!upper || ibdev->is_rep) && ndev == roce->netdev)) &&
-		    ibdev->ib_active) {
+			if (!roce)
+				return NOTIFY_DONE;
+		}
+
+		if (mlx5_netdev_send_event(ibdev, ndev, upper, roce)) {
 			struct ib_event ibev = { };
 			enum ib_port_state port_state;
 
@@ -262,7 +285,7 @@ static struct net_device *mlx5_ib_get_netdev(struct ib_device *device,
 	if (!mdev)
 		return NULL;
 
-	if (ibdev->lag_active) {
+	if (!ibdev->is_rep && ibdev->lag_active) {
 		ndev = mlx5_lag_get_roce_netdev(mdev);
 		if (ndev)
 			goto out;
