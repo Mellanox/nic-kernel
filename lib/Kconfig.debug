@@ -1576,7 +1576,7 @@ config LOCKDEP_STACK_TRACE_BITS
 	depends on LOCKDEP && !LOCKDEP_SMALL
 	range 10 26
 	default 21 if KASAN
-	default 19
+	default 20
 	help
 	  Try increasing this value if you hit "BUG: MAX_STACK_TRACE_ENTRIES too low!" message.
 
