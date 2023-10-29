@@ -77,6 +77,8 @@
 #define DMA_BIT_MASK(n)	(((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
 
 struct dma_iova_state {
+	dma_addr_t addr;
+	size_t iova_size;
 	u8 use_iova : 1;
 };
 
