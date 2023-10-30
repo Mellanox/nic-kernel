@@ -79,6 +79,7 @@
 struct dma_iova_state {
 	dma_addr_t addr;
 	size_t iova_size;
+	size_t mapped_size;
 	u8 use_iova : 1;
 };
 

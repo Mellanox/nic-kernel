@@ -70,4 +70,12 @@ bool iommu_dma_can_use_iova(struct device *dev);
 dma_addr_t iommu_dma_iova_alloc(struct device *dev, struct dma_iova_state *state,
 		phys_addr_t phys, size_t size);
 void iommu_dma_iova_free(struct device *dev, struct dma_iova_state *state);
+void iommu_dma_iova_destroy(struct device *dev, struct dma_iova_state *state,
+		dma_addr_t dma_addr, size_t size, enum dma_data_direction dir);
+int iommu_dma_iova_link(struct device *dev, struct dma_iova_state *state,
+		phys_addr_t phys, size_t offset, size_t size,
+		enum dma_data_direction dir, unsigned long attrs);
+void iommu_dma_iova_unlink(struct device *dev, struct dma_iova_state *state,
+		size_t offset, size_t size, enum dma_data_direction dir,
+		unsigned long attrs);
 #endif /* _LINUX_IOMMU_DMA_H */
