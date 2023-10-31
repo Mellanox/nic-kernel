@@ -4143,6 +4143,42 @@ static inline void ib_dma_unmap_page(struct ib_device *dev,
 		dma_unmap_page(dev->dma_device, addr, size, direction);
 }
 
+/**
+ * ib_dma_link_range - Link a physical page to DMA address
+ * @dev: The device for which the dma_addr is to be created
+ * @page: The page to be mapped
+ * @offset: The offset within the page
+ * @iova: Preallocated IOVA attributes
+ * @dma_offset: DMA offset
+ */
+static inline dma_addr_t ib_dma_link_range(struct ib_device *dev,
+					   struct page *page,
+					   unsigned long offset,
+					   struct dma_iova_attrs *iova,
+					   dma_addr_t dma_offset)
+{
+	if (ib_uses_virt_dma(dev))
+		return (uintptr_t)(page_address(page) + offset);
+
+	return dma_link_range(page, offset, iova, dma_offset);
+}
+
+/**
+ * ib_dma_unlink_range - Unlink a mapping created by ib_dma_link_page()
+ * @dev: The device for which the DMA address was created
+ * @iova: DMA IOVA properties
+ * @dma_offset: DMA offset
+ */
+static inline void ib_dma_unlink_range(struct ib_device *dev,
+				       struct dma_iova_attrs *iova,
+				       dma_addr_t dma_offset)
+{
+	if (ib_uses_virt_dma(dev))
+		return;
+
+	dma_unlink_range(iova, dma_offset);
+}
+
 int ib_dma_virt_map_sg(struct ib_device *dev, struct scatterlist *sg, int nents);
 static inline int ib_dma_map_sg_attrs(struct ib_device *dev,
 				      struct scatterlist *sg, int nents,

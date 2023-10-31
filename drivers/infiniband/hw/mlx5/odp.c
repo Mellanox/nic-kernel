@@ -149,6 +149,7 @@ static void populate_mtt(__be64 *pas, size_t idx, size_t nentries,
 {
 	struct ib_umem_odp *odp = to_ib_umem_odp(mr->umem);
 	bool downgrade = flags & MLX5_IB_UPD_XLT_DOWNGRADE;
+	struct ib_device *dev = odp->umem.ibdev;
 	unsigned long pfn;
 	dma_addr_t pa;
 	size_t i;
@@ -162,12 +163,31 @@ static void populate_mtt(__be64 *pas, size_t idx, size_t nentries,
 			/* Initial ODP init */
 			continue;
 
-		pa = odp->dma_list[idx + i];
+		if (pfn & HMM_PFN_STICKY && odp->iova.addr)
+			/*
+			 * We are in this flow when there is a need to resync flags,
+			 * for example when page was already linked in prefetch call
+			 * with READ flag and now we need to add WRITE flag
+			 *
+			 * This page was already programmed to HW and we don't want/need
+			 * to unlink and link it again just to resync flags.
+			 *
+			 * The DMA address calculation below is based on the fact that
+			 * RDMA UMEM doesn't work with swiotlb.
+			 */
+			pa = odp->iova.addr + (idx + i) * (1 << odp->page_shift);
+		else
+			pa = ib_dma_link_range(dev, hmm_pfn_to_page(pfn), 0, &odp->iova,
+				       (idx + i) * (1 << odp->page_shift));
+		WARN_ON_ONCE(ib_dma_mapping_error(dev, pa));
+
 		pa |= MLX5_IB_MTT_READ;
 		if ((pfn & HMM_PFN_WRITE) && !downgrade)
 			pa |= MLX5_IB_MTT_WRITE;
 
 		pas[i] = cpu_to_be64(pa);
+		odp->pfn_list[idx + i] |= HMM_PFN_STICKY;
+		odp->npages++;
 	}
 }
 
