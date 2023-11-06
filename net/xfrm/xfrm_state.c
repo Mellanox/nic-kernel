@@ -911,7 +911,7 @@ restart:
 
 				xfrm_audit_state_delete(x, err ? 0 : 1,
 							task_valid);
-				xfrm_state_put(x);
+				xfrm_state_put_sync(x);
 				if (!err)
 					cnt++;
 
