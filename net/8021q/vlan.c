@@ -382,11 +382,14 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	    (dev->features & NETIF_F_HW_VLAN_CTAG_FILTER)) {
 		pr_info("adding VLAN 0 to HW filter on device %s\n",
 			dev->name);
-		vlan_vid_add(dev, htons(ETH_P_8021Q), 0);
+		if (!vlan_vid_add(dev, htons(ETH_P_8021Q), 0))
+			dev->priv_flags |= IFF_HW_VID_ZERO;
 	}
 	if (event == NETDEV_DOWN &&
-	    (dev->features & NETIF_F_HW_VLAN_CTAG_FILTER))
+	    (dev->priv_flags & IFF_HW_VID_ZERO)) {
+		dev->priv_flags &= ~IFF_HW_VID_ZERO;
 		vlan_vid_del(dev, htons(ETH_P_8021Q), 0);
+	}
 
 	vlan_info = rtnl_dereference(dev->vlan_info);
 	if (!vlan_info)
