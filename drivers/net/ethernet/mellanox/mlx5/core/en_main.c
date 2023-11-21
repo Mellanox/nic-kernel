@@ -5729,6 +5729,26 @@ static const struct mlx5e_profile mlx5e_nic_profile = {
 		BIT(MLX5E_PROFILE_FEATURE_FS_TC),
 };
 
+static int mlx5e_none_init(struct mlx5_core_dev *mdev,
+			   struct net_device *netdev)
+{
+	return 0;
+}
+
+static void mlx5e_none_cleanup(struct mlx5e_priv *priv)
+{
+}
+
+static const struct mlx5e_profile mlx5e_none_profile = {
+	.init		   = mlx5e_none_init,
+	.cleanup	   = mlx5e_none_cleanup,
+};
+
+static bool mlx5e_profile_is_none(struct mlx5e_priv *priv)
+{
+	return priv->profile == &mlx5e_none_profile;
+}
+
 static int mlx5e_profile_max_num_channels(struct mlx5_core_dev *mdev,
 					  const struct mlx5e_profile *profile)
 {
@@ -5760,7 +5780,8 @@ mlx5e_calc_max_nch(struct mlx5_core_dev *mdev, struct net_device *netdev,
 		tmp -= mlx5e_qos_max_leaf_nodes(mdev);
 	if (MLX5_CAP_GEN(mdev, ts_cqe_to_dest_cqn))
 		tmp -= profile->max_tc;
-	tmp = tmp / profile->max_tc;
+	if (profile->max_tc)
+		tmp = tmp / profile->max_tc;
 	max_nch = min_t(unsigned int, max_nch, tmp);
 
 	return max_nch;
@@ -5952,6 +5973,9 @@ int mlx5e_attach_netdev(struct mlx5e_priv *priv)
 	int max_nch;
 	int err;
 
+	if (mlx5e_profile_is_none(priv))
+		return 0;
+
 	clear_bit(MLX5E_STATE_DESTROYING, &priv->state);
 	if (priv->fs)
 		mlx5e_fs_set_state_destroy(priv->fs,
@@ -6032,6 +6056,9 @@ out:
 void mlx5e_detach_netdev(struct mlx5e_priv *priv)
 {
 	const struct mlx5e_profile *profile = priv->profile;
+
+	if (mlx5e_profile_is_none(priv))
+		return;
 
 	set_bit(MLX5E_STATE_DESTROYING, &priv->state);
 	if (priv->fs)
@@ -6137,6 +6164,11 @@ void mlx5e_netdev_attach_nic_profile(struct mlx5e_priv *priv)
 	mlx5e_netdev_change_profile(priv, &mlx5e_nic_profile, NULL);
 }
 
+void mlx5e_netdev_attach_none_profile(struct mlx5e_priv *priv)
+{
+	mlx5e_netdev_change_profile(priv, &mlx5e_none_profile, NULL);
+}
+
 void mlx5e_destroy_netdev(struct mlx5e_priv *priv)
 {
 	struct net_device *netdev = priv->netdev;
@@ -6203,7 +6235,8 @@ static int _mlx5e_suspend(struct auxiliary_device *adev, bool pre_netdev_reg)
 	struct mlx5_core_dev *pos;
 	int i;
 
-	if (!pre_netdev_reg && !netif_device_present(netdev)) {
+	if (!pre_netdev_reg && !mlx5e_profile_is_none(priv) &&
+	    !netif_device_present(netdev)) {
 		if (test_bit(MLX5E_STATE_DESTROYING, &priv->state))
 			mlx5_sd_for_each_dev(i, mdev, pos)
 				mlx5e_destroy_mdev_resources(pos);
@@ -6332,7 +6365,8 @@ static void _mlx5e_remove(struct auxiliary_device *adev)
 
 	mlx5_core_uplink_netdev_set(mdev, NULL);
 	mlx5e_dcbnl_delete_app(priv);
-	unregister_netdev(priv->netdev);
+	if (priv->netdev->reg_state == NETREG_REGISTERED)
+		unregister_netdev(priv->netdev);
 	_mlx5e_suspend(adev, false);
 	priv->profile->cleanup(priv);
 	mlx5e_destroy_netdev(priv);
