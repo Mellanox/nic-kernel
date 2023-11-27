@@ -193,7 +193,7 @@ static int __rxe_odp_mr_copy(struct rxe_mr *mr, u64 iova, void *addr,
 	while (length > 0) {
 		u8 *src, *dest;
 
-		page = hmm_pfn_to_page(umem_odp->pfn_list[idx]);
+		page = hmm_pfn_to_page(umem_odp->map.pfn_list[idx]);
 		user_va = kmap_local_page(page);
 		if (!user_va)
 			return -EFAULT;
@@ -276,7 +276,7 @@ static int rxe_odp_do_atomic_op(struct rxe_mr *mr, u64 iova, int opcode,
 
 	idx = (iova - ib_umem_start(umem_odp)) >> umem_odp->page_shift;
 	page_offset = iova & (BIT(umem_odp->page_shift) - 1);
-	page = hmm_pfn_to_page(umem_odp->pfn_list[idx]);
+	page = hmm_pfn_to_page(umem_odp->map.pfn_list[idx]);
 	if (!page)
 		return RESPST_ERR_RKEY_VIOLATION;
 
