@@ -102,6 +102,7 @@ struct ib_umad_port {
 	struct ib_umad_device *umad_dev;
 	int                    dev_num;
 	u32                     port_num;
+	int			max_recv_list_size;
 };
 
 struct ib_umad_device {
@@ -113,6 +114,7 @@ struct ib_umad_file {
 	struct mutex		mutex;
 	struct ib_umad_port    *port;
 	struct list_head	recv_list;
+	atomic_t		recv_list_size;
 	struct list_head	send_list;
 	struct list_head	port_list;
 	spinlock_t		send_lock;
@@ -180,9 +182,27 @@ static struct ib_mad_agent *__get_agent(struct ib_umad_file *file, int id)
 	return file->agents_dead ? NULL : file->agent[id];
 }
 
+static inline bool should_drop_packet(struct ib_umad_file *file,
+				      struct ib_umad_packet *packet,
+				      bool is_send_mad)
+{
+	if (is_send_mad)
+		return false;
+
+	if (!file->port->max_recv_list_size)
+		return false;
+
+	if (atomic_read(&file->recv_list_size) <
+	    file->port->max_recv_list_size)
+		return false;
+
+	return true;
+}
+
 static int queue_packet(struct ib_umad_file *file,
 			struct ib_mad_agent *agent,
-			struct ib_umad_packet *packet)
+			struct ib_umad_packet *packet,
+			bool is_send_mad)
 {
 	int ret = 1;
 
@@ -192,7 +212,10 @@ static int queue_packet(struct ib_umad_file *file,
 	     packet->mad.hdr.id < IB_UMAD_MAX_AGENTS;
 	     packet->mad.hdr.id++)
 		if (agent == __get_agent(file, packet->mad.hdr.id)) {
+			if (should_drop_packet(file, packet, is_send_mad))
+				break;
 			list_add_tail(&packet->list, &file->recv_list);
+			atomic_inc(&file->recv_list_size);
 			wake_up_interruptible(&file->recv_wait);
 			ret = 0;
 			break;
@@ -224,7 +247,7 @@ static void send_handler(struct ib_mad_agent *agent,
 	if (send_wc->status == IB_WC_RESP_TIMEOUT_ERR) {
 		packet->length = IB_MGMT_MAD_HDR;
 		packet->mad.hdr.status = ETIMEDOUT;
-		if (!queue_packet(file, agent, packet))
+		if (!queue_packet(file, agent, packet, true))
 			return;
 	}
 	kfree(packet);
@@ -284,7 +307,7 @@ static void recv_handler(struct ib_mad_agent *agent,
 		rdma_destroy_ah_attr(&ah_attr);
 	}
 
-	if (queue_packet(file, agent, packet))
+	if (queue_packet(file, agent, packet, false))
 		goto err2;
 	return;
 
@@ -409,6 +432,7 @@ static ssize_t ib_umad_read(struct file *filp, char __user *buf,
 
 	packet = list_entry(file->recv_list.next, struct ib_umad_packet, list);
 	list_del(&packet->list);
+	atomic_dec(&file->recv_list_size);
 
 	mutex_unlock(&file->mutex);
 
@@ -421,6 +445,7 @@ static ssize_t ib_umad_read(struct file *filp, char __user *buf,
 		/* Requeue packet */
 		mutex_lock(&file->mutex);
 		list_add(&packet->list, &file->recv_list);
+		atomic_inc(&file->recv_list_size);
 		mutex_unlock(&file->mutex);
 	} else {
 		if (packet->recv_wc)
@@ -1222,9 +1247,41 @@ static ssize_t port_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_RO(port);
 
+static ssize_t max_recv_list_size_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct ib_umad_port *port = dev_get_drvdata(dev);
+	int val, ret;
+
+	if (!port)
+		return -ENODEV;
+
+	ret = kstrtouint(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	port->max_recv_list_size = val;
+
+	return count;
+}
+
+static ssize_t max_recv_list_size_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct ib_umad_port *port = dev_get_drvdata(dev);
+
+	if (!port)
+		return -ENODEV;
+
+	return sysfs_emit(buf, "%d\n", port->max_recv_list_size);
+}
+static DEVICE_ATTR_RW(max_recv_list_size);
+
 static struct attribute *umad_class_dev_attrs[] = {
 	&dev_attr_ibdev.attr,
 	&dev_attr_port.attr,
+	&dev_attr_max_recv_list_size.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(umad_class_dev);

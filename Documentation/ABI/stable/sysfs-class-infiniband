@@ -275,6 +275,18 @@ Description:
 		=============== ===========================================
 
 
+What:		/sys/class/infiniband_mad/umad<N>/max_recv_list_size
+Date:		January, 2024
+KernelVersion:	v6.9
+Contact:	linux-rdma@vger.kernel.org
+Description:
+		(RW) Limit the size of the list of MAD packets waiting to be
+		     read by the user-space agent.
+		     The default value is 0, which means unlimited list size.
+		     Packets received when the list is full will be silently
+		     dropped.
+
+
 What:		/sys/class/infiniband_verbs/abi_version
 Date:		Sep, 2005
 KernelVersion:	v2.6.14
