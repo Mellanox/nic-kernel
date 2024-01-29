@@ -978,3 +978,47 @@ void dma_iova_init(struct device *dev, struct dma_iova_state *state)
 		state->use_iova = true;
 }
 EXPORT_SYMBOL_GPL(dma_iova_init);
+
+/**
+ * dma_iova_alloc - Allocate an IOVA space
+ * @dev: Device to allocate the IOVA space for
+ * @state: IOVA state
+ * @phys: physical address
+ * @size: IOVA size
+ *
+ * Allocate an IOVA space for the given IOVA state and size. The IOVA space
+ * is allocated to the worst case when whole range is going to be used.
+ *
+ * Note: @phys is only used to calculate the IOVA alignent. Callers that always
+ * do IOMMU granule aligned transfers can safely pass 0 here.
+ *
+ * Returns the IOVA to be used for the transfer.
+ */
+dma_addr_t dma_iova_alloc(struct device *dev, struct dma_iova_state *state,
+		phys_addr_t phys, size_t size)
+{
+	if (WARN_ON_ONCE(!use_dma_iommu(dev)))
+		return DMA_MAPPING_ERROR;
+
+	if (WARN_ON_ONCE(!size))
+		return DMA_MAPPING_ERROR;
+
+	return iommu_dma_iova_alloc(dev, state, phys, size);
+}
+EXPORT_SYMBOL_GPL(dma_iova_alloc);
+
+/**
+ * dma_iova_free - Free an IOVA space
+ * @dev: Device to free the IOVA space for
+ * @state: IOVA state
+ *
+ * Free an IOVA space for the given IOVA attributes.
+ */
+void dma_iova_free(struct device *dev, struct dma_iova_state *state)
+{
+	if (!use_dma_iommu(dev))
+		return;
+
+	iommu_dma_iova_free(dev, state);
+}
+EXPORT_SYMBOL_GPL(dma_iova_free);
