@@ -12,6 +12,7 @@
 #include <linux/mm.h>
 
 struct mmu_interval_notifier;
+struct dma_iova_state;
 
 /*
  * On output:
@@ -125,4 +126,10 @@ int hmm_range_fault(struct hmm_range *range);
  */
 #define HMM_RANGE_DEFAULT_TIMEOUT 1000
 
+dma_addr_t hmm_dma_map_pfn(struct device *dev, struct dma_iova_state *state,
+			   unsigned long pfns[], dma_addr_t dma_addrs[],
+			   size_t idx, size_t entry_size);
+bool hmm_dma_unmap_pfn(struct device *dev, struct dma_iova_state *state,
+		       unsigned long pfns[], dma_addr_t dma_addrs[], size_t idx,
+		       size_t entry_size);
 #endif /* LINUX_HMM_H */
