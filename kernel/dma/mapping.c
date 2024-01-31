@@ -188,6 +188,10 @@ int dma_alloc_iova(struct dma_iova_attrs *iova)
 	struct device *dev = iova->dev;
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 
+	if (dma_map_direct(dev, ops) && is_swiotlb_force_bounce(dev) &&
+	    iova->attrs & DMA_ATTR_NO_TRANSLATION)
+		return -EOPNOTSUPP;
+
 	if (dma_map_direct(dev, ops) || !ops->alloc_iova) {
 		iova->addr = 0;
 		return 0;

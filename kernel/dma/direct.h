@@ -92,6 +92,8 @@ static inline dma_addr_t dma_direct_map_page(struct device *dev,
 	if (is_swiotlb_force_bounce(dev)) {
 		if (is_pci_p2pdma_page(page))
 			return DMA_MAPPING_ERROR;
+		if (attrs & DMA_ATTR_NO_TRANSLATION)
+			return DMA_MAPPING_ERROR;
 		return swiotlb_map(dev, phys, size, dir, attrs);
 	}
 
@@ -99,7 +101,7 @@ static inline dma_addr_t dma_direct_map_page(struct device *dev,
 	    dma_kmalloc_needs_bounce(dev, size, dir)) {
 		if (is_pci_p2pdma_page(page))
 			return DMA_MAPPING_ERROR;
-		if (is_swiotlb_active(dev))
+		if (is_swiotlb_active(dev) && !(attrs & DMA_ATTR_NO_TRANSLATION))
 			return swiotlb_map(dev, phys, size, dir, attrs);
 
 		dev_WARN_ONCE(dev, 1,
