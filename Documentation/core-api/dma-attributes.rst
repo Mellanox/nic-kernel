@@ -130,3 +130,10 @@ accesses to DMA buffers in both privileged "supervisor" and unprivileged
 subsystem that the buffer is fully accessible at the elevated privilege
 level (and ideally inaccessible or at least read-only at the
 lesser-privileged levels).
+
+DMA_ATTR_NO_TRANSLATION
+-----------------------
+
+This attribute is used to indicate to the DMA-mapping subsystem that the
+buffer is not subject to any address translation.  This is used for devices
+that doesn't need buffer bouncing or fixing DMA addresses.

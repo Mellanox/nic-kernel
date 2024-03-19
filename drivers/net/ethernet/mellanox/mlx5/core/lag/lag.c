@@ -1517,6 +1517,35 @@ unlock:
 }
 EXPORT_SYMBOL(mlx5_lag_get_roce_netdev);
 
+struct net_device *mlx5_lag_get_netdev(struct mlx5_core_dev *dev)
+{
+	struct net_device *ndev = NULL;
+	struct mlx5_lag *ldev;
+	unsigned long flags;
+	int i;
+
+	spin_lock_irqsave(&lag_lock, flags);
+	ldev = mlx5_lag_dev(dev);
+
+	if (!(ldev && __mlx5_lag_is_active(ldev)))
+		goto unlock;
+
+	for (i = 0; i < ldev->ports; i++) {
+		if (ldev->pf[i].dev == dev) {
+			ndev = ldev->pf[i].netdev;
+			break;
+		}
+	}
+
+	if (ndev)
+		dev_hold(ndev);
+
+unlock:
+	spin_unlock_irqrestore(&lag_lock, flags);
+	return ndev;
+}
+EXPORT_SYMBOL(mlx5_lag_get_netdev);
+
 u8 mlx5_lag_get_slave_port(struct mlx5_core_dev *dev,
 			   struct net_device *slave)
 {
