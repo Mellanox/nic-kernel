@@ -11,6 +11,7 @@
 #include <linux/scatterlist.h>
 #include <linux/bug.h>
 #include <linux/mem_encrypt.h>
+#include <linux/iommu.h>
 
 /**
  * List of possible attributes associated with a DMA mapping. The semantics
@@ -124,6 +125,8 @@ void dma_iova_init(struct device *dev, struct dma_iova_state *state);
 dma_addr_t dma_iova_alloc(struct device *dev, struct dma_iova_state *state,
 		phys_addr_t phys, size_t size);
 void dma_iova_free(struct device *dev, struct dma_iova_state *state);
+void dma_iova_destroy(struct device *dev, struct dma_iova_state *state,
+		dma_addr_t dma_addr, size_t size, enum dma_data_direction dir);
 dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 		size_t offset, size_t size, enum dma_data_direction dir,
 		unsigned long attrs);
@@ -172,6 +175,12 @@ void *dma_vmap_noncontiguous(struct device *dev, size_t size,
 void dma_vunmap_noncontiguous(struct device *dev, void *vaddr);
 int dma_mmap_noncontiguous(struct device *dev, struct vm_area_struct *vma,
 		size_t size, struct sg_table *sgt);
+int dma_iova_link(struct device *dev, struct dma_iova_state *state,
+		phys_addr_t phys, size_t offset, size_t size,
+		enum dma_data_direction dir, unsigned long attrs);
+void dma_iova_unlink(struct device *dev, struct dma_iova_state *state,
+		size_t offset, size_t size, enum dma_data_direction dir,
+		unsigned long attrs);
 #else /* CONFIG_HAS_DMA */
 static inline dma_addr_t dma_iova_alloc(struct device *dev,
 		struct dma_iova_state *state, phys_addr_t phys, size_t size)
@@ -180,6 +189,11 @@ static inline dma_addr_t dma_iova_alloc(struct device *dev,
 }
 static inline void dma_iova_free(struct device *dev,
 		struct dma_iova_state *state)
+{
+}
+static inline void dma_iova_destroy(struct device *dev,
+		struct dma_iova_state *state, dma_addr_t dma_addr, size_t size,
+		enum dma_data_direction dir)
 {
 }
 static inline dma_addr_t dma_map_page_attrs(struct device *dev,
@@ -315,7 +329,26 @@ static inline void dma_iova_init(struct device *dev,
 		struct dma_iova_state *state)
 {
 }
+static inline int dma_iova_link(struct device *dev,
+		struct dma_iova_state *state, phys_addr_t phys, size_t offset,
+		size_t size, enum dma_data_direction dir, unsigned long attrs)
+{
+	return -EOPNOTSUPP;
+}
+static inline void dma_iova_unlink(struct device *dev,
+		struct dma_iova_state *state, size_t offset, size_t size,
+		enum dma_data_direction dir, unsigned long attrs)
+{
+}
 #endif /* CONFIG_HAS_DMA */
+
+static inline int dma_iova_link_next(struct device *dev,
+		struct dma_iova_state *state, phys_addr_t phys, size_t size,
+		enum dma_data_direction dir, unsigned long attrs)
+{
+	return dma_iova_link(dev, state, phys, state->mapped_size, size, dir,
+			attrs);
+}
 
 #if defined(CONFIG_HAS_DMA) && defined(CONFIG_DMA_NEED_SYNC)
 void __dma_sync_single_for_cpu(struct device *dev, dma_addr_t addr, size_t size,
