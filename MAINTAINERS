@@ -9561,7 +9561,7 @@ FWCTL SUBSYSTEM
 M:	Jason Gunthorpe <jgg@nvidia.com>
 M:	Saeed Mahameed <saeedm@nvidia.com>
 S:	Maintained
-F:	Documentation/userspace-api/fwctl.rst
+F:	Documentation/userspace-api/fwctl/
 F:	drivers/fwctl/
 F:	include/linux/fwctl.h
 F:	include/uapi/fwctl/
