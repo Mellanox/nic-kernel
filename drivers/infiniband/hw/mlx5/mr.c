@@ -845,6 +845,40 @@ static void mlx5_mkey_cache_debugfs_add_ent(struct mlx5_ib_dev *dev,
 	debugfs_create_u32("miss", 0600, dir, &ent->miss);
 }
 
+static int dump_show(struct seq_file *m, void *v)
+{
+	struct mlx5_mkey_cache *cache = m->private;
+	u32 limit, in_use, miss, pending;
+	struct mlx5_cache_ent *ent;
+	struct rb_node *node;
+	unsigned long cur;
+
+	mutex_lock(&cache->rb_lock);
+	for (node = rb_first(&cache->rb_root); node; node = rb_next(node)) {
+		ent = rb_entry(node, struct mlx5_cache_ent, node);
+
+		spin_lock_irq(&ent->mkeys_queue.lock);
+		limit = ent->limit;
+		cur = ent->mkeys_queue.ci;
+		in_use = ent->in_use;
+		pending = ent->pending;
+		miss = ent->miss;
+		spin_unlock_irq(&ent->mkeys_queue.lock);
+
+		seq_printf(
+			m,
+			" --- [Key: Access Mode 0x%1x, Access Flags 0x%08x, ATS %1d, Number of Descriptors %#8x] ---\n"
+			"\t%-16s | Limit %9u | Current %9lu | In use %9u | Miss %9u | Pending %9u\n",
+			ent->rb_key.access_mode, ent->rb_key.access_flags,
+			ent->rb_key.ats, ent->rb_key.ndescs,
+			ent->is_tmp ? "Temp entry" : "Persistent entry", limit,
+			cur, in_use, miss, pending);
+	}
+	mutex_unlock(&cache->rb_lock);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(dump);
+
 static void mlx5_mkey_cache_debugfs_init(struct mlx5_ib_dev *dev)
 {
 	struct dentry *dbg_root = mlx5_debugfs_get_dev_root(dev->mdev);
@@ -854,6 +888,8 @@ static void mlx5_mkey_cache_debugfs_init(struct mlx5_ib_dev *dev)
 		return;
 
 	cache->fs_root = debugfs_create_dir("mr_cache", dbg_root);
+	debugfs_create_file("dump", 0400, cache->fs_root, cache,
+			    &dump_fops);
 }
 
 static void delay_time_func(struct timer_list *t)
