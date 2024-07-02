@@ -11,6 +11,7 @@
 #include <linux/scatterlist.h>
 #include <linux/bug.h>
 #include <linux/mem_encrypt.h>
+#include <linux/iommu.h>
 
 /**
  * List of possible attributes associated with a DMA mapping. The semantics
@@ -76,6 +77,37 @@
 
 #define DMA_BIT_MASK(n)	(((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
 
+enum dma_memory_types {
+	/* Normal memory without any extra properties like P2P, e.t.c */
+	DMA_MEMORY_TYPE_NORMAL,
+	/* Memory which is p2p capable */
+	DMA_MEMORY_TYPE_P2P,
+	/* Encrypted memory (TDX) */
+	DMA_MEMORY_TYPE_ENCRYPTED,
+};
+
+struct dma_memory_type {
+	enum dma_memory_types type;
+	struct dev_pagemap *p2p_pgmap;
+};
+
+struct dma_iova_attrs {
+	/* OUT field */
+	dma_addr_t addr;
+	/* IN fields */
+	struct device *dev;
+	size_t size;
+	enum dma_data_direction dir;
+	unsigned long attrs;
+};
+
+struct dma_iova_state {
+	struct dma_iova_attrs *iova;
+	struct dma_memory_type *type;
+	struct iommu_domain *domain;
+	size_t range_size;
+};
+
 #ifdef CONFIG_DMA_API_DEBUG
 void debug_dma_mapping_error(struct device *dev, dma_addr_t dma_addr);
 void debug_dma_map_single(struct device *dev, const void *addr,
@@ -100,6 +132,13 @@ static inline int dma_mapping_error(struct device *dev, dma_addr_t dma_addr)
 		return -ENOMEM;
 	return 0;
 }
+
+int dma_alloc_iova(struct dma_iova_attrs *iova);
+void dma_free_iova(struct dma_iova_attrs *iova);
+dma_addr_t dma_hmm_link_page(unsigned long *pfn, struct dma_iova_attrs *iova,
+			     dma_addr_t dma_offset);
+void dma_hmm_unlink_page(unsigned long *pfn, struct dma_iova_attrs *iova,
+			 dma_addr_t dma_offset);
 
 dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 		size_t offset, size_t size, enum dma_data_direction dir,
@@ -149,7 +188,32 @@ void *dma_vmap_noncontiguous(struct device *dev, size_t size,
 void dma_vunmap_noncontiguous(struct device *dev, void *vaddr);
 int dma_mmap_noncontiguous(struct device *dev, struct vm_area_struct *vma,
 		size_t size, struct sg_table *sgt);
+
+void dma_get_memory_type(struct page *page, struct dma_memory_type *type);
+bool dma_can_use_iova(struct dma_iova_state *state, size_t size);
+int dma_start_range(struct dma_iova_state *state);
+void dma_end_range(struct dma_iova_state *state);
+int dma_link_range(struct dma_iova_state *state, phys_addr_t phys, size_t size);
+void dma_unlink_range(struct dma_iova_state *state);
 #else /* CONFIG_HAS_DMA */
+static inline int dma_alloc_iova(struct dma_iova_attrs *iova)
+{
+	return -EOPNOTSUPP;
+}
+static inline void dma_free_iova(struct dma_iova_attrs *iova)
+{
+}
+static inline dma_addr_t dma_hmm_link_page(unsigned long *pfn,
+					   struct dma_iova_attrs *iova,
+					   dma_addr_t dma_offset)
+{
+	return DMA_MAPPING_ERROR;
+}
+static inline void dma_hmm_unlink_page(unsigned long *pfn,
+				       struct dma_iova_attrs *iova,
+				       dma_addr_t dma_offset)
+{
+}
 static inline dma_addr_t dma_map_page_attrs(struct device *dev,
 		struct page *page, size_t offset, size_t size,
 		enum dma_data_direction dir, unsigned long attrs)
@@ -278,6 +342,29 @@ static inline int dma_mmap_noncontiguous(struct device *dev,
 		struct vm_area_struct *vma, size_t size, struct sg_table *sgt)
 {
 	return -EINVAL;
+}
+static inline void dma_get_memory_type(struct page *page,
+				       struct dma_memory_type *type)
+{
+}
+static inline bool dma_can_use_iova(struct dma_iova_state *state, size_t size)
+{
+	return false;
+}
+static inline int dma_start_range(struct dma_iova_state *state)
+{
+	return -EOPNOTSUPP;
+}
+static inline void dma_end_range(struct dma_iova_state *state)
+{
+}
+static inline int dma_link_range(struct dma_iova_state *state, phys_addr_t phys,
+				 size_t size)
+{
+	return -EOPNOTSUPP;
+}
+static inline void dma_unlink_range(struct dma_iova_state *state)
+{
 }
 #endif /* CONFIG_HAS_DMA */
 
