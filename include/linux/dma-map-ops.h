@@ -9,6 +9,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/pgtable.h>
 #include <linux/slab.h>
+#include <linux/pci.h>
 
 struct cma;
 struct iommu_ops;
@@ -86,6 +87,15 @@ struct dma_map_ops {
 	size_t (*max_mapping_size)(struct device *dev);
 	size_t (*opt_mapping_size)(void);
 	unsigned long (*get_merge_boundary)(struct device *dev);
+
+	dma_addr_t (*alloc_iova)(struct device *dev, size_t size);
+	void (*free_iova)(struct device *dev, dma_addr_t dma_addr, size_t size);
+	int (*link_range)(struct dma_iova_state *state, phys_addr_t phys,
+			  dma_addr_t addr, size_t size);
+	void (*unlink_range)(struct dma_iova_state *state,
+			     dma_addr_t dma_handle, size_t size);
+	int (*start_range)(struct dma_iova_state *state);
+	void (*end_range)(struct dma_iova_state *state);
 };
 
 #ifdef CONFIG_DMA_OPS
@@ -345,6 +355,19 @@ static inline bool dma_kmalloc_needs_bounce(struct device *dev, size_t size,
 	return !dma_kmalloc_safe(dev, dir) && !dma_kmalloc_size_aligned(size);
 }
 
+static inline bool dev_is_untrusted(struct device *dev)
+{
+	return dev_is_pci(dev) && to_pci_dev(dev)->untrusted;
+}
+
+static inline bool dev_use_swiotlb(struct device *dev, size_t size,
+				   enum dma_data_direction dir)
+{
+	return IS_ENABLED(CONFIG_SWIOTLB) &&
+	       (dev_is_untrusted(dev) ||
+		dma_kmalloc_needs_bounce(dev, size, dir));
+}
+
 void *arch_dma_alloc(struct device *dev, size_t size, dma_addr_t *dma_handle,
 		gfp_t gfp, unsigned long attrs);
 void arch_dma_free(struct device *dev, size_t size, void *cpu_addr,
@@ -511,10 +534,17 @@ struct pci_p2pdma_map_state {
 enum pci_p2pdma_map_type
 pci_p2pdma_map_segment(struct pci_p2pdma_map_state *state, struct device *dev,
 		       struct scatterlist *sg);
+enum pci_p2pdma_map_type pci_p2pdma_map_type(struct dev_pagemap *pgmap,
+					     struct device *dev);
 #else /* CONFIG_PCI_P2PDMA */
 static inline enum pci_p2pdma_map_type
 pci_p2pdma_map_segment(struct pci_p2pdma_map_state *state, struct device *dev,
 		       struct scatterlist *sg)
+{
+	return PCI_P2PDMA_MAP_NOT_SUPPORTED;
+}
+static inline enum pci_p2pdma_map_type
+pci_p2pdma_map_type(struct dev_pagemap *pgmap, struct device *dev)
 {
 	return PCI_P2PDMA_MAP_NOT_SUPPORTED;
 }
