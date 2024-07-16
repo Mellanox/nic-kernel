@@ -962,3 +962,19 @@ unsigned long dma_get_merge_boundary(struct device *dev)
 	return ops->get_merge_boundary(dev);
 }
 EXPORT_SYMBOL_GPL(dma_get_merge_boundary);
+
+/**
+ * dma_iova_init - Initialize the IOVA state
+ * @dev: Device to initialize the IOVA state for
+ * @state: IOVA state to initialize
+ *
+ * Set up the IOVA state for a mapping.  After this dma_can_use_iova() can be
+ * used if IOVA based mapping are supported.
+ */
+void dma_iova_init(struct device *dev, struct dma_iova_state *state)
+{
+	memset(state, 0, sizeof(*state));
+	if (use_dma_iommu(dev) && iommu_dma_can_use_iova(dev))
+		state->use_iova = true;
+}
+EXPORT_SYMBOL_GPL(dma_iova_init);

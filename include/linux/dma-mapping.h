@@ -76,6 +76,23 @@
 
 #define DMA_BIT_MASK(n)	(((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
 
+struct dma_iova_state {
+	u8 use_iova : 1;
+};
+
+/**
+ * dma_can_use_iova - check if the device type is valid
+ *                    and won't take SWIOTLB path
+ * @state: IOVA state
+ *
+ * Return %true if the device should use swiotlb for the given buffer, else
+ * %false.
+ */
+static inline bool dma_can_use_iova(struct dma_iova_state *state)
+{
+	return IS_ENABLED(CONFIG_IOMMU_DMA) && state->use_iova;
+}
+
 #ifdef CONFIG_DMA_API_DEBUG
 void debug_dma_mapping_error(struct device *dev, dma_addr_t dma_addr);
 void debug_dma_map_single(struct device *dev, const void *addr,
@@ -100,7 +117,7 @@ static inline int dma_mapping_error(struct device *dev, dma_addr_t dma_addr)
 		return -ENOMEM;
 	return 0;
 }
-
+void dma_iova_init(struct device *dev, struct dma_iova_state *state);
 dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 		size_t offset, size_t size, enum dma_data_direction dir,
 		unsigned long attrs);
@@ -278,6 +295,10 @@ static inline int dma_mmap_noncontiguous(struct device *dev,
 		struct vm_area_struct *vma, size_t size, struct sg_table *sgt)
 {
 	return -EINVAL;
+}
+static inline void dma_iova_init(struct device *dev,
+		struct dma_iova_state *state)
+{
 }
 #endif /* CONFIG_HAS_DMA */
 
