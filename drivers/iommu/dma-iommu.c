@@ -1744,6 +1744,22 @@ size_t iommu_dma_max_mapping_size(struct device *dev)
 	return SIZE_MAX;
 }
 
+bool iommu_dma_can_use_iova(struct device *dev)
+{
+	/*
+	 * Bounce buffering is not supported in the IOVA API.
+	 */
+	if (IS_ENABLED(CONFIG_SWIOTLB) && dev_is_untrusted(dev))
+		return false;
+
+	if (static_branch_unlikely(&iommu_deferred_attach_enabled)) {
+		return iommu_deferred_attach(dev,
+				iommu_get_domain_for_dev(dev));
+	}
+
+	return true;
+}
+
 void iommu_setup_dma_ops(struct device *dev)
 {
 	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);

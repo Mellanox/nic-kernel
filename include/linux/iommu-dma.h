@@ -65,5 +65,5 @@ void iommu_dma_sync_sg_for_cpu(struct device *dev, struct scatterlist *sgl,
 		int nelems, enum dma_data_direction dir);
 void iommu_dma_sync_sg_for_device(struct device *dev, struct scatterlist *sgl,
 		int nelems, enum dma_data_direction dir);
-
+bool iommu_dma_can_use_iova(struct device *dev);
 #endif /* _LINUX_IOMMU_DMA_H */
