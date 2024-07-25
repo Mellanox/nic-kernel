@@ -4,6 +4,7 @@
 #define _RDMA_NETLINK_H
 
 #include <linux/netlink.h>
+#include <rdma/ib_verbs.h>
 #include <uapi/rdma/rdma_netlink.h>
 
 enum {
@@ -109,6 +110,16 @@ int rdma_nl_multicast(struct net *net, struct sk_buff *skb,
  * Returns true on success or false if no listeners.
  */
 bool rdma_nl_chk_listeners(unsigned int group);
+
+/**
+ * Prepare and send an event message
+ * @ib: the IB device which triggered the event
+ * @port_num: the port number which triggered the event - 0 if unused
+ * @type: the event type
+ * Returns 0 on success or a negative error code
+ */
+int rdma_nl_notify_event(struct ib_device *ib, u32 port_num,
+			 enum rdma_nl_notify_event_type type);
 
 struct rdma_link_ops {
 	struct list_head list;
