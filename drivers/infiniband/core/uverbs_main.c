@@ -45,7 +45,6 @@
 #include <linux/cdev.h>
 #include <linux/anon_inodes.h>
 #include <linux/slab.h>
-#include <linux/sched/mm.h>
 
 #include <linux/uaccess.h>
 
