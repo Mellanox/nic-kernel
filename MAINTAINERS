@@ -9564,6 +9564,7 @@ S:	Maintained
 F:	Documentation/userspace-api/fwctl.rst
 F:	drivers/fwctl/
 F:	include/linux/fwctl.h
+F:	include/uapi/fwctl/
 
 GALAXYCORE GC0308 CAMERA SENSOR DRIVER
 M:	Sebastian Reichel <sre@kernel.org>
