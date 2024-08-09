@@ -25,6 +25,8 @@ struct ib_umem {
 	u32 writable : 1;
 	u32 is_odp : 1;
 	u32 is_dmabuf : 1;
+	/* Placing at the end of the bitfield list is ABI preserving on LE */
+	u32 is_peer : 1;
 	struct sg_append_table sgt_append;
 };
 
@@ -38,12 +40,19 @@ struct ib_umem_dmabuf {
 	unsigned long last_sg_trim;
 	void *private;
 	u8 pinned : 1;
+	u8 revoked : 1;
 };
 
 static inline struct ib_umem_dmabuf *to_ib_umem_dmabuf(struct ib_umem *umem)
 {
 	return container_of(umem, struct ib_umem_dmabuf, umem);
 }
+
+typedef void (*umem_invalidate_func_t)(struct ib_umem *umem, void *priv);
+enum ib_peer_mem_flags {
+	IB_PEER_MEM_ALLOW = 1 << 0,
+	IB_PEER_MEM_INVAL_SUPP = 1 << 1,
+};
 
 /* Returns the offset of the umem start relative to the first page. */
 static inline int ib_umem_offset(struct ib_umem *umem)
@@ -150,9 +159,22 @@ struct ib_umem_dmabuf *ib_umem_dmabuf_get_pinned(struct ib_device *device,
 						 unsigned long offset,
 						 size_t size, int fd,
 						 int access);
+struct ib_umem_dmabuf *
+ib_umem_dmabuf_get_pinned_with_dma_device(struct ib_device *device,
+					  struct device *dma_device,
+					  unsigned long offset, size_t size,
+					  int fd, int access);
 int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem_dmabuf);
 void ib_umem_dmabuf_unmap_pages(struct ib_umem_dmabuf *umem_dmabuf);
 void ib_umem_dmabuf_release(struct ib_umem_dmabuf *umem_dmabuf);
+void ib_umem_dmabuf_revoke(struct ib_umem_dmabuf *umem_dmabuf);
+struct ib_umem *ib_umem_get_peer(struct ib_device *device, unsigned long addr,
+				 size_t size, int access,
+				 unsigned long peer_mem_flags);
+void ib_umem_activate_invalidation_notifier(struct ib_umem *umem,
+					   umem_invalidate_func_t func,
+					   void *cookie);
+void ib_umem_stop_invalidation_notifier(struct ib_umem *umem);
 
 #else /* CONFIG_INFINIBAND_USER_MEM */
 
@@ -196,12 +218,37 @@ ib_umem_dmabuf_get_pinned(struct ib_device *device, unsigned long offset,
 {
 	return ERR_PTR(-EOPNOTSUPP);
 }
+
+static inline struct ib_umem_dmabuf *
+ib_umem_dmabuf_get_pinned_with_dma_device(struct ib_device *device,
+					  struct device *dma_device,
+					  unsigned long offset, size_t size,
+					  int fd, int access)
+{
+	return ERR_PTR(-EOPNOTSUPP);
+}
+
 static inline int ib_umem_dmabuf_map_pages(struct ib_umem_dmabuf *umem_dmabuf)
 {
 	return -EOPNOTSUPP;
 }
 static inline void ib_umem_dmabuf_unmap_pages(struct ib_umem_dmabuf *umem_dmabuf) { }
 static inline void ib_umem_dmabuf_release(struct ib_umem_dmabuf *umem_dmabuf) { }
+static inline void ib_umem_dmabuf_revoke(struct ib_umem_dmabuf *umem_dmabuf) {}
+static inline struct ib_umem *ib_umem_get_peer(struct ib_device *device,
+					       unsigned long addr, size_t size,
+					       int access,
+					       unsigned long peer_mem_flags)
+{
+	return ERR_PTR(-EINVAL);
+}
+static inline void ib_umem_activate_invalidation_notifier(
+	struct ib_umem *umem, umem_invalidate_func_t func, void *cookie)
+{
+}
+static inline void ib_umem_stop_invalidation_notifier(struct ib_umem *umem)
+{
+}
 
 #endif /* CONFIG_INFINIBAND_USER_MEM */
 #endif /* IB_UMEM_H */
