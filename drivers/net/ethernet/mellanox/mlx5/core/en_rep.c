@@ -1507,7 +1507,12 @@ mlx5e_vport_uplink_rep_unload(struct mlx5e_rep_priv *rpriv)
 
 	priv = netdev_priv(netdev);
 
-	mlx5e_netdev_attach_nic_profile(priv);
+	if (priv->mdev->priv.flags & MLX5_PRIV_FLAGS_SWITCH_LEGACY) {
+		mlx5e_netdev_attach_nic_profile(priv);
+	} else {
+		unregister_netdev(priv->netdev);
+		mlx5e_netdev_attach_none_profile(priv);
+	}
 }
 
 static int
