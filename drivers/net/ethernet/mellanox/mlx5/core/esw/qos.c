@@ -816,7 +816,7 @@ int mlx5_esw_qos_modify_vport_rate(struct mlx5_eswitch *esw, u16 vport_num, u32 
 	mutex_lock(&esw->state_lock);
 	if (!vport->qos.enabled) {
 		/* Eswitch QoS wasn't enabled yet. Enable it and vport QoS. */
-		err = esw_qos_vport_enable(vport, rate_mbps, vport->qos.bw_share, NULL);
+		err = esw_qos_vport_enable(vport, rate_mbps, 0, NULL);
 	} else {
 		struct mlx5_core_dev *dev = vport->qos.group->esw->dev;
 
