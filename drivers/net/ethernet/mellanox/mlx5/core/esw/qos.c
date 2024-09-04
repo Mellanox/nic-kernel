@@ -419,8 +419,6 @@ static int esw_qos_vport_update_group(struct mlx5_vport *vport,
 	struct mlx5_esw_rate_group *new_group, *curr_group;
 	int err;
 
-	if (!vport->enabled)
-		return -EINVAL;
 
 	curr_group = vport->qos.group;
 	new_group = group ?: esw->qos.group0;
