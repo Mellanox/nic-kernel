@@ -845,6 +845,13 @@ attribute-sets:
         checks:
           min: 0
           max: 100
+      -
+        name: parent-dev-bus-name
+        type: string
+      -
+        name: parent-dev-name
+        type: string
+
   -
     name: dl-dev-stats
     subset-of: devlink
@@ -2169,8 +2176,8 @@ operations:
       dont-validate: [ strict ]
       flags: [ admin-perm ]
       do:
-        pre: devlink-nl-pre-doit
-        post: devlink-nl-post-doit
+        pre: devlink-nl-pre-doit-parent-dev-optional
+        post: devlink-nl-post-doit-parent-dev-optional
         request:
           attributes:
             - bus-name
@@ -2182,6 +2189,8 @@ operations:
             - rate-tx-weight
             - rate-parent-node-name
             - rate-tc-bws
+            - parent-dev-bus-name
+            - parent-dev-name
 
     -
       name: rate-new
@@ -2190,8 +2199,8 @@ operations:
       dont-validate: [ strict ]
       flags: [ admin-perm ]
       do:
-        pre: devlink-nl-pre-doit
-        post: devlink-nl-post-doit
+        pre: devlink-nl-pre-doit-parent-dev-optional
+        post: devlink-nl-post-doit-parent-dev-optional
         request:
           attributes:
             - bus-name
@@ -2203,6 +2212,8 @@ operations:
             - rate-tx-weight
             - rate-parent-node-name
             - rate-tc-bws
+            - parent-dev-bus-name
+            - parent-dev-name
 
     -
       name: rate-del
