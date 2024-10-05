@@ -7,6 +7,7 @@
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/blk-integrity.h>
+#include <linux/dma-mapping.h>
 #include <linux/scatterlist.h>
 #include <linux/part_stat.h>
 #include <linux/blk-cgroup.h>
@@ -518,6 +519,87 @@ static bool blk_map_iter_next(struct request *req,
 	return true;
 }
 
+#define blk_phys_to_page(_paddr) \
+	(pfn_to_page(__phys_to_pfn(_paddr)))
+
+static blk_status_t blk_dma_map_one(struct request *req, struct device *dma_dev,
+		struct phys_vec *vec, struct blk_dma_vec *map)
+{
+	struct page *page = blk_phys_to_page(vec->paddr);
+	unsigned int offset = offset_in_page(vec->paddr);
+
+	map->addr = dma_map_page(dma_dev, page, offset, vec->len,
+			rq_dma_dir(req));
+	if (dma_mapping_error(dma_dev, map->addr))
+		return BLK_STS_RESOURCE;
+	map->len = vec->len;
+	return BLK_STS_OK;
+}
+
+blk_status_t blk_rq_dma_map_iter_start(struct request *req,
+		struct device *dma_dev, struct req_iterator *iter,
+		struct dma_iova_state *state, struct blk_dma_vec *map)
+{
+	enum dma_data_direction dir = rq_dma_dir(req);
+	struct phys_vec vec;
+	int error;
+
+	iter->bio = req->bio;
+	iter->iter = req->bio->bi_iter;
+
+	/*
+	 * Grab the first segment ASAP because we'll need it to check alignment
+	 * for the IOVA allocation and to check for a P2P transfer.
+	 */
+	if (!blk_map_iter_next(req, iter, &vec))
+		return BLK_STS_INVAL;
+
+	dma_iova_init(dma_dev, state);
+	if (dma_can_use_iova(state)) {
+		unsigned int total_len = blk_rq_payload_bytes(req);
+
+		map->len = total_len;
+		map->addr = dma_iova_alloc(dma_dev, state, vec.paddr, total_len);
+		if (dma_mapping_error(dma_dev, map->addr))
+			return BLK_STS_RESOURCE;
+
+		do {
+			error = dma_iova_link_next(dma_dev, state, vec.paddr,
+					vec.len, dir, 0);
+			if (error) {
+				/*
+				 * XXX: we'll need to handle a fallback for
+				 * -EREMOTEIO.
+				 */
+				WARN_ON_ONCE(error == -EREMOTEIO);
+				return errno_to_blk_status(error);
+			}
+		} while (blk_map_iter_next(req, iter, &vec));
+		return BLK_STS_OK;
+	}
+
+	return blk_dma_map_one(req, dma_dev, &vec, map);
+}
+EXPORT_SYMBOL_GPL(blk_rq_dma_map_iter_start);
+
+bool blk_rq_dma_map_iter_next(struct request *req, struct device *dma_dev,
+		struct req_iterator *iter, struct dma_iova_state *state,
+		struct blk_dma_vec *map, blk_status_t *status)
+{
+	struct phys_vec vec;
+
+	if (dma_can_use_iova(state))
+		return false;
+	if (!blk_map_iter_next(req, iter, &vec))
+		return false;
+
+	*status = blk_dma_map_one(req, dma_dev, &vec, map);
+	if (*status)
+		return false;
+	return true;
+}
+EXPORT_SYMBOL_GPL(blk_rq_dma_map_iter_next);
+
 static inline struct scatterlist *blk_next_sg(struct scatterlist **sg,
 		struct scatterlist *sglist)
 {
@@ -547,7 +629,7 @@ int __blk_rq_map_sg(struct request_queue *q, struct request *rq,
 	int nsegs = 0;
 
 	while (blk_map_iter_next(rq, &iter, &vec)) {
-		struct page *page = pfn_to_page(__phys_to_pfn(vec.paddr));
+		struct page *page = blk_phys_to_page(vec.paddr);
 		unsigned int offset = offset_in_page(vec.paddr);
 
 		*last_sg = blk_next_sg(last_sg, sglist);
