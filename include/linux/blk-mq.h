@@ -12,6 +12,7 @@
 
 struct blk_mq_tags;
 struct blk_flush_queue;
+struct dma_iova_state;
 
 #define BLKDEV_MIN_RQ	4
 #define BLKDEV_DEFAULT_RQ	128
