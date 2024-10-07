@@ -543,7 +543,7 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 					&state->fb_damage_clips,
 					val,
 					-1,
-					sizeof(struct drm_rect),
+					sizeof(struct drm_mode_rect),
 					&replaced);
 		return ret;
 	} else if (property == plane->scaling_filter_property) {
@@ -1071,20 +1071,13 @@ int drm_atomic_set_property(struct drm_atomic_state *state,
 		}
 
 		if (async_flip &&
-		    prop != config->prop_fb_id &&
-		    prop != config->prop_in_fence_fd &&
-		    prop != config->prop_fb_damage_clips) {
+		    (plane_state->plane->type != DRM_PLANE_TYPE_PRIMARY ||
+		     (prop != config->prop_fb_id &&
+		      prop != config->prop_in_fence_fd &&
+		      prop != config->prop_fb_damage_clips))) {
 			ret = drm_atomic_plane_get_property(plane, plane_state,
 							    prop, &old_val);
 			ret = drm_atomic_check_prop_changes(ret, old_val, prop_value, prop);
-			break;
-		}
-
-		if (async_flip && plane_state->plane->type != DRM_PLANE_TYPE_PRIMARY) {
-			drm_dbg_atomic(prop->dev,
-				       "[OBJECT:%d] Only primary planes can be changed during async flip\n",
-				       obj->id);
-			ret = -EINVAL;
 			break;
 		}
 
