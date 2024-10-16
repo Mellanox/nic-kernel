@@ -10,7 +10,7 @@
  *
  */
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <linux/atomic.h>
 #include <linux/gpio/consumer.h>
 #include <linux/init.h>
@@ -1147,9 +1147,6 @@ static int btmtksdio_setup(struct hci_dev *hdev)
 				bdev->reset = NULL;
 			}
 		}
-
-		/* Valid LE States quirk for MediaTek 7921 */
-		set_bit(HCI_QUIRK_VALID_LE_STATES, &hdev->quirks);
 
 		break;
 	case 0x7663:
