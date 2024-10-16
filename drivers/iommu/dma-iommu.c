@@ -358,7 +358,7 @@ int iommu_dma_init_fq(struct iommu_domain *domain)
 	atomic_set(&cookie->fq_timer_on, 0);
 	/*
 	 * Prevent incomplete fq state being observable. Pairs with path from
-	 * __iommu_dma_unmap() through iommu_dma_free_iova() to queue_iova()
+	 * __iommu_dma_unmap() through __iommu_dma_free_iova() to queue_iova()
 	 */
 	smp_wmb();
 	WRITE_ONCE(cookie->fq_domain, domain);
@@ -759,7 +759,7 @@ static int dma_info_to_prot(enum dma_data_direction dir, bool coherent,
 	}
 }
 
-static dma_addr_t iommu_dma_alloc_iova(struct iommu_domain *domain,
+static dma_addr_t __iommu_dma_alloc_iova(struct iommu_domain *domain,
 		size_t size, u64 dma_limit, struct device *dev)
 {
 	struct iommu_dma_cookie *cookie = domain->iova_cookie;
@@ -805,7 +805,7 @@ done:
 	return (dma_addr_t)iova << shift;
 }
 
-static void iommu_dma_free_iova(struct iommu_dma_cookie *cookie,
+static void __iommu_dma_free_iova(struct iommu_dma_cookie *cookie,
 		dma_addr_t iova, size_t size, struct iommu_iotlb_gather *gather)
 {
 	struct iova_domain *iovad = &cookie->iovad;
@@ -842,7 +842,7 @@ static void __iommu_dma_unmap(struct device *dev, dma_addr_t dma_addr,
 
 	if (!iotlb_gather.queued)
 		iommu_iotlb_sync(domain, &iotlb_gather);
-	iommu_dma_free_iova(cookie, dma_addr, size, &iotlb_gather);
+	__iommu_dma_free_iova(cookie, dma_addr, size, &iotlb_gather);
 }
 
 static dma_addr_t __iommu_dma_map(struct device *dev, phys_addr_t phys,
@@ -865,12 +865,12 @@ static dma_addr_t __iommu_dma_map(struct device *dev, phys_addr_t phys,
 
 	size = iova_align(iovad, size + iova_off);
 
-	iova = iommu_dma_alloc_iova(domain, size, dma_mask, dev);
+	iova = __iommu_dma_alloc_iova(domain, size, dma_mask, dev);
 	if (!iova)
 		return DMA_MAPPING_ERROR;
 
 	if (iommu_map(domain, iova, phys - iova_off, size, prot, GFP_ATOMIC)) {
-		iommu_dma_free_iova(cookie, iova, size, NULL);
+		__iommu_dma_free_iova(cookie, iova, size, NULL);
 		return DMA_MAPPING_ERROR;
 	}
 	return iova + iova_off;
@@ -973,7 +973,7 @@ static struct page **__iommu_dma_alloc_noncontiguous(struct device *dev,
 		return NULL;
 
 	size = iova_align(iovad, size);
-	iova = iommu_dma_alloc_iova(domain, size, dev->coherent_dma_mask, dev);
+	iova = __iommu_dma_alloc_iova(domain, size, dev->coherent_dma_mask, dev);
 	if (!iova)
 		goto out_free_pages;
 
@@ -1007,7 +1007,7 @@ static struct page **__iommu_dma_alloc_noncontiguous(struct device *dev,
 out_free_sg:
 	sg_free_table(sgt);
 out_free_iova:
-	iommu_dma_free_iova(cookie, iova, size, NULL);
+	__iommu_dma_free_iova(cookie, iova, size, NULL);
 out_free_pages:
 	__iommu_dma_free_pages(pages, count);
 	return NULL;
@@ -1467,7 +1467,7 @@ int iommu_dma_map_sg(struct device *dev, struct scatterlist *sg, int nents,
 	if (!iova_len)
 		return __finalise_sg(dev, sg, nents, 0);
 
-	iova = iommu_dma_alloc_iova(domain, iova_len, dma_get_mask(dev), dev);
+	iova = __iommu_dma_alloc_iova(domain, iova_len, dma_get_mask(dev), dev);
 	if (!iova) {
 		ret = -ENOMEM;
 		goto out_restore_sg;
@@ -1484,7 +1484,7 @@ int iommu_dma_map_sg(struct device *dev, struct scatterlist *sg, int nents,
 	return __finalise_sg(dev, sg, nents, iova);
 
 out_free_iova:
-	iommu_dma_free_iova(cookie, iova, iova_len, NULL);
+	__iommu_dma_free_iova(cookie, iova, iova_len, NULL);
 out_restore_sg:
 	__invalidate_sg(sg, nents);
 out:
@@ -1744,6 +1744,162 @@ size_t iommu_dma_max_mapping_size(struct device *dev)
 	return SIZE_MAX;
 }
 
+bool iommu_dma_can_use_iova(struct device *dev)
+{
+	/*
+	 * Bounce buffering is not supported in the IOVA API.
+	 */
+	if (IS_ENABLED(CONFIG_SWIOTLB) && dev_is_untrusted(dev))
+		return false;
+
+	if (static_branch_unlikely(&iommu_deferred_attach_enabled)) {
+		return iommu_deferred_attach(dev,
+				iommu_get_domain_for_dev(dev));
+	}
+
+	return true;
+}
+
+dma_addr_t iommu_dma_iova_alloc(struct device *dev,
+		struct dma_iova_state *state, phys_addr_t phys, size_t size)
+{
+	struct iommu_domain *domain = iommu_get_dma_domain(dev);
+	struct iommu_dma_cookie *cookie = domain->iova_cookie;
+	struct iova_domain *iovad = &cookie->iovad;
+	size_t iova_off = iova_offset(iovad, phys);
+	dma_addr_t addr;
+
+	size = iova_align(iovad, size + iova_off);
+	addr = __iommu_dma_alloc_iova(domain, size, dma_get_mask(dev), dev);
+	if (!addr)
+		return DMA_MAPPING_ERROR;
+
+	state->addr = addr;
+	state->iova_size = size;
+	return addr + iova_off;
+}
+
+void iommu_dma_iova_free(struct device *dev, struct dma_iova_state *state)
+{
+	struct iommu_domain *domain = iommu_get_dma_domain(dev);
+	struct iommu_dma_cookie *cookie = domain->iova_cookie;
+
+	WARN_ON(state->mapped_size);
+	__iommu_dma_free_iova(cookie, state->addr, state->iova_size, NULL);
+}
+
+int iommu_dma_iova_link(struct device *dev, struct dma_iova_state *state,
+		phys_addr_t phys, size_t offset, size_t size,
+		enum dma_data_direction dir, unsigned long attrs)
+{
+	struct iommu_domain *domain = iommu_get_dma_domain(dev);
+	struct iommu_dma_cookie *cookie = domain->iova_cookie;
+	struct iova_domain *iovad = &cookie->iovad;
+	size_t iova_start_pad = iova_offset(iovad, phys);
+	bool coherent = dev_is_dma_coherent(dev);
+	int prot = dma_info_to_prot(dir, coherent, attrs);
+	dma_addr_t addr = state->addr + offset;
+	struct page *page = pfn_to_page(__phys_to_pfn(phys));
+	int ret;
+
+	WARN_ON_ONCE(iova_start_pad && state->mapped_size > 0);
+
+	if (dev_use_swiotlb(dev, size, dir))
+		return -EREMOTEIO;
+
+	if (is_pci_p2pdma_page(page)) {
+		enum pci_p2pdma_map_type map =
+			pci_p2pdma_map_type(page->pgmap, dev);
+
+		if (map != PCI_P2PDMA_MAP_THRU_HOST_BRIDGE)
+			return -EREMOTEIO;
+	}
+
+	if (!coherent && !(attrs & DMA_ATTR_SKIP_CPU_SYNC))
+		arch_sync_dma_for_device(phys, size, dir);
+
+	size = iova_align(iovad, size + iova_start_pad);
+	ret = iommu_map(domain, addr, phys - iova_start_pad, size, prot,
+			GFP_ATOMIC);
+	if (ret)
+		return ret;
+
+	state->mapped_size += size;
+	return 0;
+}
+
+static void iommu_sync_dma_for_cpu(struct iommu_domain *domain,
+				   dma_addr_t start, size_t size,
+				   enum dma_data_direction dir)
+{
+	size_t sync_size, unmapped = 0;
+	phys_addr_t phys;
+
+	do {
+		phys = iommu_iova_to_phys(domain, start + unmapped);
+		if (WARN_ON(!phys))
+			continue;
+
+		sync_size = (unmapped + PAGE_SIZE > size) ? size % PAGE_SIZE :
+							    PAGE_SIZE;
+		arch_sync_dma_for_cpu(phys, sync_size, dir);
+		unmapped += sync_size;
+	} while (unmapped < size);
+}
+
+void iommu_dma_iova_unlink(struct device *dev, struct dma_iova_state *state,
+		size_t offset, size_t size, enum dma_data_direction dir,
+		unsigned long attrs)
+{
+	struct iommu_domain *domain = iommu_get_dma_domain(dev);
+	struct iommu_dma_cookie *cookie = domain->iova_cookie;
+	struct iova_domain *iovad = &cookie->iovad;
+	bool coherent = dev_is_dma_coherent(dev);
+	struct iommu_iotlb_gather iotlb_gather;
+	size_t unmapped;
+
+	if (!(attrs & DMA_ATTR_SKIP_CPU_SYNC) && !coherent)
+		iommu_sync_dma_for_cpu(domain, state->addr + offset, size, dir);
+
+	iommu_iotlb_gather_init(&iotlb_gather);
+
+	size = iova_align(iovad, size);
+	unmapped = iommu_unmap_fast(domain, state->addr + offset, size,
+				    &iotlb_gather);
+	WARN_ON(unmapped != size);
+	state->mapped_size -= unmapped;
+
+	iommu_iotlb_sync(domain, &iotlb_gather);
+}
+
+void iommu_dma_iova_destroy(struct device *dev, struct dma_iova_state *state,
+		dma_addr_t dma_addr, size_t size, enum dma_data_direction dir)
+{
+	struct iommu_domain *domain = iommu_get_dma_domain(dev);
+	struct iommu_dma_cookie *cookie = domain->iova_cookie;
+	struct iommu_iotlb_gather iotlb_gather;
+	size_t unmapped;
+
+	if (WARN_ON_ONCE(dma_addr + size > state->addr + state->mapped_size))
+		return;
+
+	iommu_iotlb_gather_init(&iotlb_gather);
+	iotlb_gather.queued = READ_ONCE(cookie->fq_domain);
+
+	if (!dev_is_dma_coherent(dev))
+		iommu_sync_dma_for_cpu(domain, dma_addr, size, dir);
+
+	unmapped = iommu_unmap_fast(domain, state->addr, state->mapped_size,
+				    &iotlb_gather);
+	WARN_ON_ONCE(unmapped != state->mapped_size);
+	state->mapped_size -= unmapped;
+
+	if (!iotlb_gather.queued)
+		iommu_iotlb_sync(domain, &iotlb_gather);
+	__iommu_dma_free_iova(cookie, state->addr, state->iova_size,
+			      &iotlb_gather);
+}
+
 void iommu_setup_dma_ops(struct device *dev)
 {
 	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
@@ -1780,7 +1936,7 @@ static struct iommu_dma_msi_page *iommu_dma_get_msi_page(struct device *dev,
 	if (!msi_page)
 		return NULL;
 
-	iova = iommu_dma_alloc_iova(domain, size, dma_get_mask(dev), dev);
+	iova = __iommu_dma_alloc_iova(domain, size, dma_get_mask(dev), dev);
 	if (!iova)
 		goto out_free_page;
 
@@ -1794,7 +1950,7 @@ static struct iommu_dma_msi_page *iommu_dma_get_msi_page(struct device *dev,
 	return msi_page;
 
 out_free_iova:
-	iommu_dma_free_iova(cookie, iova, size, NULL);
+	__iommu_dma_free_iova(cookie, iova, size, NULL);
 out_free_page:
 	kfree(msi_page);
 	return NULL;
