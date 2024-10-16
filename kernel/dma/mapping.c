@@ -442,6 +442,26 @@ bool __dma_need_sync(struct device *dev, dma_addr_t dma_addr)
 }
 EXPORT_SYMBOL_GPL(__dma_need_sync);
 
+/**
+ * dma_need_unmap - does this device need dma_unmap_* operations
+ * @dev: device to check
+ *
+ * If this function returns %false, drivers can skip calling dma_unmap_* after
+ * finishing an I/O.  This function must be called after all mappings that might
+ * need to be unmapped have been performed.
+ */
+bool dma_need_unmap(struct device *dev)
+{
+	if (!dma_map_direct(dev, get_dma_ops(dev)))
+		return true;
+#ifdef CONFIG_DMA_NEED_SYNC
+	if (!dev->dma_skip_sync)
+		return true;
+#endif
+	return IS_ENABLED(CONFIG_DMA_API_DEBUG);
+}
+EXPORT_SYMBOL_GPL(dma_need_unmap);
+
 static void dma_setup_need_sync(struct device *dev)
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
@@ -962,3 +982,132 @@ unsigned long dma_get_merge_boundary(struct device *dev)
 	return ops->get_merge_boundary(dev);
 }
 EXPORT_SYMBOL_GPL(dma_get_merge_boundary);
+
+/**
+ * dma_iova_init - Initialize the IOVA state
+ * @dev: Device to initialize the IOVA state for
+ * @state: IOVA state to initialize
+ *
+ * Set up the IOVA state for a mapping.  After this dma_can_use_iova() can be
+ * used if IOVA based mapping are supported.
+ */
+void dma_iova_init(struct device *dev, struct dma_iova_state *state)
+{
+	memset(state, 0, sizeof(*state));
+	if (use_dma_iommu(dev) && iommu_dma_can_use_iova(dev))
+		state->use_iova = true;
+}
+EXPORT_SYMBOL_GPL(dma_iova_init);
+
+/**
+ * dma_iova_alloc - Allocate an IOVA space
+ * @dev: Device to allocate the IOVA space for
+ * @state: IOVA state
+ * @phys: physical address
+ * @size: IOVA size
+ *
+ * Allocate an IOVA space for the given IOVA state and size. The IOVA space
+ * is allocated to the worst case when whole range is going to be used.
+ *
+ * Note: @phys is only used to calculate the IOVA alignent. Callers that always
+ * do IOMMU granule aligned transfers can safely pass 0 here.
+ *
+ * Returns the IOVA to be used for the transfer.
+ */
+dma_addr_t dma_iova_alloc(struct device *dev, struct dma_iova_state *state,
+		phys_addr_t phys, size_t size)
+{
+	if (WARN_ON_ONCE(!use_dma_iommu(dev)))
+		return DMA_MAPPING_ERROR;
+
+	if (WARN_ON_ONCE(!size))
+		return DMA_MAPPING_ERROR;
+
+	return iommu_dma_iova_alloc(dev, state, phys, size);
+}
+EXPORT_SYMBOL_GPL(dma_iova_alloc);
+
+/**
+ * dma_iova_free - Free an IOVA space
+ * @dev: Device to free the IOVA space for
+ * @state: IOVA state
+ *
+ * Free an IOVA space for the given IOVA attributes.
+ */
+void dma_iova_free(struct device *dev, struct dma_iova_state *state)
+{
+	if (!use_dma_iommu(dev))
+		return;
+
+	iommu_dma_iova_free(dev, state);
+}
+EXPORT_SYMBOL_GPL(dma_iova_free);
+
+/**
+ * dma_iova_destroy - Destroy IOVA range
+ * @dev: DMA device
+ * @state: IOVA state
+ * @dma_addr: First linked IOVA address
+ * @size: Size to unlink
+ * @dir: DMA direction
+ *
+ * Unlink whole IOVA range and free an IOVA space
+ */
+void dma_iova_destroy(struct device *dev, struct dma_iova_state *state,
+		dma_addr_t dma_addr, size_t size, enum dma_data_direction dir)
+{
+	if (!use_dma_iommu(dev))
+		return;
+
+	iommu_dma_iova_destroy(dev, state, dma_addr, size, dir);
+}
+EXPORT_SYMBOL_GPL(dma_iova_destroy);
+
+/**
+ * dma_iova_link - Link a range of IOVA space
+ * @dev: DMA device
+ * @state: IOVA state
+ * @phys: physical address to link
+ * @offset: offset into the IOVA state to map into
+ * @size: size of the buffer
+ * @dir: DMA direction
+ * @attrs: attributes of mapping properties
+ *
+ * Link a range of IOVA space for the given IOVA state.
+ *
+ * Returns -ERMOTEIO if the range requires bounce buffering or points to
+ * P2P memory.  In this case the callers needs to call dma_map_page()
+ * directly for the range.
+ */
+int dma_iova_link(struct device *dev, struct dma_iova_state *state,
+		phys_addr_t phys, size_t offset, size_t size,
+		enum dma_data_direction dir, unsigned long attrs)
+{
+	if (WARN_ON_ONCE(!dma_can_use_iova(state)))
+		return -EINVAL;
+
+	return iommu_dma_iova_link(dev, state, phys, offset, size, dir, attrs);
+}
+EXPORT_SYMBOL_GPL(dma_iova_link);
+
+/**
+ * dma_iova_unlink - Unlink a range of IOVA space
+ * @dev: DMA device
+ * @state: IOVA state
+ * @offset: offset into the IOVA state to unlink
+ * @size: size of the buffer
+ * @dir: DMA direction
+ * @attrs: attributes of mapping properties
+ *
+ * Unlink a range of IOVA space for the given IOVA state.
+ */
+void dma_iova_unlink(struct device *dev, struct dma_iova_state *state,
+		size_t offset, size_t size, enum dma_data_direction dir,
+		unsigned long attrs)
+{
+	if (WARN_ON_ONCE(!dma_can_use_iova(state)))
+		return;
+
+	iommu_dma_iova_unlink(dev, state, offset, size, dir, attrs);
+}
+EXPORT_SYMBOL_GPL(dma_iova_unlink);
