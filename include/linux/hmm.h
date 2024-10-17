@@ -10,6 +10,7 @@
 #define LINUX_HMM_H
 
 #include <linux/mm.h>
+#include <linux/dma-mapping.h>
 
 struct mmu_interval_notifier;
 
@@ -112,6 +113,21 @@ struct hmm_range {
 };
 
 /*
+ * struct hmm_map - array of PFNs and DMA addresses
+ *
+ * @state: DMA IOVA state
+ * @pfns: array of PFNs
+ * @dma_list: array of DMA addresses
+ * @dma_entry_size: size of each DMA entry in the array
+ */
+struct hmm_map {
+	struct dma_iova_state state;
+	unsigned long *pfn_list;
+	dma_addr_t *dma_list;
+	size_t dma_entry_size;
+};
+
+/*
  * Please see Documentation/mm/hmm.rst for how to use the range API.
  */
 int hmm_range_fault(struct hmm_range *range);
@@ -125,4 +141,7 @@ int hmm_range_fault(struct hmm_range *range);
  */
 #define HMM_RANGE_DEFAULT_TIMEOUT 1000
 
+int hmm_map_alloc(struct device *dev, struct hmm_map *map, size_t nr_entries,
+		  size_t dma_entry_size);
+void hmm_map_free(struct device *dev, struct hmm_map *map);
 #endif /* LINUX_HMM_H */
