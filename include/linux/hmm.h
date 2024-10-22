@@ -10,8 +10,11 @@
 #define LINUX_HMM_H
 
 #include <linux/mm.h>
+#include <linux/dma-mapping.h>
 
 struct mmu_interval_notifier;
+struct dma_iova_state;
+struct pci_p2pdma_map_state;
 
 /*
  * On output:
@@ -23,6 +26,9 @@ struct mmu_interval_notifier;
  * HMM_PFN_WRITE - if the page memory can be written to (requires HMM_PFN_VALID)
  * HMM_PFN_ERROR - accessing the pfn is impossible and the device should
  *                 fail. ie poisoned memory, special pages, no vma, etc
+ * HMM_PFN_P2PDMA_BUS - Bus mapped P2P transfer
+ * HMM_PFN_DMA_MAPPED - Flag preserved on input-to-output transformation
+ *                      to mark that page is already DMA mapped
  *
  * On input:
  * 0                 - Return the current state of the page, do not fault it.
@@ -36,6 +42,9 @@ enum hmm_pfn_flags {
 	HMM_PFN_VALID = 1UL << (BITS_PER_LONG - 1),
 	HMM_PFN_WRITE = 1UL << (BITS_PER_LONG - 2),
 	HMM_PFN_ERROR = 1UL << (BITS_PER_LONG - 3),
+	/* Sticky flag, carried from Input to Output */
+	HMM_PFN_P2PDMA_BUS = 1UL << (BITS_PER_LONG - 6),
+	HMM_PFN_DMA_MAPPED = 1UL << (BITS_PER_LONG - 7),
 	HMM_PFN_ORDER_SHIFT = (BITS_PER_LONG - 8),
 
 	/* Input flags */
@@ -55,6 +64,14 @@ enum hmm_pfn_flags {
 static inline struct page *hmm_pfn_to_page(unsigned long hmm_pfn)
 {
 	return pfn_to_page(hmm_pfn & ~HMM_PFN_FLAGS);
+}
+
+/*
+ * hmm_pfn_to_phys() - return physical address pointed to by a device entry
+ */
+static inline phys_addr_t hmm_pfn_to_phys(unsigned long hmm_pfn)
+{
+	return __pfn_to_phys(hmm_pfn & ~HMM_PFN_FLAGS);
 }
 
 /*
@@ -100,6 +117,21 @@ struct hmm_range {
 };
 
 /*
+ * struct hmm_map - array of PFNs and DMA addresses
+ *
+ * @state: DMA IOVA state
+ * @pfns: array of PFNs
+ * @dma_list: array of DMA addresses
+ * @dma_entry_size: size of each DMA entry in the array
+ */
+struct hmm_map {
+	struct dma_iova_state state;
+	unsigned long *pfn_list;
+	dma_addr_t *dma_list;
+	size_t dma_entry_size;
+};
+
+/*
  * Please see Documentation/mm/hmm.rst for how to use the range API.
  */
 int hmm_range_fault(struct hmm_range *range);
@@ -113,4 +145,10 @@ int hmm_range_fault(struct hmm_range *range);
  */
 #define HMM_RANGE_DEFAULT_TIMEOUT 1000
 
+int hmm_map_alloc(struct device *dev, struct hmm_map *map, size_t nr_entries,
+		  size_t dma_entry_size);
+void hmm_map_free(struct device *dev, struct hmm_map *map);
+dma_addr_t hmm_dma_map_pfn(struct device *dev, struct hmm_map *map, size_t idx,
+			   struct pci_p2pdma_map_state *p2pdma_state);
+bool hmm_dma_unmap_pfn(struct device *dev, struct hmm_map *map, size_t idx);
 #endif /* LINUX_HMM_H */
