@@ -568,6 +568,7 @@ static int blk_rq_map_user_bvec(struct request *rq, const struct iov_iter *iter)
 	const struct queue_limits *lim = &q->limits;
 	unsigned int nsegs = 0, bytes = 0;
 	struct bio *bio;
+	int error;
 	size_t i;
 
 	if (!nr_iter || (nr_iter >> SECTOR_SHIFT) > queue_max_hw_sectors(q))
@@ -588,15 +589,30 @@ static int blk_rq_map_user_bvec(struct request *rq, const struct iov_iter *iter)
 	for (i = 0; i < nr_segs; i++) {
 		struct bio_vec *bv = &bvecs[i];
 
-		/*
-		 * If the queue doesn't support SG gaps and adding this
-		 * offset would create a gap, fallback to copy.
-		 */
-		if (bvprvp && bvec_gap_to_prev(lim, bvprvp, bv->bv_offset)) {
-			blk_mq_map_bio_put(bio);
-			return -EREMOTEIO;
+		error = -EREMOTEIO;
+		if (bvprvp) {
+			/*
+			 * If the queue doesn't support SG gaps and adding this
+			 * offset would create a gap, fallback to copy.
+			 */
+			if (bvec_gap_to_prev(lim, bvprvp, bv->bv_offset))
+				goto put_bio;
+
+			/*
+			 * When doing ZONE_DEVICE-based P2P transfers, all pages
+			 * in a bio must be P2P pages, and from the same device.
+			 */
+			if ((bio->bi_opf & REQ_P2PDMA) &&
+			    zone_device_pages_have_same_pgmap(bvprvp->bv_page,
+					bv->bv_page))
+				goto put_bio;
+		} else {
+			if (is_pci_p2pdma_page(bv->bv_page))
+				bio->bi_opf |= REQ_P2PDMA | REQ_NOMERGE;
 		}
+
 		/* check full condition */
+		error = -EINVAL;
 		if (nsegs >= nr_segs || bytes > UINT_MAX - bv->bv_len)
 			goto put_bio;
 		if (bytes + bv->bv_len > nr_iter)
@@ -611,7 +627,7 @@ static int blk_rq_map_user_bvec(struct request *rq, const struct iov_iter *iter)
 	return 0;
 put_bio:
 	blk_mq_map_bio_put(bio);
-	return -EINVAL;
+	return error;
 }
 
 /**
