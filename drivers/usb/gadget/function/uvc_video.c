@@ -12,7 +12,7 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
 #include <linux/usb/video.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #include <media/v4l2-dev.h>
 
@@ -753,6 +753,7 @@ int uvcg_video_enable(struct uvc_video *video)
 	video->req_int_count = 0;
 
 	uvc_video_ep_queue_initial_requests(video);
+	queue_work(video->async_wq, &video->pump);
 
 	return ret;
 }

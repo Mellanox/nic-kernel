@@ -168,7 +168,6 @@ static int posix_clock_release(struct inode *inode, struct file *fp)
 
 static const struct file_operations posix_clock_file_operations = {
 	.owner		= THIS_MODULE,
-	.llseek		= no_llseek,
 	.read		= posix_clock_read,
 	.poll		= posix_clock_poll,
 	.unlocked_ioctl	= posix_clock_ioctl,
@@ -318,6 +317,9 @@ static int pc_clock_settime(clockid_t id, const struct timespec64 *ts)
 		err = -EACCES;
 		goto out;
 	}
+
+	if (!timespec64_valid_strict(ts))
+		return -EINVAL;
 
 	if (cd.clk->ops.clock_settime)
 		err = cd.clk->ops.clock_settime(cd.clk, ts);

@@ -5234,6 +5234,7 @@ mpi3mr_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	spin_lock_init(&mrioc->watchdog_lock);
 	spin_lock_init(&mrioc->chain_buf_lock);
 	spin_lock_init(&mrioc->sas_node_lock);
+	spin_lock_init(&mrioc->trigger_lock);
 
 	INIT_LIST_HEAD(&mrioc->fwevt_list);
 	INIT_LIST_HEAD(&mrioc->tgtdev_list);
@@ -5316,10 +5317,8 @@ mpi3mr_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	else
 		scsi_host_set_guard(shost, SHOST_DIX_GUARD_CRC);
 
-	snprintf(mrioc->fwevt_worker_name, sizeof(mrioc->fwevt_worker_name),
-	    "%s%d_fwevt_wrkr", mrioc->driver_name, mrioc->id);
 	mrioc->fwevt_worker_thread = alloc_ordered_workqueue(
-	    mrioc->fwevt_worker_name, 0);
+		"%s%d_fwevt_wrkr", 0, mrioc->driver_name, mrioc->id);
 	if (!mrioc->fwevt_worker_thread) {
 		ioc_err(mrioc, "failure at %s:%d/%s()!\n",
 		    __FILE__, __LINE__, __func__);

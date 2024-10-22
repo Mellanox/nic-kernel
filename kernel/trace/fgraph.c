@@ -1160,18 +1160,13 @@ void fgraph_update_pid_func(void)
 static int start_graph_tracing(void)
 {
 	unsigned long **ret_stack_list;
-	int ret, cpu;
+	int ret;
 
-	ret_stack_list = kmalloc(SHADOW_STACK_SIZE, GFP_KERNEL);
+	ret_stack_list = kcalloc(FTRACE_RETSTACK_ALLOC_SIZE,
+				 sizeof(*ret_stack_list), GFP_KERNEL);
 
 	if (!ret_stack_list)
 		return -ENOMEM;
-
-	/* The cpu_boot init_task->ret_stack will never be freed */
-	for_each_online_cpu(cpu) {
-		if (!idle_task(cpu)->ret_stack)
-			ftrace_graph_init_idle_task(idle_task(cpu), cpu);
-	}
 
 	do {
 		ret = alloc_retstack_tasklist(ret_stack_list);
@@ -1206,18 +1201,24 @@ static void init_task_vars(int idx)
 	read_unlock(&tasklist_lock);
 }
 
-static void ftrace_graph_enable_direct(bool enable_branch)
+static void ftrace_graph_enable_direct(bool enable_branch, struct fgraph_ops *gops)
 {
 	trace_func_graph_ent_t func = NULL;
 	trace_func_graph_ret_t retfunc = NULL;
 	int i;
 
-	for_each_set_bit(i, &fgraph_array_bitmask,
-			 sizeof(fgraph_array_bitmask) * BITS_PER_BYTE) {
-		func = fgraph_array[i]->entryfunc;
-		retfunc = fgraph_array[i]->retfunc;
-		fgraph_direct_gops = fgraph_array[i];
-	 }
+	if (gops) {
+		func = gops->entryfunc;
+		retfunc = gops->retfunc;
+		fgraph_direct_gops = gops;
+	} else {
+		for_each_set_bit(i, &fgraph_array_bitmask,
+				 sizeof(fgraph_array_bitmask) * BITS_PER_BYTE) {
+			func = fgraph_array[i]->entryfunc;
+			retfunc = fgraph_array[i]->retfunc;
+			fgraph_direct_gops = fgraph_array[i];
+		}
+	}
 	if (WARN_ON_ONCE(!func))
 		return;
 
@@ -1236,13 +1237,33 @@ static void ftrace_graph_disable_direct(bool disable_branch)
 	fgraph_direct_gops = &fgraph_stub;
 }
 
+/* The cpu_boot init_task->ret_stack will never be freed */
+static int fgraph_cpu_init(unsigned int cpu)
+{
+	if (!idle_task(cpu)->ret_stack)
+		ftrace_graph_init_idle_task(idle_task(cpu), cpu);
+	return 0;
+}
+
 int register_ftrace_graph(struct fgraph_ops *gops)
 {
+	static bool fgraph_initialized;
 	int command = 0;
 	int ret = 0;
 	int i = -1;
 
 	mutex_lock(&ftrace_lock);
+
+	if (!fgraph_initialized) {
+		ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "fgraph_idle_init",
+					fgraph_cpu_init, NULL);
+		if (ret < 0) {
+			pr_warn("fgraph: Error to init cpu hotplug support\n");
+			return ret;
+		}
+		fgraph_initialized = true;
+		ret = 0;
+	}
 
 	if (!fgraph_array[0]) {
 		/* The array must always have real data on it */
@@ -1256,8 +1277,6 @@ int register_ftrace_graph(struct fgraph_ops *gops)
 		ret = -ENOSPC;
 		goto out;
 	}
-
-	fgraph_array[i] = gops;
 	gops->idx = i;
 
 	ftrace_graph_active++;
@@ -1266,7 +1285,7 @@ int register_ftrace_graph(struct fgraph_ops *gops)
 		ftrace_graph_disable_direct(true);
 
 	if (ftrace_graph_active == 1) {
-		ftrace_graph_enable_direct(false);
+		ftrace_graph_enable_direct(false, gops);
 		register_pm_notifier(&ftrace_suspend_notifier);
 		ret = start_graph_tracing();
 		if (ret)
@@ -1281,14 +1300,15 @@ int register_ftrace_graph(struct fgraph_ops *gops)
 	} else {
 		init_task_vars(gops->idx);
 	}
-
 	/* Always save the function, and reset at unregistering */
 	gops->saved_func = gops->entryfunc;
 
 	ret = ftrace_startup_subops(&graph_ops, &gops->ops, command);
+	if (!ret)
+		fgraph_array[i] = gops;
+
 error:
 	if (ret) {
-		fgraph_array[i] = &fgraph_stub;
 		ftrace_graph_active--;
 		gops->saved_func = NULL;
 		fgraph_lru_release_index(i);
@@ -1324,7 +1344,7 @@ void unregister_ftrace_graph(struct fgraph_ops *gops)
 	ftrace_shutdown_subops(&graph_ops, &gops->ops, command);
 
 	if (ftrace_graph_active == 1)
-		ftrace_graph_enable_direct(true);
+		ftrace_graph_enable_direct(true, NULL);
 	else if (!ftrace_graph_active)
 		ftrace_graph_disable_direct(false);
 

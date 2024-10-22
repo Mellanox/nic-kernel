@@ -18,7 +18,7 @@
 #include <linux/usb.h>
 #include <linux/usb/ljca.h>
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 /* command flags */
 #define LJCA_ACK_FLAG			BIT(0)
@@ -169,6 +169,7 @@ static const struct acpi_device_id ljca_gpio_hids[] = {
 	{ "INTC1096" },
 	{ "INTC100B" },
 	{ "INTC10D1" },
+	{ "INTC10B5" },
 	{},
 };
 
