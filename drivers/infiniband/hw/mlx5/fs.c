@@ -801,10 +801,12 @@ static struct mlx5_ib_flow_prio *get_flow_table(struct mlx5_ib_dev *dev,
 enum {
 	RDMA_RX_ECN_OPCOUNTER_PRIO,
 	RDMA_RX_CNP_OPCOUNTER_PRIO,
+	RDMA_RX_PKTS_BYTES_OPCOUNTER_PRIO,
 };
 
 enum {
 	RDMA_TX_CNP_OPCOUNTER_PRIO,
+	RDMA_TX_PKTS_BYTES_OPCOUNTER_PRIO,
 };
 
 static int set_vhca_port_spec(struct mlx5_ib_dev *dev, u32 port_num,
@@ -920,6 +922,20 @@ int mlx5_ib_fs_add_op_fc(struct mlx5_ib_dev *dev, u32 port_num,
 		spec_num = 1;
 		fn_type = MLX5_FLOW_NAMESPACE_RDMA_TX_COUNTERS;
 		priority = RDMA_TX_CNP_OPCOUNTER_PRIO;
+		break;
+
+	case MLX5_IB_OPCOUNTER_RDMA_TX_PACKETS:
+	case MLX5_IB_OPCOUNTER_RDMA_TX_BYTES:
+		spec_num = 1;
+		fn_type = MLX5_FLOW_NAMESPACE_RDMA_TX_COUNTERS;
+		priority = RDMA_TX_PKTS_BYTES_OPCOUNTER_PRIO;
+		break;
+
+	case MLX5_IB_OPCOUNTER_RDMA_RX_PACKETS:
+	case MLX5_IB_OPCOUNTER_RDMA_RX_BYTES:
+		spec_num = 1;
+		fn_type = MLX5_FLOW_NAMESPACE_RDMA_RX_COUNTERS;
+		priority = RDMA_RX_PKTS_BYTES_OPCOUNTER_PRIO;
 		break;
 
 	default:
