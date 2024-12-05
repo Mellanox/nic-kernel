@@ -400,7 +400,7 @@ static int mlx5e_dcbnl_ieee_setpfc(struct net_device *dev,
 
 		if (buffer_ownership == MLX5_BUF_OWNERSHIP_SW_OWNED)
 			ret = mlx5e_port_manual_buffer_config(priv, changed,
-							      dev->mtu, &pfc_new,
+							      &pfc_new,
 							      NULL, NULL);
 
 		if (ret && (changed & MLX5E_PORT_BUFFER_CABLE_LEN))
@@ -1014,7 +1014,7 @@ static int mlx5e_dcbnl_setbuffer(struct net_device *dev,
 	if (!changed)
 		return 0;
 
-	err = mlx5e_port_manual_buffer_config(priv, changed, dev->mtu, NULL,
+	err = mlx5e_port_manual_buffer_config(priv, changed, NULL,
 					      buffer_size, prio2buffer);
 	return err;
 }

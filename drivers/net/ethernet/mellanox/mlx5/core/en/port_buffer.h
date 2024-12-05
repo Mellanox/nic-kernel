@@ -67,10 +67,8 @@ struct mlx5e_port_buffer {
 };
 
 int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
-				    u32 change, unsigned int mtu,
-				    struct ieee_pfc *pfc,
-				    u32 *buffer_size,
-				    u8 *prio2buffer);
+				    u32 change, struct ieee_pfc *pfc,
+				    u32 *buffer_size, u8 *prio2buffer);
 
 int mlx5e_port_query_buffer(struct mlx5e_priv *priv,
 			    struct mlx5e_port_buffer *port_buffer);
