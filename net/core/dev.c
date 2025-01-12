@@ -2025,10 +2025,9 @@ int register_netdevice_notifier_net(struct net *net, struct notifier_block *nb)
 {
 	int err;
 
-	rtnl_net_lock(net);
+	rtnl_lock();
 	err = __register_netdevice_notifier_net(net, nb, false);
-	rtnl_net_unlock(net);
-
+	rtnl_unlock();
 	return err;
 }
 EXPORT_SYMBOL(register_netdevice_notifier_net);
@@ -2054,10 +2053,9 @@ int unregister_netdevice_notifier_net(struct net *net,
 {
 	int err;
 
-	rtnl_net_lock(net);
+	rtnl_lock();
 	err = __unregister_netdevice_notifier_net(net, nb);
-	rtnl_net_unlock(net);
-
+	rtnl_unlock();
 	return err;
 }
 EXPORT_SYMBOL(unregister_netdevice_notifier_net);
