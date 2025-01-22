@@ -3225,9 +3225,6 @@ static int ib_uverbs_ex_create_flow(struct uverbs_attr_bundle *attrs)
 	if (cmd.comp_mask)
 		return -EINVAL;
 
-	if (!capable(CAP_NET_RAW))
-		return -EPERM;
-
 	if (cmd.flow_attr.flags >= IB_FLOW_ATTR_FLAGS_RESERVED)
 		return -EINVAL;
 
@@ -3270,6 +3267,11 @@ static int ib_uverbs_ex_create_flow(struct uverbs_attr_bundle *attrs)
 	if (IS_ERR(uobj)) {
 		err = PTR_ERR(uobj);
 		goto err_free_attr;
+	}
+
+	if (!rdma_dev_has_raw_cap(uobj->context->device)) {
+		err = -EPERM;
+		goto err_uobj;
 	}
 
 	if (!rdma_is_port_valid(uobj->context->device, cmd.flow_attr.port)) {
