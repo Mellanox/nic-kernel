@@ -1312,9 +1312,6 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 
 	switch (cmd->qp_type) {
 	case IB_QPT_RAW_PACKET:
-		if (!capable(CAP_NET_RAW))
-			return -EPERM;
-		break;
 	case IB_QPT_RC:
 	case IB_QPT_UC:
 	case IB_QPT_UD:
@@ -1330,6 +1327,12 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 						 &ib_dev);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
+
+	if (cmd->qp_type == IB_QPT_RAW_PACKET) {
+		if (!rdma_dev_has_raw_cap(ib_dev))
+			return -EPERM;
+	}
+
 	obj->uxrcd = NULL;
 	obj->uevent.uobject.user_handle = cmd->user_handle;
 	mutex_init(&obj->mcast_lock);
@@ -1451,7 +1454,7 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 	}
 
 	if (attr.create_flags & IB_QP_CREATE_SOURCE_QPN) {
-		if (!capable(CAP_NET_RAW)) {
+		if (!rdma_dev_has_raw_cap(device)) {
 			ret = -EPERM;
 			goto err_put;
 		}
