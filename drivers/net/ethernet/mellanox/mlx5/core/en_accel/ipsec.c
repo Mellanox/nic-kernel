@@ -993,6 +993,7 @@ static void mlx5e_xfrm_update_stats(struct xfrm_state *x)
 	u64 auth_packets = 0, auth_bytes = 0;
 	u64 success_packets, success_bytes;
 	u64 packets, bytes, lastuse;
+	u64 oseq, oseq_hi;
 	size_t headers;
 
 	lockdep_assert(lockdep_is_held(&x->lock) ||
@@ -1016,15 +1017,31 @@ static void mlx5e_xfrm_update_stats(struct xfrm_state *x)
 	if (x->xso.type != XFRM_DEV_OFFLOAD_PACKET)
 		return;
 
+	mlx5_fc_query_cached(ipsec_rule->fc, &bytes, &packets, &lastuse);
+	success_packets = packets - auth_packets - trailer_packets - replay_packets;
 	if (sa_entry->attrs.dir == XFRM_DEV_OFFLOAD_IN) {
 		mlx5_fc_query_cached(ipsec_rule->replay.fc, &replay_bytes,
 				     &replay_packets, &lastuse);
 		x->stats.replay += replay_packets;
 		XFRM_ADD_STATS(net, LINUX_MIB_XFRMINSTATESEQERROR, replay_packets);
+	/* The code below makes sure that SEQ reported to the user doesn't
+	 * overflow adter it reaches 0xFFFFFFFF, as SW/crypto paths behave.
+	 */
+	} else if (x->replay_esn) {
+		oseq = (u64)(x->replay_esn->oseq) +
+		       ((u64)(x->replay_esn->oseq_hi) << 32);
+		if (check_add_overflow(oseq, success_packets, &oseq_hi)) {
+			x->replay_esn->oseq = 0xFFFFFFFF;
+			x->replay_esn->oseq_hi = 0xFFFFFFFF;
+		} else {
+			x->replay_esn->oseq = lower_32_bits(oseq_hi);
+			x->replay_esn->oseq_hi = upper_32_bits(oseq_hi);
+		}
+	} else {
+		oseq = (u64)x->replay.oseq + success_packets;
+		x->replay.oseq = min(oseq, 0xFFFFFFFF);
 	}
 
-	mlx5_fc_query_cached(ipsec_rule->fc, &bytes, &packets, &lastuse);
-	success_packets = packets - auth_packets - trailer_packets - replay_packets;
 	x->curlft.packets += success_packets;
 	/* NIC counts all bytes passed through flow steering and doesn't have
 	 * an ability to count payload data size which is needed for SA.
