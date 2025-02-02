@@ -4494,7 +4494,10 @@ static int sky2_device_event(struct notifier_block *unused,
 
 	switch (event) {
 	case NETDEV_CHANGENAME:
-		debugfs_change_name(sky2->debugfs, "%s", dev->name);
+		if (sky2->debugfs) {
+			sky2->debugfs = debugfs_rename(sky2_debug, sky2->debugfs,
+						       sky2_debug, dev->name);
+		}
 		break;
 
 	case NETDEV_GOING_DOWN:

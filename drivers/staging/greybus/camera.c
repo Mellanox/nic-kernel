@@ -1128,7 +1128,18 @@ done:
 
 static int gb_camera_debugfs_open(struct inode *inode, struct file *file)
 {
-	file->private_data = (void *)debugfs_get_aux(file);
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(gb_camera_debugfs_entries); ++i) {
+		const struct gb_camera_debugfs_entry *entry =
+			&gb_camera_debugfs_entries[i];
+
+		if (!strcmp(file->f_path.dentry->d_iname, entry->name)) {
+			file->private_data = (void *)entry;
+			break;
+		}
+	}
+
 	return 0;
 }
 
@@ -1164,8 +1175,8 @@ static int gb_camera_debugfs_init(struct gb_camera *gcam)
 
 		gcam->debugfs.buffers[i].length = 0;
 
-		debugfs_create_file_aux(entry->name, entry->mask,
-				    gcam->debugfs.root, gcam, entry,
+		debugfs_create_file(entry->name, entry->mask,
+				    gcam->debugfs.root, gcam,
 				    &gb_camera_debugfs_ops);
 	}
 
