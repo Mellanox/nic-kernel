@@ -90,18 +90,27 @@ static void mlx5e_ipsec_handle_sw_limits(struct work_struct *_work)
 static bool mlx5e_ipsec_update_esn_state(struct mlx5e_ipsec_sa_entry *sa_entry)
 {
 	struct xfrm_state *x = sa_entry->x;
+	u32 esn, esn_msb = 0;
 	u32 seq_bottom = 0;
-	u32 esn, esn_msb;
+	u32 replay_window;
 	u8 overlap;
 
 	switch (x->xso.dir) {
 	case XFRM_DEV_OFFLOAD_IN:
-		esn = x->replay_esn->seq;
-		esn_msb = x->replay_esn->seq_hi;
+		if (x->props.flags & XFRM_STATE_ESN) {
+			esn = x->replay_esn->seq;
+			esn_msb = x->replay_esn->seq_hi;
+		} else {
+			esn = x->replay.seq;
+		}
 		break;
 	case XFRM_DEV_OFFLOAD_OUT:
-		esn = x->replay_esn->oseq;
-		esn_msb = x->replay_esn->oseq_hi;
+		if (x->props.flags & XFRM_STATE_ESN) {
+			esn = x->replay_esn->oseq;
+			esn_msb = x->replay_esn->oseq_hi;
+		} else {
+			esn = x->replay.oseq;
+		}
 		break;
 	default:
 		WARN_ON(true);
@@ -109,12 +118,16 @@ static bool mlx5e_ipsec_update_esn_state(struct mlx5e_ipsec_sa_entry *sa_entry)
 	}
 
 	overlap = sa_entry->esn_state.overlap;
+	if (x->props.flags & XFRM_STATE_ESN)
+		replay_window = x->replay_esn->replay_window;
+	else
+		replay_window = x->props.replay_window;
 
-	if (!x->replay_esn->replay_window) {
+	if (!replay_window) {
 		seq_bottom = esn;
 	} else {
-		if (esn >= x->replay_esn->replay_window)
-			seq_bottom = esn - x->replay_esn->replay_window + 1;
+		if (esn >= replay_window)
+			seq_bottom = esn - replay_window + 1;
 
 		if (x->xso.type == XFRM_DEV_OFFLOAD_CRYPTO)
 			esn_msb = xfrm_replay_seqhi(x, htonl(seq_bottom));
@@ -129,6 +142,12 @@ static bool mlx5e_ipsec_update_esn_state(struct mlx5e_ipsec_sa_entry *sa_entry)
 		 */
 		sa_entry->esn_state.esn = max_t(u32, esn, 1);
 	sa_entry->esn_state.esn_msb = esn_msb;
+
+	if (!(x->props.flags & XFRM_STATE_ESN))
+		/* Without ESN, the sequence numbers are not going
+		 * to be updated after seq reaches 0xFFFFFFFF.
+		 */
+		return false;
 
 	if (unlikely(overlap && seq_bottom < MLX5E_IPSEC_ESN_SCOPE_MID)) {
 		sa_entry->esn_state.overlap = 0;
@@ -321,6 +340,7 @@ void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	struct aead_geniv_ctx *geniv_ctx;
 	struct crypto_aead *aead;
 	unsigned int crypto_data_len, key_len;
+	u32 replay_window;
 	int ivsize;
 
 	memset(attrs, 0, sizeof(*attrs));
@@ -348,35 +368,38 @@ void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	attrs->dir = x->xso.dir;
 
 	/* esn */
-	if (x->props.flags & XFRM_STATE_ESN) {
-		attrs->replay_esn.trigger = true;
-		attrs->replay_esn.esn = sa_entry->esn_state.esn;
-		attrs->replay_esn.esn_msb = sa_entry->esn_state.esn_msb;
-		attrs->replay_esn.overlap = sa_entry->esn_state.overlap;
-		if (attrs->dir == XFRM_DEV_OFFLOAD_OUT)
-			goto skip_replay_window;
+	attrs->replay_esn.trigger = !!(x->props.flags & XFRM_STATE_ESN);
+	attrs->replay_esn.esn = sa_entry->esn_state.esn;
+	attrs->replay_esn.esn_msb = sa_entry->esn_state.esn_msb;
+	attrs->replay_esn.overlap = sa_entry->esn_state.overlap;
+	if (attrs->dir == XFRM_DEV_OFFLOAD_OUT)
+		goto skip_replay_window;
 
-		switch (x->replay_esn->replay_window) {
-		case 32:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_32BIT;
-			break;
-		case 64:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_64BIT;
-			break;
-		case 128:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_128BIT;
-			break;
-		case 256:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_256BIT;
-			break;
-		default:
-			WARN_ON(true);
-			return;
-		}
+	if (x->props.flags & XFRM_STATE_ESN)
+		replay_window = x->replay_esn->replay_window;
+	else
+		replay_window = x->props.replay_window;
+	switch (replay_window) {
+	case 32:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_32BIT;
+		break;
+	case 64:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_64BIT;
+		break;
+	case 128:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_128BIT;
+		break;
+	case 256:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_256BIT;
+		break;
+	default:
+		/* In non-ESN mode, replay_window can be 0 */
+		WARN_ON(replay_window || (x->props.flags & XFRM_STATE_ESN));
+		break;
 	}
 
 skip_replay_window:
@@ -728,15 +751,7 @@ static int mlx5e_xfrm_add_state(struct xfrm_state *x,
 	}
 
 	/* check esn */
-	if (x->props.flags & XFRM_STATE_ESN)
-		mlx5e_ipsec_update_esn_state(sa_entry);
-	else
-		/* According to RFC4303, section "3.3.3. Sequence Number Generation",
-		 * the first packet sent using a given SA will contain a sequence
-		 * number of 1.
-		 */
-		sa_entry->esn_state.esn = 1;
-
+	mlx5e_ipsec_update_esn_state(sa_entry);
 	mlx5e_ipsec_build_accel_xfrm_attrs(sa_entry, &sa_entry->attrs);
 
 	err = mlx5_ipsec_create_work(sa_entry);
