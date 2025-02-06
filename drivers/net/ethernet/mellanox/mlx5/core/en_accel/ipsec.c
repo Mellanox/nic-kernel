@@ -90,18 +90,27 @@ static void mlx5e_ipsec_handle_sw_limits(struct work_struct *_work)
 static bool mlx5e_ipsec_update_esn_state(struct mlx5e_ipsec_sa_entry *sa_entry)
 {
 	struct xfrm_state *x = sa_entry->x;
+	u32 esn, esn_msb = 0;
 	u32 seq_bottom = 0;
-	u32 esn, esn_msb;
+	u32 replay_window;
 	u8 overlap;
 
 	switch (x->xso.dir) {
 	case XFRM_DEV_OFFLOAD_IN:
-		esn = x->replay_esn->seq;
-		esn_msb = x->replay_esn->seq_hi;
+		if (x->props.flags & XFRM_STATE_ESN) {
+			esn = x->replay_esn->seq;
+			esn_msb = x->replay_esn->seq_hi;
+		} else {
+			esn = x->replay.seq;
+		}
 		break;
 	case XFRM_DEV_OFFLOAD_OUT:
-		esn = x->replay_esn->oseq;
-		esn_msb = x->replay_esn->oseq_hi;
+		if (x->props.flags & XFRM_STATE_ESN) {
+			esn = x->replay_esn->oseq;
+			esn_msb = x->replay_esn->oseq_hi;
+		} else {
+			esn = x->replay.oseq;
+		}
 		break;
 	default:
 		WARN_ON(true);
@@ -109,12 +118,16 @@ static bool mlx5e_ipsec_update_esn_state(struct mlx5e_ipsec_sa_entry *sa_entry)
 	}
 
 	overlap = sa_entry->esn_state.overlap;
+	if (x->props.flags & XFRM_STATE_ESN)
+		replay_window = x->replay_esn->replay_window;
+	else
+		replay_window = x->props.replay_window;
 
-	if (!x->replay_esn->replay_window) {
+	if (!replay_window) {
 		seq_bottom = esn;
 	} else {
-		if (esn >= x->replay_esn->replay_window)
-			seq_bottom = esn - x->replay_esn->replay_window + 1;
+		if (esn >= replay_window)
+			seq_bottom = esn - replay_window + 1;
 
 		if (x->xso.type == XFRM_DEV_OFFLOAD_CRYPTO)
 			esn_msb = xfrm_replay_seqhi(x, htonl(seq_bottom));
@@ -129,6 +142,12 @@ static bool mlx5e_ipsec_update_esn_state(struct mlx5e_ipsec_sa_entry *sa_entry)
 		 */
 		sa_entry->esn_state.esn = max_t(u32, esn, 1);
 	sa_entry->esn_state.esn_msb = esn_msb;
+
+	if (!(x->props.flags & XFRM_STATE_ESN))
+		/* Without ESN, the sequence numbers are not going
+		 * to be updated after seq reaches 0xFFFFFFFF.
+		 */
+		return false;
 
 	if (unlikely(overlap && seq_bottom < MLX5E_IPSEC_ESN_SCOPE_MID)) {
 		sa_entry->esn_state.overlap = 0;
@@ -277,12 +296,12 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	case XFRM_DEV_OFFLOAD_IN:
 		src = attrs->dmac;
 		dst = attrs->smac;
-		pkey = &attrs->saddr.a4;
+		pkey = &attrs->addrs.saddr.a4;
 		break;
 	case XFRM_DEV_OFFLOAD_OUT:
 		src = attrs->smac;
 		dst = attrs->dmac;
-		pkey = &attrs->daddr.a4;
+		pkey = &attrs->addrs.daddr.a4;
 		break;
 	default:
 		return;
@@ -303,6 +322,16 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	neigh_release(n);
 }
 
+static void mlx5e_ipsec_state_mask(struct mlx5e_ipsec_addr *addrs)
+{
+	/*
+	 * State doesn't have subnet prefixes in outer headers.
+	 * The match is performed for exaxt source/destination addresses.
+	 */
+	memset(addrs->smask.m6, 0xFF, sizeof(__be32) * 4);
+	memset(addrs->dmask.m6, 0xFF, sizeof(__be32) * 4);
+}
+
 void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
 					struct mlx5_accel_esp_xfrm_attrs *attrs)
 {
@@ -311,6 +340,7 @@ void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	struct aead_geniv_ctx *geniv_ctx;
 	struct crypto_aead *aead;
 	unsigned int crypto_data_len, key_len;
+	u32 replay_window;
 	int ivsize;
 
 	memset(attrs, 0, sizeof(*attrs));
@@ -338,35 +368,38 @@ void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	attrs->dir = x->xso.dir;
 
 	/* esn */
-	if (x->props.flags & XFRM_STATE_ESN) {
-		attrs->replay_esn.trigger = true;
-		attrs->replay_esn.esn = sa_entry->esn_state.esn;
-		attrs->replay_esn.esn_msb = sa_entry->esn_state.esn_msb;
-		attrs->replay_esn.overlap = sa_entry->esn_state.overlap;
-		if (attrs->dir == XFRM_DEV_OFFLOAD_OUT)
-			goto skip_replay_window;
+	attrs->replay_esn.trigger = !!(x->props.flags & XFRM_STATE_ESN);
+	attrs->replay_esn.esn = sa_entry->esn_state.esn;
+	attrs->replay_esn.esn_msb = sa_entry->esn_state.esn_msb;
+	attrs->replay_esn.overlap = sa_entry->esn_state.overlap;
+	if (attrs->dir == XFRM_DEV_OFFLOAD_OUT)
+		goto skip_replay_window;
 
-		switch (x->replay_esn->replay_window) {
-		case 32:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_32BIT;
-			break;
-		case 64:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_64BIT;
-			break;
-		case 128:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_128BIT;
-			break;
-		case 256:
-			attrs->replay_esn.replay_window =
-				MLX5_IPSEC_ASO_REPLAY_WIN_256BIT;
-			break;
-		default:
-			WARN_ON(true);
-			return;
-		}
+	if (x->props.flags & XFRM_STATE_ESN)
+		replay_window = x->replay_esn->replay_window;
+	else
+		replay_window = x->props.replay_window;
+	switch (replay_window) {
+	case 32:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_32BIT;
+		break;
+	case 64:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_64BIT;
+		break;
+	case 128:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_128BIT;
+		break;
+	case 256:
+		attrs->replay_esn.replay_window =
+			MLX5_IPSEC_ASO_REPLAY_WIN_256BIT;
+		break;
+	default:
+		/* In non-ESN mode, replay_window can be 0 */
+		WARN_ON(replay_window || (x->props.flags & XFRM_STATE_ESN));
+		break;
 	}
 
 skip_replay_window:
@@ -374,9 +407,11 @@ skip_replay_window:
 	attrs->spi = be32_to_cpu(x->id.spi);
 
 	/* source , destination ips */
-	memcpy(&attrs->saddr, x->props.saddr.a6, sizeof(attrs->saddr));
-	memcpy(&attrs->daddr, x->id.daddr.a6, sizeof(attrs->daddr));
-	attrs->family = x->props.family;
+	memcpy(&attrs->addrs.saddr, x->props.saddr.a6,
+	       sizeof(attrs->addrs.saddr));
+	memcpy(&attrs->addrs.daddr, x->id.daddr.a6, sizeof(attrs->addrs.daddr));
+	attrs->addrs.family = x->props.family;
+	mlx5e_ipsec_state_mask(&attrs->addrs);
 	attrs->type = x->xso.type;
 	attrs->reqid = x->props.reqid;
 	attrs->upspec.dport = ntohs(x->sel.dport);
@@ -428,7 +463,8 @@ static int mlx5e_xfrm_validate_state(struct mlx5_core_dev *mdev,
 	}
 	if (x->encap) {
 		if (!(mlx5_ipsec_device_caps(mdev) & MLX5_IPSEC_CAP_ESPINUDP)) {
-			NL_SET_ERR_MSG_MOD(extack, "Encapsulation is not supported");
+			NL_SET_ERR_MSG_MOD(extack,
+					   "Encapsulation is not supported");
 			return -EINVAL;
 		}
 
@@ -715,15 +751,7 @@ static int mlx5e_xfrm_add_state(struct xfrm_state *x,
 	}
 
 	/* check esn */
-	if (x->props.flags & XFRM_STATE_ESN)
-		mlx5e_ipsec_update_esn_state(sa_entry);
-	else
-		/* According to RFC4303, section "3.3.3. Sequence Number Generation",
-		 * the first packet sent using a given SA will contain a sequence
-		 * number of 1.
-		 */
-		sa_entry->esn_state.esn = 1;
-
+	mlx5e_ipsec_update_esn_state(sa_entry);
 	mlx5e_ipsec_build_accel_xfrm_attrs(sa_entry, &sa_entry->attrs);
 
 	err = mlx5_ipsec_create_work(sa_entry);
@@ -853,13 +881,13 @@ static int mlx5e_ipsec_netevent_event(struct notifier_block *nb,
 	xa_for_each_marked(&ipsec->sadb, idx, sa_entry, MLX5E_IPSEC_TUNNEL_SA) {
 		attrs = &sa_entry->attrs;
 
-		if (attrs->family == AF_INET) {
-			if (!neigh_key_eq32(n, &attrs->saddr.a4) &&
-			    !neigh_key_eq32(n, &attrs->daddr.a4))
+		if (attrs->addrs.family == AF_INET) {
+			if (!neigh_key_eq32(n, &attrs->addrs.saddr.a4) &&
+			    !neigh_key_eq32(n, &attrs->addrs.daddr.a4))
 				continue;
 		} else {
-			if (!neigh_key_eq128(n, &attrs->saddr.a4) &&
-			    !neigh_key_eq128(n, &attrs->daddr.a4))
+			if (!neigh_key_eq128(n, &attrs->addrs.saddr.a4) &&
+			    !neigh_key_eq128(n, &attrs->addrs.daddr.a4))
 				continue;
 		}
 
@@ -953,21 +981,6 @@ void mlx5e_ipsec_cleanup(struct mlx5e_priv *priv)
 	priv->ipsec = NULL;
 }
 
-static bool mlx5e_ipsec_offload_ok(struct sk_buff *skb, struct xfrm_state *x)
-{
-	if (x->props.family == AF_INET) {
-		/* Offload with IPv4 options is not supported yet */
-		if (ip_hdr(skb)->ihl > 5)
-			return false;
-	} else {
-		/* Offload with IPv6 extension headers is not support yet */
-		if (ipv6_ext_hdr(ipv6_hdr(skb)->nexthdr))
-			return false;
-	}
-
-	return true;
-}
-
 static void mlx5e_xfrm_advance_esn_state(struct xfrm_state *x)
 {
 	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
@@ -995,6 +1008,7 @@ static void mlx5e_xfrm_update_stats(struct xfrm_state *x)
 	u64 auth_packets = 0, auth_bytes = 0;
 	u64 success_packets, success_bytes;
 	u64 packets, bytes, lastuse;
+	u64 oseq, oseq_hi;
 	size_t headers;
 
 	lockdep_assert(lockdep_is_held(&x->lock) ||
@@ -1018,15 +1032,31 @@ static void mlx5e_xfrm_update_stats(struct xfrm_state *x)
 	if (x->xso.type != XFRM_DEV_OFFLOAD_PACKET)
 		return;
 
+	mlx5_fc_query_cached(ipsec_rule->fc, &bytes, &packets, &lastuse);
+	success_packets = packets - auth_packets - trailer_packets - replay_packets;
 	if (sa_entry->attrs.dir == XFRM_DEV_OFFLOAD_IN) {
 		mlx5_fc_query_cached(ipsec_rule->replay.fc, &replay_bytes,
 				     &replay_packets, &lastuse);
 		x->stats.replay += replay_packets;
 		XFRM_ADD_STATS(net, LINUX_MIB_XFRMINSTATESEQERROR, replay_packets);
+	/* The code below makes sure that SEQ reported to the user doesn't
+	 * overflow adter it reaches 0xFFFFFFFF, as SW/crypto paths behave.
+	 */
+	} else if (x->replay_esn) {
+		oseq = (u64)(x->replay_esn->oseq) +
+		       ((u64)(x->replay_esn->oseq_hi) << 32);
+		if (check_add_overflow(oseq, success_packets, &oseq_hi)) {
+			x->replay_esn->oseq = 0xFFFFFFFF;
+			x->replay_esn->oseq_hi = 0xFFFFFFFF;
+		} else {
+			x->replay_esn->oseq = lower_32_bits(oseq_hi);
+			x->replay_esn->oseq_hi = upper_32_bits(oseq_hi);
+		}
+	} else {
+		oseq = (u64)x->replay.oseq + success_packets;
+		x->replay.oseq = min(oseq, 0xFFFFFFFF);
 	}
 
-	mlx5_fc_query_cached(ipsec_rule->fc, &bytes, &packets, &lastuse);
-	success_packets = packets - auth_packets - trailer_packets - replay_packets;
 	x->curlft.packets += success_packets;
 	/* NIC counts all bytes passed through flow steering and doesn't have
 	 * an ability to count payload data size which is needed for SA.
@@ -1035,13 +1065,50 @@ static void mlx5e_xfrm_update_stats(struct xfrm_state *x)
 	 * by removing always available headers.
 	 */
 	headers = sizeof(struct ethhdr);
-	if (sa_entry->attrs.family == AF_INET)
+	if (sa_entry->attrs.addrs.family == AF_INET)
 		headers += sizeof(struct iphdr);
 	else
 		headers += sizeof(struct ipv6hdr);
 
 	success_bytes = bytes - auth_bytes - trailer_bytes - replay_bytes;
 	x->curlft.bytes += success_bytes - headers * success_packets;
+}
+
+static __be32 word_to_mask(int prefix)
+{
+	if (prefix < 0)
+		return 0;
+
+	if (!prefix || prefix > 31)
+		return cpu_to_be32(0xFFFFFFFF);
+
+	return cpu_to_be32(((1U << prefix) - 1) << (32 - prefix));
+}
+
+static void mlx5e_ipsec_policy_mask(struct mlx5e_ipsec_addr *addrs,
+				    struct xfrm_selector *sel)
+{
+	int i;
+
+	if (addrs->family == AF_INET) {
+		addrs->smask.m4 = word_to_mask(sel->prefixlen_s);
+		addrs->saddr.a4 &= addrs->smask.m4;
+		addrs->dmask.m4 = word_to_mask(sel->prefixlen_d);
+		addrs->daddr.a4 &= addrs->dmask.m4;
+		return;
+	}
+
+	for (i = 0; i < 4; i++) {
+		if (sel->prefixlen_s != 32 * i)
+			addrs->smask.m6[i] =
+				word_to_mask(sel->prefixlen_s - 32 * i);
+		addrs->saddr.a6[i] &= addrs->smask.m6[i];
+
+		if (sel->prefixlen_d != 32 * i)
+			addrs->dmask.m6[i] =
+				word_to_mask(sel->prefixlen_d - 32 * i);
+		addrs->daddr.a6[i] &= addrs->dmask.m6[i];
+	}
 }
 
 static int mlx5e_xfrm_validate_policy(struct mlx5_core_dev *mdev,
@@ -1116,9 +1183,10 @@ mlx5e_ipsec_build_accel_pol_attrs(struct mlx5e_ipsec_pol_entry *pol_entry,
 	sel = &x->selector;
 	memset(attrs, 0, sizeof(*attrs));
 
-	memcpy(&attrs->saddr, sel->saddr.a6, sizeof(attrs->saddr));
-	memcpy(&attrs->daddr, sel->daddr.a6, sizeof(attrs->daddr));
-	attrs->family = sel->family;
+	memcpy(&attrs->addrs.saddr, sel->saddr.a6, sizeof(attrs->addrs.saddr));
+	memcpy(&attrs->addrs.daddr, sel->daddr.a6, sizeof(attrs->addrs.daddr));
+	attrs->addrs.family = sel->family;
+	mlx5e_ipsec_policy_mask(&attrs->addrs, sel);
 	attrs->dir = x->xdo.dir;
 	attrs->action = x->action;
 	attrs->type = XFRM_DEV_OFFLOAD_PACKET;
@@ -1196,7 +1264,6 @@ static const struct xfrmdev_ops mlx5e_ipsec_xfrmdev_ops = {
 	.xdo_dev_state_add	= mlx5e_xfrm_add_state,
 	.xdo_dev_state_delete	= mlx5e_xfrm_del_state,
 	.xdo_dev_state_free	= mlx5e_xfrm_free_state,
-	.xdo_dev_offload_ok	= mlx5e_ipsec_offload_ok,
 	.xdo_dev_state_advance_esn = mlx5e_xfrm_advance_esn_state,
 
 	.xdo_dev_state_update_stats = mlx5e_xfrm_update_stats,
