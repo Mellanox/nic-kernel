@@ -202,6 +202,11 @@ definitions:
         name: exception
       -
         name: control
+  -
+    name:  devlink-rate-tc-index-max
+    header: net/devlink.h
+    type: const
+    value: 7
 
 attribute-sets:
   -
@@ -820,6 +825,32 @@ attribute-sets:
       -
         name: region-direct
         type: flag
+      -
+        name: rate-tc-bws
+        type: nest
+        multi-attr: true
+        nested-attributes: dl-rate-tc-bws
+      -
+        name: rate-tc-index
+        type: u8
+        checks:
+          min: 0
+          max: devlink-rate-tc-index-max
+      -
+        name: rate-tc-bw
+        type: u32
+        doc: |
+             Specifies the bandwidth allocation for the Traffic Class as a
+             percentage.
+        checks:
+          min: 0
+          max: 100
+      -
+        name: parent-dev-bus-name
+        type: string
+      -
+        name: parent-dev-name
+        type: string
 
   -
     name: dl-dev-stats
@@ -1225,6 +1256,14 @@ attribute-sets:
       -
         name: flash
         type: flag
+  -
+    name: dl-rate-tc-bws
+    subset-of: devlink
+    attributes:
+      -
+       name: rate-tc-index
+      -
+       name: rate-tc-bw
 
 operations:
   enum-model: directional
@@ -2137,8 +2176,8 @@ operations:
       dont-validate: [ strict ]
       flags: [ admin-perm ]
       do:
-        pre: devlink-nl-pre-doit
-        post: devlink-nl-post-doit
+        pre: devlink-nl-pre-doit-parent-dev-optional
+        post: devlink-nl-post-doit-parent-dev-optional
         request:
           attributes:
             - bus-name
@@ -2149,6 +2188,9 @@ operations:
             - rate-tx-priority
             - rate-tx-weight
             - rate-parent-node-name
+            - rate-tc-bws
+            - parent-dev-bus-name
+            - parent-dev-name
 
     -
       name: rate-new
@@ -2157,8 +2199,8 @@ operations:
       dont-validate: [ strict ]
       flags: [ admin-perm ]
       do:
-        pre: devlink-nl-pre-doit
-        post: devlink-nl-post-doit
+        pre: devlink-nl-pre-doit-parent-dev-optional
+        post: devlink-nl-post-doit-parent-dev-optional
         request:
           attributes:
             - bus-name
@@ -2169,6 +2211,9 @@ operations:
             - rate-tx-priority
             - rate-tx-weight
             - rate-parent-node-name
+            - rate-tc-bws
+            - parent-dev-bus-name
+            - parent-dev-name
 
     -
       name: rate-del
