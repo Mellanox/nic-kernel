@@ -185,20 +185,20 @@ def ethtool(args, json=None, ns=None, host=None):
     return tool('ethtool', args, json=json, ns=ns, host=host)
 
 
-def rand_port():
+def check_port_available_remote(port, host):
     """
-    Get a random unprivileged port, try to make sure it's not already used.
+    Check if a port is available on remote host.
+    Raise exception if not available.
     """
-    for _ in range(1000):
-        port = random.randint(10000, 65535)
-        try:
-            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
-                s.bind(("", port))
-            return port
-        except OSError as e:
-            if e.errno != errno.EADDRINUSE:
-                raise
-    raise Exception("Can't find any free unprivileged port")
+    cmd(f"python3 -c 'import socket; s=socket.socket(socket.AF_INET6, socket.SOCK_STREAM); s.bind((\"\", {port}))'", host=host)
+
+def rand_port(type=socket.SOCK_STREAM):
+    """
+    Get a random unprivileged port.
+    """
+    with socket.socket(socket.AF_INET6, type) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
 
 
 def wait_port_listen(port, proto="tcp", ns=None, host=None, sleep=0.005, deadline=5):
