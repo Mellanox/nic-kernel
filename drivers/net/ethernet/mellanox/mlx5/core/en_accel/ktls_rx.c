@@ -345,8 +345,11 @@ static void resync_handle_work(struct work_struct *work)
 	c = resync->priv->channels.c[priv_rx->rxq];
 	sq = &c->async_icosq;
 
-	if (resync_post_get_progress_params(sq, priv_rx))
+	if (resync_post_get_progress_params(sq, priv_rx)) {
+		tls_offload_rx_resync_async_request_cancel(priv_rx->sk);
+		WARN_ON_ONCE(1);
 		mlx5e_ktls_priv_rx_put(priv_rx);
+	}
 }
 
 static void resync_init(struct mlx5e_ktls_rx_resync_ctx *resync,
@@ -431,8 +434,11 @@ void mlx5e_ktls_handle_get_psv_completion(struct mlx5e_icosq_wqe_info *wi,
 
 	priv_rx = buf->priv_rx;
 	dev = mlx5_core_dma_dev(sq->channel->mdev);
-	if (unlikely(test_bit(MLX5E_PRIV_RX_FLAG_DELETING, priv_rx->flags)))
+	if (unlikely(test_bit(MLX5E_PRIV_RX_FLAG_DELETING, priv_rx->flags))) {
+		tls_offload_rx_resync_async_request_cancel(priv_rx->sk);
+		WARN_ON_ONCE(1);
 		goto out;
+	}
 
 	dma_sync_single_for_cpu(dev, buf->dma_addr, PROGRESS_PARAMS_PADDED_SIZE,
 				DMA_FROM_DEVICE);
@@ -443,6 +449,9 @@ void mlx5e_ktls_handle_get_psv_completion(struct mlx5e_icosq_wqe_info *wi,
 	if (tracker_state != MLX5E_TLS_PROGRESS_PARAMS_RECORD_TRACKER_STATE_TRACKING ||
 	    auth_state != MLX5E_TLS_PROGRESS_PARAMS_AUTH_STATE_NO_OFFLOAD) {
 		priv_rx->rq_stats->tls_resync_req_skip++;
+		tls_offload_rx_resync_async_request_cancel(priv_rx->sk);
+		mlx5_core_warn(sq->channel->mdev,
+			       "Cancelling resync request due to tracking/authentication state mismatch\n");
 		goto out;
 	}
 
@@ -557,6 +566,16 @@ void mlx5e_ktls_rx_resync(struct net_device *netdev, struct sock *sk,
 	resync_handle_seq_match(priv_rx, c);
 }
 
+void
+mlx5_ktls_offload_rx_resync_async_request_cancel(struct mlx5e_icosq_wqe_info *wi)
+{
+	struct mlx5e_ktls_offload_context_rx *priv_rx;
+	struct mlx5e_ktls_rx_resync_buf *buf;
+
+	buf = wi->tls_get_params.buf;
+	priv_rx = buf->priv_rx;
+	tls_offload_rx_resync_async_request_cancel(priv_rx->sk);
+}
 /* End of resync section */
 
 void mlx5e_ktls_handle_rx_skb(struct mlx5e_rq *rq, struct sk_buff *skb,
