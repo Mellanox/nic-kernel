@@ -51,7 +51,8 @@ mlx5_ft_pool_get_avail_sz(struct mlx5_core_dev *dev, enum fs_flow_table_type tab
 
 	for (i = ARRAY_SIZE(FT_POOLS) - 1; i >= 0; i--) {
 		if (dev->priv.ft_pool->ft_left[i] &&
-		    (FT_POOLS[i] >= desired_size || desired_size == MLX5_FS_MAX_POOL_SIZE) &&
+		    (FT_POOLS[i] >= desired_size ||
+		     desired_size == MLX5_FS_MAX_POOL_SIZE) &&
 		    FT_POOLS[i] <= max_ft_size) {
 			found_i = i;
 			if (desired_size != MLX5_FS_MAX_POOL_SIZE)

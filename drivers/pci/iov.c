@@ -314,8 +314,11 @@ int pci_iov_add_virtfn(struct pci_dev *dev, int id)
 		pci_read_vf_config_common(virtfn);
 
 	rc = pci_setup_device(virtfn);
-	if (rc)
+	if (rc) {
+		pci_bus_put(virtfn->bus);
+		kfree(virtfn);
 		goto failed1;
+	}
 
 	virtfn->dev.parent = dev->dev.parent;
 	virtfn->multifunction = 0;
@@ -336,14 +339,15 @@ int pci_iov_add_virtfn(struct pci_dev *dev, int id)
 	pci_device_add(virtfn, virtfn->bus);
 	rc = pci_iov_sysfs_link(dev, virtfn, id);
 	if (rc)
-		goto failed1;
+		goto failed2;
 
 	pci_bus_add_device(virtfn);
 
 	return 0;
 
-failed1:
+failed2:
 	pci_stop_and_remove_bus_device(virtfn);
+failed1:
 	pci_dev_put(dev);
 failed0:
 	virtfn_remove_bus(dev->bus, bus);

@@ -166,19 +166,19 @@ void xfrm_replay_advance(struct xfrm_state *x, __be32 net_seq)
 		return xfrm_replay_advance_esn(x, net_seq);
 	}
 
+	seq = x->replay.seq;
+	x->replay.seq = ntohl(net_seq);
 	if (!x->props.replay_window)
 		return;
 
-	seq = ntohl(net_seq);
-	if (seq > x->replay.seq) {
-		diff = seq - x->replay.seq;
+	if (x->replay.seq > seq) {
+		diff = x->replay.seq - seq;
 		if (diff < x->props.replay_window)
 			x->replay.bitmap = ((x->replay.bitmap) << diff) | 1;
 		else
 			x->replay.bitmap = 1;
-		x->replay.seq = seq;
 	} else {
-		diff = x->replay.seq - seq;
+		diff = seq - x->replay.seq;
 		x->replay.bitmap |= (1U << diff);
 	}
 
