@@ -1753,10 +1753,25 @@ static __always_inline unsigned long
 mlx5_umem_mkc_find_best_pgsz(struct mlx5_ib_dev *dev, struct ib_umem *umem,
 			     u64 iova)
 {
-	int page_size_bits =
-		MLX5_CAP_GEN_2(dev->mdev, umr_log_entity_size_5) ? 6 : 5;
-	unsigned long bitmap =
-		__mlx5_log_page_size_to_bitmap(page_size_bits, 0);
+	unsigned int max_log_size, max_log_size_cap, min_log_size;
+	unsigned long bitmap;
+
+	max_log_size_cap =
+		MLX5_CAP_GEN_2(dev->mdev, max_mkey_log_entity_size_mtt) ?
+			MLX5_CAP_GEN_2(dev->mdev,
+				       max_mkey_log_entity_size_mtt) :
+			31;
+
+	max_log_size = MLX5_CAP_GEN_2(dev->mdev, umr_log_entity_size_5) ?
+			       max_log_size_cap :
+			       min(max_log_size_cap, 31);
+
+	min_log_size =
+		MLX5_CAP_GEN_2(dev->mdev, log_min_mkey_entity_size) ?
+			MLX5_CAP_GEN_2(dev->mdev, log_min_mkey_entity_size) :
+			MLX5_ADAPTER_PAGE_SHIFT;
+
+	bitmap = GENMASK_ULL(max_log_size, min_log_size);
 
 	return ib_umem_find_best_pgsz(umem, bitmap, iova);
 }
