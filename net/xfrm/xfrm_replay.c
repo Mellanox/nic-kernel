@@ -260,15 +260,16 @@ static void xfrm_replay_advance_bmp(struct xfrm_state *x, __be32 net_seq)
 	unsigned int bitnr, nr, i;
 	u32 diff;
 	struct xfrm_replay_state_esn *replay_esn = x->replay_esn;
-	u32 seq = ntohl(net_seq);
-	u32 pos;
+	u32 seq, pos;
 
+	seq = replay_esn->seq;
+	replay_esn->seq = max(replay_esn->seq, ntohl(net_seq));
 	if (!replay_esn->replay_window)
 		return;
 
-	pos = (replay_esn->seq - 1) % replay_esn->replay_window;
+	pos = (seq - 1) % replay_esn->replay_window;
 
-	if (seq > replay_esn->seq) {
+	if (replay_esn->seq > seq) {
 		diff = seq - replay_esn->seq;
 
 		if (diff < replay_esn->replay_window) {
@@ -285,9 +286,8 @@ static void xfrm_replay_advance_bmp(struct xfrm_state *x, __be32 net_seq)
 		}
 
 		bitnr = (pos + diff) % replay_esn->replay_window;
-		replay_esn->seq = seq;
 	} else {
-		diff = replay_esn->seq - seq;
+		diff = replay_esn->seq - ntohl(net_seq);
 
 		if (pos >= diff)
 			bitnr = (pos - diff) % replay_esn->replay_window;
