@@ -555,43 +555,49 @@ static void xfrm_replay_advance_esn(struct xfrm_state *x, __be32 net_seq)
 {
 	unsigned int bitnr, nr, i;
 	int wrap;
-	u32 diff, pos, seq, seq_hi;
+	u32 diff, pos, seq;
 	struct xfrm_replay_state_esn *replay_esn = x->replay_esn;
+	bool valid_seq = false;
 
-	if (!replay_esn->replay_window)
+	seq = replay_esn->seq;
+	wrap = xfrm_replay_seqhi(x, net_seq) - replay_esn->seq_hi;
+	if (unlikely(wrap > 0)) {
+		replay_esn->seq_hi++;
+		replay_esn->seq = ntohl(net_seq);
+		valid_seq = true;
+	} else if (ntohl(net_seq) > seq) {
+		replay_esn->seq = ntohl(net_seq);
+		valid_seq = true;
+	}
+
+	if (!replay_esn->replay_window) {
+		xfrm_dev_state_advance_esn(x);
 		return;
+	}
 
-	seq = ntohl(net_seq);
-	pos = (replay_esn->seq - 1) % replay_esn->replay_window;
-	seq_hi = xfrm_replay_seqhi(x, net_seq);
-	wrap = seq_hi - replay_esn->seq_hi;
-
-	if ((!wrap && seq > replay_esn->seq) || wrap > 0) {
+	pos = (seq - 1) % replay_esn->replay_window;
+	if (valid_seq) {
 		if (likely(!wrap))
-			diff = seq - replay_esn->seq;
+			diff = replay_esn->seq - seq;
 		else
-			diff = ~replay_esn->seq + seq + 1;
+			diff = ~seq + replay_esn->seq + 1;
 
+		/* There is no need to update replay window bitmap */
 		if (diff < replay_esn->replay_window) {
 			for (i = 1; i < diff; i++) {
 				bitnr = (pos + i) % replay_esn->replay_window;
 				nr = bitnr >> 5;
 				bitnr = bitnr & 0x1F;
-				replay_esn->bmp[nr] &=  ~(1U << bitnr);
+				replay_esn->bmp[nr] &= ~(1U << bitnr);
 			}
 		} else {
 			nr = (replay_esn->replay_window - 1) >> 5;
 			for (i = 0; i <= nr; i++)
 				replay_esn->bmp[i] = 0;
 		}
-
 		bitnr = (pos + diff) % replay_esn->replay_window;
-		replay_esn->seq = seq;
-
-		if (unlikely(wrap > 0))
-			replay_esn->seq_hi++;
 	} else {
-		diff = replay_esn->seq - seq;
+		diff = seq - replay_esn->seq;
 
 		if (pos >= diff)
 			bitnr = (pos - diff) % replay_esn->replay_window;
