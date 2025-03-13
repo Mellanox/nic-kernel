@@ -276,6 +276,7 @@ struct mlx5_ib_flow_matcher {
 	struct mlx5_core_dev	*mdev;
 	atomic_t		usecnt;
 	u8			match_criteria_enable;
+	u32			ib_port;
 };
 
 struct mlx5_ib_steering_anchor {
@@ -293,6 +294,18 @@ enum mlx5_ib_optional_counter_type {
 	MLX5_IB_OPCOUNTER_CC_RX_CE_PKTS,
 	MLX5_IB_OPCOUNTER_CC_RX_CNP_PKTS,
 	MLX5_IB_OPCOUNTER_CC_TX_CNP_PKTS,
+	MLX5_IB_OPCOUNTER_RDMA_TX_PACKETS,
+	MLX5_IB_OPCOUNTER_RDMA_TX_BYTES,
+	MLX5_IB_OPCOUNTER_RDMA_RX_PACKETS,
+	MLX5_IB_OPCOUNTER_RDMA_RX_BYTES,
+
+	MLX5_IB_OPCOUNTER_CC_RX_CE_PKTS_PER_QP,
+	MLX5_IB_OPCOUNTER_CC_RX_CNP_PKTS_PER_QP,
+	MLX5_IB_OPCOUNTER_CC_TX_CNP_PKTS_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_TX_PACKETS_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_TX_BYTES_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_RX_PACKETS_PER_QP,
+	MLX5_IB_OPCOUNTER_RDMA_RX_BYTES_PER_QP,
 
 	MLX5_IB_OPCOUNTER_MAX,
 };
@@ -307,6 +320,8 @@ struct mlx5_ib_flow_db {
 	struct mlx5_ib_flow_prio	rdma_tx[MLX5_IB_NUM_FLOW_FT];
 	struct mlx5_ib_flow_prio	opfcs[MLX5_IB_OPCOUNTER_MAX];
 	struct mlx5_flow_table		*lag_demux_ft;
+	struct mlx5_ib_flow_prio        *rdma_transport_rx;
+	struct mlx5_ib_flow_prio        *rdma_transport_tx;
 	/* Protect flow steering bypass flow tables
 	 * when add/del flow rules.
 	 * only single add/removal of flow steering rule could be done
@@ -336,6 +351,7 @@ struct mlx5_ib_flow_db {
 #define MLX5_IB_UPD_XLT_PD	      BIT(4)
 #define MLX5_IB_UPD_XLT_ACCESS	      BIT(5)
 #define MLX5_IB_UPD_XLT_INDIRECT      BIT(6)
+#define MLX5_IB_UPD_XLT_DOWNGRADE     BIT(7)
 
 /* Private QP creation flags to be passed in ib_qp_init_attr.create_flags.
  *
@@ -882,6 +898,14 @@ int mlx5_ib_fs_add_op_fc(struct mlx5_ib_dev *dev, u32 port_num,
 void mlx5_ib_fs_remove_op_fc(struct mlx5_ib_dev *dev,
 			     struct mlx5_ib_op_fc *opfc,
 			     enum mlx5_ib_optional_counter_type type);
+
+int mlx5r_fs_bind_op_fc(struct ib_qp *qp, struct rdma_counter *counter,
+			u32 port);
+
+void mlx5r_fs_unbind_op_fc(struct ib_qp *qp, struct rdma_counter *counter);
+
+void mlx5r_fs_destroy_fcs(struct mlx5_ib_dev *dev,
+			  struct rdma_counter *counter);
 
 struct mlx5_ib_multiport_info;
 
@@ -1450,8 +1474,8 @@ void mlx5_ib_odp_cleanup_one(struct mlx5_ib_dev *ibdev);
 int __init mlx5_ib_odp_init(void);
 void mlx5_ib_odp_cleanup(void);
 int mlx5_odp_init_mkey_cache(struct mlx5_ib_dev *dev);
-void mlx5_odp_populate_xlt(void *xlt, size_t idx, size_t nentries,
-			   struct mlx5_ib_mr *mr, int flags);
+int mlx5_odp_populate_xlt(void *xlt, size_t idx, size_t nentries,
+			  struct mlx5_ib_mr *mr, int flags);
 
 int mlx5_ib_advise_mr_prefetch(struct ib_pd *pd,
 			       enum ib_uverbs_advise_mr_advice advice,
@@ -1472,8 +1496,11 @@ static inline int mlx5_odp_init_mkey_cache(struct mlx5_ib_dev *dev)
 {
 	return 0;
 }
-static inline void mlx5_odp_populate_xlt(void *xlt, size_t idx, size_t nentries,
-					 struct mlx5_ib_mr *mr, int flags) {}
+static inline int mlx5_odp_populate_xlt(void *xlt, size_t idx, size_t nentries,
+					struct mlx5_ib_mr *mr, int flags)
+{
+	return -EOPNOTSUPP;
+}
 
 static inline int
 mlx5_ib_advise_mr_prefetch(struct ib_pd *pd,
@@ -1708,7 +1735,7 @@ static inline bool rt_supported(int ts_cap)
 static inline bool mlx5_umem_needs_ats(struct mlx5_ib_dev *dev,
 				       struct ib_umem *umem, int access_flags)
 {
-	if (!MLX5_CAP_GEN(dev->mdev, ats) || !umem->is_dmabuf)
+	if (!MLX5_CAP_GEN(dev->mdev, ats) || (!umem->is_dmabuf && !umem->is_peer))
 		return false;
 	return access_flags & IB_ACCESS_RELAXED_ORDERING;
 }
@@ -1730,10 +1757,25 @@ static __always_inline unsigned long
 mlx5_umem_mkc_find_best_pgsz(struct mlx5_ib_dev *dev, struct ib_umem *umem,
 			     u64 iova)
 {
-	int page_size_bits =
-		MLX5_CAP_GEN_2(dev->mdev, umr_log_entity_size_5) ? 6 : 5;
-	unsigned long bitmap =
-		__mlx5_log_page_size_to_bitmap(page_size_bits, 0);
+	unsigned int max_log_size, max_log_size_cap, min_log_size;
+	unsigned long bitmap;
+
+	max_log_size_cap =
+		MLX5_CAP_GEN_2(dev->mdev, max_mkey_log_entity_size_mtt) ?
+			MLX5_CAP_GEN_2(dev->mdev,
+				       max_mkey_log_entity_size_mtt) :
+			31;
+
+	max_log_size = MLX5_CAP_GEN_2(dev->mdev, umr_log_entity_size_5) ?
+			       max_log_size_cap :
+			       min(max_log_size_cap, 31);
+
+	min_log_size =
+		MLX5_CAP_GEN_2(dev->mdev, log_min_mkey_entity_size) ?
+			MLX5_CAP_GEN_2(dev->mdev, log_min_mkey_entity_size) :
+			MLX5_ADAPTER_PAGE_SHIFT;
+
+	bitmap = GENMASK_ULL(max_log_size, min_log_size);
 
 	return ib_umem_find_best_pgsz(umem, bitmap, iova);
 }
