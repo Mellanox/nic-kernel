@@ -332,6 +332,13 @@ static umode_t vpd_attr_is_visible(struct kobject *kobj,
 	if (!pdev->vpd.cap)
 		return 0;
 
+	/*
+	 * On Mellanox devices reading VPD is safe for unprivileged users,
+	 * so just add needed bits to allow read.
+	 */
+	if (unlikely(pdev->vendor == PCI_VENDOR_ID_MELLANOX))
+		return a->attr.mode | 0044;
+
 	return a->attr.mode;
 }
 
