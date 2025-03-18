@@ -1928,19 +1928,14 @@ int register_netdevice_notifier(struct notifier_block *nb)
 
 	/* Close race with setup_net() and cleanup_net() */
 	down_write(&pernet_ops_rwsem);
-
-	/* When RTNL is removed, we need protection for netdev_chain. */
 	rtnl_lock();
-
 	err = raw_notifier_chain_register(&netdev_chain, nb);
 	if (err)
 		goto unlock;
 	if (dev_boot_phase)
 		goto unlock;
 	for_each_net(net) {
-		__rtnl_net_lock(net);
 		err = call_netdevice_register_net_notifiers(nb, net);
-		__rtnl_net_unlock(net);
 		if (err)
 			goto rollback;
 	}
@@ -1951,11 +1946,8 @@ unlock:
 	return err;
 
 rollback:
-	for_each_net_continue_reverse(net) {
-		__rtnl_net_lock(net);
+	for_each_net_continue_reverse(net)
 		call_netdevice_unregister_net_notifiers(nb, net);
-		__rtnl_net_unlock(net);
-	}
 
 	raw_notifier_chain_unregister(&netdev_chain, nb);
 	goto unlock;
@@ -1988,11 +1980,8 @@ int unregister_netdevice_notifier(struct notifier_block *nb)
 	if (err)
 		goto unlock;
 
-	for_each_net(net) {
-		__rtnl_net_lock(net);
+	for_each_net(net)
 		call_netdevice_unregister_net_notifiers(nb, net);
-		__rtnl_net_unlock(net);
-	}
 
 unlock:
 	rtnl_unlock();
@@ -2056,10 +2045,9 @@ int register_netdevice_notifier_net(struct net *net, struct notifier_block *nb)
 {
 	int err;
 
-	rtnl_net_lock(net);
+	rtnl_lock();
 	err = __register_netdevice_notifier_net(net, nb, false);
-	rtnl_net_unlock(net);
-
+	rtnl_unlock();
 	return err;
 }
 EXPORT_SYMBOL(register_netdevice_notifier_net);
@@ -2085,10 +2073,9 @@ int unregister_netdevice_notifier_net(struct net *net,
 {
 	int err;
 
-	rtnl_net_lock(net);
+	rtnl_lock();
 	err = __unregister_netdevice_notifier_net(net, nb);
-	rtnl_net_unlock(net);
-
+	rtnl_unlock();
 	return err;
 }
 EXPORT_SYMBOL(unregister_netdevice_notifier_net);
@@ -2141,21 +2128,15 @@ int register_netdevice_notifier_dev_net(struct net_device *dev,
 					struct notifier_block *nb,
 					struct netdev_net_notifier *nn)
 {
-	struct net *net = dev_net(dev);
 	int err;
 
-	/* rtnl_net_lock() assumes dev is not yet published by
-	 * register_netdevice().
-	 */
-	DEBUG_NET_WARN_ON_ONCE(!list_empty(&dev->dev_list));
-
-	rtnl_net_lock(net);
-	err = __register_netdevice_notifier_net(net, nb, false);
+	rtnl_net_dev_lock(dev);
+	err = __register_netdevice_notifier_net(dev_net(dev), nb, false);
 	if (!err) {
 		nn->nb = nb;
 		list_add(&nn->list, &dev->net_notifier_list);
 	}
-	rtnl_net_unlock(net);
+	rtnl_net_dev_unlock(dev);
 
 	return err;
 }
@@ -3878,6 +3859,9 @@ static struct sk_buff *validate_xmit_skb(struct sk_buff *skb, struct net_device 
 {
 	netdev_features_t features;
 
+	if (!skb_frags_readable(skb))
+		goto out_kfree_skb;
+
 	features = netif_skb_features(skb);
 	skb = validate_xmit_vlan(skb, features);
 	if (unlikely(!skb))
@@ -4763,7 +4747,7 @@ use_local_napi:
 	 * we have to raise NET_RX_SOFTIRQ.
 	 */
 	if (!sd->in_net_rx_action)
-		__raise_softirq_irqoff(NET_RX_SOFTIRQ);
+		raise_softirq_irqoff(NET_RX_SOFTIRQ);
 }
 
 #ifdef CONFIG_RPS
