@@ -1927,19 +1927,14 @@ int register_netdevice_notifier(struct notifier_block *nb)
 
 	/* Close race with setup_net() and cleanup_net() */
 	down_write(&pernet_ops_rwsem);
-
-	/* When RTNL is removed, we need protection for netdev_chain. */
 	rtnl_lock();
-
 	err = raw_notifier_chain_register(&netdev_chain, nb);
 	if (err)
 		goto unlock;
 	if (dev_boot_phase)
 		goto unlock;
 	for_each_net(net) {
-		__rtnl_net_lock(net);
 		err = call_netdevice_register_net_notifiers(nb, net);
-		__rtnl_net_unlock(net);
 		if (err)
 			goto rollback;
 	}
@@ -1950,11 +1945,8 @@ unlock:
 	return err;
 
 rollback:
-	for_each_net_continue_reverse(net) {
-		__rtnl_net_lock(net);
+	for_each_net_continue_reverse(net)
 		call_netdevice_unregister_net_notifiers(nb, net);
-		__rtnl_net_unlock(net);
-	}
 
 	raw_notifier_chain_unregister(&netdev_chain, nb);
 	goto unlock;
@@ -1987,11 +1979,8 @@ int unregister_netdevice_notifier(struct notifier_block *nb)
 	if (err)
 		goto unlock;
 
-	for_each_net(net) {
-		__rtnl_net_lock(net);
+	for_each_net(net)
 		call_netdevice_unregister_net_notifiers(nb, net);
-		__rtnl_net_unlock(net);
-	}
 
 unlock:
 	rtnl_unlock();
@@ -2055,10 +2044,9 @@ int register_netdevice_notifier_net(struct net *net, struct notifier_block *nb)
 {
 	int err;
 
-	rtnl_net_lock(net);
+	rtnl_lock();
 	err = __register_netdevice_notifier_net(net, nb, false);
-	rtnl_net_unlock(net);
-
+	rtnl_unlock();
 	return err;
 }
 EXPORT_SYMBOL(register_netdevice_notifier_net);
@@ -2084,10 +2072,9 @@ int unregister_netdevice_notifier_net(struct net *net,
 {
 	int err;
 
-	rtnl_net_lock(net);
+	rtnl_lock();
 	err = __unregister_netdevice_notifier_net(net, nb);
-	rtnl_net_unlock(net);
-
+	rtnl_unlock();
 	return err;
 }
 EXPORT_SYMBOL(unregister_netdevice_notifier_net);
@@ -3870,6 +3857,9 @@ EXPORT_SYMBOL(skb_csum_hwoffload_help);
 static struct sk_buff *validate_xmit_skb(struct sk_buff *skb, struct net_device *dev, bool *again)
 {
 	netdev_features_t features;
+
+	if (!skb_frags_readable(skb))
+		goto out_kfree_skb;
 
 	features = netif_skb_features(skb);
 	skb = validate_xmit_vlan(skb, features);
