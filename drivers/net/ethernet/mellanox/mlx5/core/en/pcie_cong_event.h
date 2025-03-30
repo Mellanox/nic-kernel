@@ -6,5 +6,6 @@
 
 int mlx5e_pcie_cong_event_init(struct mlx5e_priv *priv);
 void mlx5e_pcie_cong_event_cleanup(struct mlx5e_priv *priv);
+int mlx5e_tx_backpressure_update(struct mlx5e_priv *priv, void *context);
 
 #endif /* __MLX5_PCIE_CONG_EVENT_H__ */

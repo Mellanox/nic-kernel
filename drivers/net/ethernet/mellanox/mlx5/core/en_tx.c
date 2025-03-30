@@ -345,10 +345,16 @@ static void mlx5e_tx_skb_update_ts_flags(struct sk_buff *skb)
 
 static void mlx5e_tx_check_stop(struct mlx5e_txqsq *sq)
 {
-	if (unlikely(!mlx5e_wqc_has_room_for(&sq->wq, sq->cc, sq->pc, sq->stop_room))) {
-		netif_tx_stop_queue(sq->txq);
-		sq->stats->stopped++;
-	}
+	if (sq->priv->cong_state && !sq->xmit_more)
+		goto stop_q;
+
+	if (likely(mlx5e_wqc_has_room_for(&sq->wq, sq->cc,
+					  sq->pc, sq->stop_room)))
+		return;
+
+stop_q:
+	netif_tx_stop_queue(sq->txq);
+	sq->stats->stopped++;
 }
 
 static void mlx5e_tx_flush(struct mlx5e_txqsq *sq)

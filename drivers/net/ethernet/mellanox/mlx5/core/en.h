@@ -257,6 +257,7 @@ enum mlx5e_priv_flag {
 	MLX5E_PFLAG_XDP_TX_MPWQE,
 	MLX5E_PFLAG_SKB_TX_MPWQE,
 	MLX5E_PFLAG_TX_PORT_TS,
+	MLX5E_PFLAG_TX_BACKPRESSURE,
 	MLX5E_NUM_PFLAGS, /* Keep last */
 };
 
@@ -878,6 +879,7 @@ struct mlx5e_priv {
 	struct mlx5e_selq selq;
 	struct mlx5e_txqsq **txq2sq;
 	struct mlx5e_sq_stats **txq2sq_stats;
+	u8 cong_state; /* For PCIe congestion state, used in tx path. */
 
 #ifdef CONFIG_MLX5_CORE_EN_DCB
 	struct mlx5e_dcbx_dp       dcbx_dp;

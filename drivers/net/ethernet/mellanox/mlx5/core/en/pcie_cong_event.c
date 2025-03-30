@@ -227,6 +227,7 @@ static int mlx5_cmd_pcie_cong_event_query(struct mlx5_core_dev *dev,
 static void mlx5e_pcie_cong_event_work(struct work_struct *work)
 {
 	struct mlx5e_pcie_cong_event *cong_event;
+	struct mlx5e_params *params;
 	struct mlx5_core_dev *dev;
 	struct mlx5e_priv *priv;
 	u32 new_cong_state = 0;
@@ -249,7 +250,15 @@ static void mlx5e_pcie_cong_event_work(struct work_struct *work)
 	if (!changes)
 		return;
 
+	mutex_lock(&priv->state_lock);
+
 	cong_event->state = new_cong_state;
+
+	params = &priv->channels.params;
+	if (MLX5E_GET_PFLAG(params, MLX5E_PFLAG_TX_BACKPRESSURE))
+		priv->cong_state = new_cong_state;
+
+	mutex_unlock(&priv->state_lock);
 
 	if (changes & MLX5E_INBOUND_CONG) {
 		if (new_cong_state & MLX5E_INBOUND_CONG)
@@ -370,6 +379,21 @@ static ssize_t thresh_config_show(struct device *dev,
 	return sysfs_emit(buf, "%u %u %u %u\n",
 			  config.inbound_low, config.inbound_high,
 			  config.outbound_low, config.outbound_high);
+}
+
+int mlx5e_tx_backpressure_update(struct mlx5e_priv *priv, void *context)
+{
+	bool *enable = (bool *)context;
+
+	if (enable && *enable) {
+		struct mlx5e_pcie_cong_event *cong_event = priv->cong_event;
+
+		priv->cong_state = cong_event->state;
+	} else {
+		priv->cong_state = 0;
+	}
+
+	return 0;
 }
 
 int mlx5e_pcie_cong_event_init(struct mlx5e_priv *priv)

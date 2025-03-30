@@ -42,6 +42,7 @@
 #include "en/ptp.h"
 #include "lib/clock.h"
 #include "en/fs_ethtool.h"
+#include "en/pcie_cong_event.h"
 
 #define LANES_UNKNOWN		 0
 
@@ -2410,6 +2411,25 @@ static int set_pflag_tx_port_ts(struct net_device *netdev, bool enable)
 	return err;
 }
 
+static int set_pflag_tx_backpressure(struct net_device *netdev, bool enable)
+{
+	struct mlx5e_priv *priv = netdev_priv(netdev);
+	struct mlx5e_params new_params;
+
+	if (!mlx5_pcie_cong_event_supported(priv->mdev))
+		return -EOPNOTSUPP;
+
+	if (WARN_ON_ONCE(!priv->cong_event))
+		return -EOPNOTSUPP;
+
+	new_params = priv->channels.params;
+	MLX5E_SET_PFLAG(&new_params, MLX5E_PFLAG_TX_BACKPRESSURE, enable);
+
+	return mlx5e_safe_switch_params(priv, &new_params,
+					mlx5e_tx_backpressure_update,
+					&enable, true);
+}
+
 static const struct pflag_desc mlx5e_priv_flags[MLX5E_NUM_PFLAGS] = {
 	{ "rx_cqe_moder",        set_pflag_rx_cqe_based_moder },
 	{ "tx_cqe_moder",        set_pflag_tx_cqe_based_moder },
@@ -2419,6 +2439,7 @@ static const struct pflag_desc mlx5e_priv_flags[MLX5E_NUM_PFLAGS] = {
 	{ "xdp_tx_mpwqe",        set_pflag_xdp_tx_mpwqe },
 	{ "skb_tx_mpwqe",        set_pflag_skb_tx_mpwqe },
 	{ "tx_port_ts",          set_pflag_tx_port_ts },
+	{ "tx_backpressure",     set_pflag_tx_backpressure },
 };
 
 static int mlx5e_handle_pflag(struct net_device *netdev,
