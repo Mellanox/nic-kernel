@@ -381,6 +381,8 @@ static ssize_t thresh_config_show(struct device *dev,
 			  config.outbound_low, config.outbound_high);
 }
 
+DEFINE_STATIC_KEY_FALSE(mlx5e_cong_tx_backpressure);
+
 int mlx5e_tx_backpressure_update(struct mlx5e_priv *priv, void *context)
 {
 	bool *enable = (bool *)context;
@@ -389,8 +391,10 @@ int mlx5e_tx_backpressure_update(struct mlx5e_priv *priv, void *context)
 		struct mlx5e_pcie_cong_event *cong_event = priv->cong_event;
 
 		priv->cong_state = cong_event->state;
+		static_branch_inc(&mlx5e_cong_tx_backpressure);
 	} else {
 		priv->cong_state = 0;
+		static_branch_dec(&mlx5e_cong_tx_backpressure);
 	}
 
 	return 0;
@@ -454,10 +458,16 @@ err_free:
 void mlx5e_pcie_cong_event_cleanup(struct mlx5e_priv *priv)
 {
 	struct mlx5e_pcie_cong_event *cong_event = priv->cong_event;
+	struct mlx5e_params *params = &priv->channels.params;
 	struct mlx5_core_dev *mdev = priv->mdev;
 
 	if (!cong_event)
 		return;
+
+	if (MLX5E_GET_PFLAG(params, MLX5E_PFLAG_TX_BACKPRESSURE)) {
+		MLX5E_SET_PFLAG(params, MLX5E_PFLAG_TX_BACKPRESSURE, false);
+		mlx5e_tx_backpressure_update(priv, NULL);
+	}
 
 	priv->cong_event = NULL;
 	sysfs_remove_file(&mdev->device->kobj, &cong_event->attr.attr);

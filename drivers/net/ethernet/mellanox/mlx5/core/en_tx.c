@@ -41,6 +41,7 @@
 #include "en_accel/ipsec_rxtx.h"
 #include "en_accel/macsec.h"
 #include "en/ptp.h"
+#include "en/pcie_cong_event.h"
 #include <net/ipv6.h>
 
 static void mlx5e_dma_unmap_wqe_err(struct mlx5e_txqsq *sq, u8 num_dma)
@@ -345,7 +346,8 @@ static void mlx5e_tx_skb_update_ts_flags(struct sk_buff *skb)
 
 static void mlx5e_tx_check_stop(struct mlx5e_txqsq *sq)
 {
-	if (sq->priv->cong_state && !sq->xmit_more)
+	if (static_branch_unlikely(&mlx5e_cong_tx_backpressure) &&
+	    sq->priv->cong_state && !sq->xmit_more)
 		goto stop_q;
 
 	if (likely(mlx5e_wqc_has_room_for(&sq->wq, sq->cc,
