@@ -3,6 +3,7 @@
 
 #include "en.h"
 #include "pcie_cong_event.h"
+#include <linux/debugfs.h>
 
 #define MLX5E_CONG_HIGH_STATE 0x7
 
@@ -41,6 +42,7 @@ struct mlx5e_pcie_cong_event {
 	struct mlx5e_pcie_cong_stats stats;
 
 	struct device_attribute attr;
+	struct dentry *dfs_entry;
 };
 
 /* In units of 0.01 % */
@@ -381,6 +383,20 @@ static ssize_t thresh_config_show(struct device *dev,
 			  config.outbound_low, config.outbound_high);
 }
 
+static struct dentry *
+mlx5e_pcie_cong_init_dfs(struct dentry *root,
+			 struct mlx5e_pcie_cong_event *cong_event)
+{
+	struct dentry *dfs = debugfs_create_dir("pcie_cong", root);
+
+	if (IS_ERR(dfs))
+		return NULL;
+
+	debugfs_create_u8("cong_state", 0400, dfs, &cong_event->state);
+
+	return dfs;
+}
+
 DEFINE_STATIC_KEY_FALSE(mlx5e_cong_tx_backpressure);
 
 int mlx5e_tx_backpressure_update(struct mlx5e_priv *priv, void *context)
@@ -441,6 +457,8 @@ int mlx5e_pcie_cong_event_init(struct mlx5e_priv *priv)
 		goto err_unregister_nb;
 	}
 
+	cong_event->dfs_entry = mlx5e_pcie_cong_init_dfs(priv->dfs_root,
+							 cong_event);
 	priv->cong_event = cong_event;
 
 	return 0;
@@ -470,6 +488,9 @@ void mlx5e_pcie_cong_event_cleanup(struct mlx5e_priv *priv)
 	}
 
 	priv->cong_event = NULL;
+
+	debugfs_remove_recursive(cong_event->dfs_entry);
+
 	sysfs_remove_file(&mdev->device->kobj, &cong_event->attr.attr);
 
 	mlx5_eq_notifier_unregister(mdev, &cong_event->nb);
