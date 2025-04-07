@@ -216,6 +216,11 @@ struct nvme_queue {
 	struct completion delete_done;
 };
 
+enum {
+	IOD_LARGE_DESCRIPTORS = 1, /* uses the full page sized descriptor pool */
+	IOD_SINGLE_SEGMENT = 2, /* single segment dma mapping */
+};
+
 /*
  * The nvme_iod describes the data in an I/O.
  */
@@ -224,7 +229,7 @@ struct nvme_iod {
 	struct nvme_command cmd;
 	bool aborted;
 	u8 nr_descriptors;	/* # of PRP/SGL descriptors */
-	bool large_descriptors;	/* uses the full page sized descriptor pool */
+	unsigned int flags;
 	unsigned int total_len; /* length of the entire transfer */
 	unsigned int total_meta_len; /* length of the entire metadata transfer */
 	dma_addr_t meta_dma;
@@ -529,7 +534,7 @@ static inline bool nvme_pci_use_sgls(struct nvme_dev *dev, struct request *req,
 static inline struct dma_pool *nvme_dma_pool(struct nvme_dev *dev,
 		struct nvme_iod *iod)
 {
-	if (iod->large_descriptors)
+	if (iod->flags & IOD_LARGE_DESCRIPTORS)
 		return dev->prp_page_pool;
 	return dev->prp_small_pool;
 }
@@ -630,6 +635,15 @@ static void nvme_free_sgls(struct nvme_dev *dev, struct request *req)
 static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 {
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	unsigned int nr_segments = blk_rq_nr_phys_segments(req);
+	dma_addr_t dma_addr;
+
+	if (nr_segments == 1 && (iod->flags & IOD_SINGLE_SEGMENT)) {
+		dma_addr = le64_to_cpu(iod->cmd.common.dptr.prp1);
+		dma_unmap_page(dev->dev, dma_addr, iod->total_len,
+				rq_dma_dir(req));
+		return;
+	}
 
 	if (!blk_rq_dma_unmap(req, dev->dev, &iod->dma_state, iod->total_len)) {
 		if (iod->cmd.common.flags & NVME_CMD_SGL_METABUF)
@@ -642,6 +656,41 @@ static void nvme_unmap_data(struct nvme_dev *dev, struct request *req)
 		nvme_free_descriptors(dev, req);
 }
 
+static bool nvme_try_setup_prp_simple(struct nvme_dev *dev, struct request *req,
+				      struct nvme_rw_command *cmnd,
+				      struct blk_dma_iter *iter)
+{
+	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct bio_vec bv = req_bvec(req);
+	unsigned int first_prp_len;
+
+	if (is_pci_p2pdma_page(bv.bv_page))
+		return false;
+	if ((bv.bv_offset & (NVME_CTRL_PAGE_SIZE - 1)) + bv.bv_len >
+	    NVME_CTRL_PAGE_SIZE * 2)
+		return false;
+
+	iter->addr = dma_map_bvec(dev->dev, &bv, rq_dma_dir(req), 0);
+	if (dma_mapping_error(dev->dev, iter->addr)) {
+		iter->status = BLK_STS_RESOURCE;
+		goto out;
+	}
+	iod->total_len = bv.bv_len;
+	cmnd->dptr.prp1 = cpu_to_le64(iter->addr);
+
+	first_prp_len = NVME_CTRL_PAGE_SIZE -
+			(bv.bv_offset & (NVME_CTRL_PAGE_SIZE - 1));
+	if (bv.bv_len > first_prp_len)
+		cmnd->dptr.prp2 = cpu_to_le64(iter->addr + first_prp_len);
+	else
+		cmnd->dptr.prp2 = 0;
+
+	iter->status = BLK_STS_OK;
+	iod->flags |= IOD_SINGLE_SEGMENT;
+out:
+	return true;
+}
+
 static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 					struct request *req)
 {
@@ -652,6 +701,12 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 	dma_addr_t prp1_dma, prp2_dma = 0;
 	unsigned int prp_len, i;
 	__le64 *prp_list;
+	unsigned int nr_segments = blk_rq_nr_phys_segments(req);
+
+	if (nr_segments == 1) {
+		if (nvme_try_setup_prp_simple(dev, req, cmnd, &iter))
+			return iter.status;
+	}
 
 	if (!blk_rq_dma_map_iter_start(req, dev->dev, &iod->dma_state, &iter))
 		return iter.status;
@@ -693,7 +748,7 @@ static blk_status_t nvme_pci_setup_prps(struct nvme_dev *dev,
 
 	if (DIV_ROUND_UP(length, NVME_CTRL_PAGE_SIZE) >
 	    NVME_SMALL_DESCRIPTOR_SIZE / sizeof(__le64))
-		iod->large_descriptors = true;
+		iod->flags |= IOD_LARGE_DESCRIPTORS;
 
 	prp_list = dma_pool_alloc(nvme_dma_pool(dev, iod), GFP_ATOMIC,
 			&prp2_dma);
@@ -808,7 +863,7 @@ static blk_status_t nvme_pci_setup_sgls(struct nvme_dev *dev,
 	}
 
 	if (entries > NVME_SMALL_DESCRIPTOR_SIZE / sizeof(*sg_list))
-		iod->large_descriptors = true;
+		iod->flags |= IOD_LARGE_DESCRIPTORS;
 
 	sg_list = dma_pool_alloc(nvme_dma_pool(dev, iod), GFP_ATOMIC, &sgl_dma);
 	if (!sg_list)
@@ -932,7 +987,7 @@ static blk_status_t nvme_prep_rq(struct nvme_dev *dev, struct request *req)
 
 	iod->aborted = false;
 	iod->nr_descriptors = 0;
-	iod->large_descriptors = false;
+	iod->flags = 0;
 	iod->total_len = 0;
 	iod->total_meta_len = 0;
 
