@@ -709,7 +709,8 @@ static int mlx5i_xmit(struct net_device *dev, struct sk_buff *skb,
 	struct mlx5_ib_ah *mah   = to_mah(address);
 	struct mlx5i_priv *ipriv = epriv->ppriv;
 
-	mlx5i_sq_xmit(sq, skb, &mah->av, dqpn, ipriv->qkey, netdev_xmit_more());
+	sq->xmit_more = netdev_xmit_more();
+	mlx5i_sq_xmit(sq, skb, &mah->av, dqpn, ipriv->qkey);
 
 	return NETDEV_TX_OK;
 }
