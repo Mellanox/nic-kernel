@@ -376,7 +376,7 @@ mlx5e_txwqe_complete(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 		     const struct mlx5e_tx_attr *attr,
 		     const struct mlx5e_tx_wqe_attr *wqe_attr, u8 num_dma,
 		     struct mlx5e_tx_wqe_info *wi, struct mlx5_wqe_ctrl_seg *cseg,
-		     struct mlx5_wqe_eth_seg *eseg, bool xmit_more)
+		     struct mlx5_wqe_eth_seg *eseg)
 {
 	struct mlx5_wq_cyc *wq = &sq->wq;
 	bool send_doorbell;
@@ -418,7 +418,8 @@ mlx5e_txwqe_complete(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 		skb_get(skb);
 	}
 
-	send_doorbell = __netdev_tx_sent_queue(sq->txq, attr->num_bytes, xmit_more);
+	send_doorbell = __netdev_tx_sent_queue(sq->txq, attr->num_bytes,
+					       sq->xmit_more);
 	if (send_doorbell)
 		mlx5e_notify_hw(wq, sq->pc, sq->uar_map, cseg);
 }
@@ -426,7 +427,7 @@ mlx5e_txwqe_complete(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 static void
 mlx5e_sq_xmit_wqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 		  const struct mlx5e_tx_attr *attr, const struct mlx5e_tx_wqe_attr *wqe_attr,
-		  struct mlx5e_tx_wqe *wqe, u16 pi, bool xmit_more)
+		  struct mlx5e_tx_wqe *wqe, u16 pi)
 {
 	struct mlx5_wqe_ctrl_seg *cseg;
 	struct mlx5_wqe_eth_seg  *eseg;
@@ -437,7 +438,7 @@ mlx5e_sq_xmit_wqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	struct mlx5e_sq_stats *stats = sq->stats;
 	int num_dma;
 
-	stats->xmit_more += xmit_more;
+	stats->xmit_more += sq->xmit_more;
 
 	/* fill wqe */
 	wi   = &sq->db.wqe_info[pi];
@@ -490,7 +491,7 @@ mlx5e_sq_xmit_wqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	if (unlikely(num_dma < 0))
 		goto err_drop;
 
-	mlx5e_txwqe_complete(sq, skb, attr, wqe_attr, num_dma, wi, cseg, eseg, xmit_more);
+	mlx5e_txwqe_complete(sq, skb, attr, wqe_attr, num_dma, wi, cseg, eseg);
 
 	return;
 
@@ -595,7 +596,7 @@ static struct mlx5_wqe_ctrl_seg *mlx5e_tx_mpwqe_session_complete(struct mlx5e_tx
 
 static void
 mlx5e_sq_xmit_mpwqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
-		    struct mlx5_wqe_eth_seg *eseg, bool xmit_more)
+		    struct mlx5_wqe_eth_seg *eseg)
 {
 	struct mlx5_wqe_ctrl_seg *cseg;
 	struct mlx5e_xmit_data txd;
@@ -614,7 +615,7 @@ mlx5e_sq_xmit_mpwqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 		mlx5e_tx_mpwqe_session_start(sq, eseg);
 	}
 
-	sq->stats->xmit_more += xmit_more;
+	sq->stats->xmit_more += sq->xmit_more;
 
 	mlx5e_dma_push_single(sq, txd.dma_addr, txd.len);
 	mlx5e_skb_fifo_push(&sq->db.skb_fifo, skb);
@@ -625,9 +626,9 @@ mlx5e_sq_xmit_mpwqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 		/* Might stop the queue and affect the retval of __netdev_tx_sent_queue. */
 		cseg = mlx5e_tx_mpwqe_session_complete(sq);
 
-		if (__netdev_tx_sent_queue(sq->txq, txd.len, xmit_more))
+		if (__netdev_tx_sent_queue(sq->txq, txd.len, sq->xmit_more))
 			mlx5e_notify_hw(&sq->wq, sq->pc, sq->uar_map, cseg);
-	} else if (__netdev_tx_sent_queue(sq->txq, txd.len, xmit_more)) {
+	} else if (__netdev_tx_sent_queue(sq->txq, txd.len, sq->xmit_more)) {
 		/* Might stop the queue, but we were asked to ring the doorbell anyway. */
 		cseg = mlx5e_tx_mpwqe_session_complete(sq);
 
@@ -700,6 +701,7 @@ netdev_tx_t mlx5e_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (unlikely(!mlx5e_accel_tx_begin(dev, sq, skb, &accel)))
 		return NETDEV_TX_OK;
 
+	sq->xmit_more = netdev_xmit_more();
 	mlx5e_sq_xmit_prepare(sq, skb, &accel, &attr);
 
 	if (test_bit(MLX5E_SQ_STATE_MPWQE, &sq->state)) {
@@ -707,7 +709,7 @@ netdev_tx_t mlx5e_xmit(struct sk_buff *skb, struct net_device *dev)
 			struct mlx5_wqe_eth_seg eseg = {};
 
 			mlx5e_txwqe_build_eseg(priv, sq, skb, &accel, &eseg, attr.ihs);
-			mlx5e_sq_xmit_mpwqe(sq, skb, &eseg, netdev_xmit_more());
+			mlx5e_sq_xmit_mpwqe(sq, skb, &eseg);
 			return NETDEV_TX_OK;
 		}
 
@@ -722,7 +724,7 @@ netdev_tx_t mlx5e_xmit(struct sk_buff *skb, struct net_device *dev)
 	mlx5e_accel_tx_finish(sq, wqe, &accel,
 			      (struct mlx5_wqe_inline_seg *)(wqe->data + wqe_attr.ds_cnt_inl));
 	mlx5e_txwqe_build_eseg(priv, sq, skb, &accel, &wqe->eth, attr.ihs);
-	mlx5e_sq_xmit_wqe(sq, skb, &attr, &wqe_attr, wqe, pi, netdev_xmit_more());
+	mlx5e_sq_xmit_wqe(sq, skb, &attr, &wqe_attr, wqe, pi);
 
 	return NETDEV_TX_OK;
 }
@@ -970,7 +972,7 @@ static void mlx5i_sq_calc_wqe_attr(struct sk_buff *skb,
 }
 
 void mlx5i_sq_xmit(struct mlx5e_txqsq *sq, struct sk_buff *skb,
-		   struct mlx5_av *av, u32 dqpn, u32 dqkey, bool xmit_more)
+		   struct mlx5_av *av, u32 dqpn, u32 dqkey)
 {
 	struct mlx5e_tx_wqe_attr wqe_attr;
 	struct mlx5e_tx_attr attr;
@@ -992,7 +994,7 @@ void mlx5i_sq_xmit(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	pi = mlx5e_txqsq_get_next_pi(sq, wqe_attr.num_wqebbs);
 	wqe = MLX5I_SQ_FETCH_WQE(sq, pi);
 
-	stats->xmit_more += xmit_more;
+	stats->xmit_more += sq->xmit_more;
 
 	/* fill wqe */
 	wi       = &sq->db.wqe_info[pi];
@@ -1040,7 +1042,8 @@ void mlx5i_sq_xmit(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	if (unlikely(num_dma < 0))
 		goto err_drop;
 
-	mlx5e_txwqe_complete(sq, skb, &attr, &wqe_attr, num_dma, wi, cseg, eseg, xmit_more);
+	mlx5e_txwqe_complete(sq, skb, &attr, &wqe_attr, num_dma, wi,
+			     cseg, eseg);
 
 	return;
 

@@ -422,6 +422,7 @@ struct mlx5e_txqsq {
 	u16                        skb_fifo_pc;
 	u32                        dma_fifo_pc;
 	struct mlx5e_tx_mpwqe      mpwqe;
+	bool                       xmit_more;
 
 	struct mlx5e_cq            cq;
 
