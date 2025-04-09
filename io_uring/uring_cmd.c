@@ -16,10 +16,19 @@
 #include "rsrc.h"
 #include "uring_cmd.h"
 
+void io_cmd_cache_free(const void *entry)
+{
+	struct io_async_cmd *ac = (struct io_async_cmd *)entry;
+
+	io_vec_free(&ac->vec);
+	kfree(ac);
+}
+
 static void io_req_uring_cleanup(struct io_kiocb *req, unsigned int issue_flags)
 {
 	struct io_uring_cmd *ioucmd = io_kiocb_to_cmd(req, struct io_uring_cmd);
-	struct io_uring_cmd_data *cache = req->async_data;
+	struct io_async_cmd *ac = req->async_data;
+	struct io_uring_cmd_data *cache = &ac->data;
 
 	if (cache->op_data) {
 		kfree(cache->op_data);
@@ -28,11 +37,21 @@ static void io_req_uring_cleanup(struct io_kiocb *req, unsigned int issue_flags)
 
 	if (issue_flags & IO_URING_F_UNLOCKED)
 		return;
-	if (io_alloc_cache_put(&req->ctx->uring_cache, cache)) {
+
+	io_alloc_cache_vec_kasan(&ac->vec);
+	if (ac->vec.nr > IO_VEC_CACHE_SOFT_CAP)
+		io_vec_free(&ac->vec);
+
+	if (io_alloc_cache_put(&req->ctx->cmd_cache, cache)) {
 		ioucmd->sqe = NULL;
 		req->async_data = NULL;
-		req->flags &= ~REQ_F_ASYNC_DATA;
+		req->flags &= ~(REQ_F_ASYNC_DATA|REQ_F_NEED_CLEANUP);
 	}
+}
+
+void io_uring_cmd_cleanup(struct io_kiocb *req)
+{
+	io_req_uring_cleanup(req, 0);
 }
 
 bool io_uring_try_cancel_uring_cmd(struct io_ring_ctx *ctx,
@@ -169,12 +188,15 @@ static int io_uring_cmd_prep_setup(struct io_kiocb *req,
 				   const struct io_uring_sqe *sqe)
 {
 	struct io_uring_cmd *ioucmd = io_kiocb_to_cmd(req, struct io_uring_cmd);
-	struct io_uring_cmd_data *cache;
+	struct io_async_cmd *ac;
 
-	cache = io_uring_alloc_async_data(&req->ctx->uring_cache, req);
-	if (!cache)
+	/* see io_uring_cmd_get_async_data() */
+	BUILD_BUG_ON(offsetof(struct io_async_cmd, data) != 0);
+
+	ac = io_uring_alloc_async_data(&req->ctx->cmd_cache, req);
+	if (!ac)
 		return -ENOMEM;
-	cache->op_data = NULL;
+	ac->data.op_data = NULL;
 
 	/*
 	 * Unconditionally cache the SQE for now - this is only needed for
@@ -183,8 +205,8 @@ static int io_uring_cmd_prep_setup(struct io_kiocb *req,
 	 * that it doesn't read in per-op data, play it safe and ensure that
 	 * any SQE data is stable beyond prep. This can later get relaxed.
 	 */
-	memcpy(cache->sqes, sqe, uring_sqe_size(req->ctx));
-	ioucmd->sqe = cache->sqes;
+	memcpy(ac->sqes, sqe, uring_sqe_size(req->ctx));
+	ioucmd->sqe = ac->sqes;
 	return 0;
 }
 
@@ -255,6 +277,25 @@ int io_uring_cmd_import_fixed(u64 ubuf, unsigned long len, int rw,
 }
 EXPORT_SYMBOL_GPL(io_uring_cmd_import_fixed);
 
+int io_uring_cmd_import_fixed_vec(struct io_uring_cmd *ioucmd,
+				  const struct iovec __user *uvec,
+				  size_t uvec_segs,
+				  int ddir, struct iov_iter *iter,
+				  unsigned issue_flags)
+{
+	struct io_kiocb *req = cmd_to_io_kiocb(ioucmd);
+	struct io_async_cmd *ac = req->async_data;
+	int ret;
+
+	ret = io_prep_reg_iovec(req, &ac->vec, uvec, uvec_segs);
+	if (ret)
+		return ret;
+
+	return io_import_reg_vec(ddir, iter, req, &ac->vec, uvec_segs,
+				 issue_flags);
+}
+EXPORT_SYMBOL_GPL(io_uring_cmd_import_fixed_vec);
+
 void io_uring_cmd_issue_blocking(struct io_uring_cmd *ioucmd)
 {
 	struct io_kiocb *req = cmd_to_io_kiocb(ioucmd);
@@ -266,17 +307,18 @@ static inline int io_uring_cmd_getsockopt(struct socket *sock,
 					  struct io_uring_cmd *cmd,
 					  unsigned int issue_flags)
 {
+	const struct io_uring_sqe *sqe = cmd->sqe;
 	bool compat = !!(issue_flags & IO_URING_F_COMPAT);
 	int optlen, optname, level, err;
 	void __user *optval;
 
-	level = READ_ONCE(cmd->sqe->level);
+	level = READ_ONCE(sqe->level);
 	if (level != SOL_SOCKET)
 		return -EOPNOTSUPP;
 
-	optval = u64_to_user_ptr(READ_ONCE(cmd->sqe->optval));
-	optname = READ_ONCE(cmd->sqe->optname);
-	optlen = READ_ONCE(cmd->sqe->optlen);
+	optval = u64_to_user_ptr(READ_ONCE(sqe->optval));
+	optname = READ_ONCE(sqe->optname);
+	optlen = READ_ONCE(sqe->optlen);
 
 	err = do_sock_getsockopt(sock, compat, level, optname,
 				 USER_SOCKPTR(optval),
@@ -292,15 +334,16 @@ static inline int io_uring_cmd_setsockopt(struct socket *sock,
 					  struct io_uring_cmd *cmd,
 					  unsigned int issue_flags)
 {
+	const struct io_uring_sqe *sqe = cmd->sqe;
 	bool compat = !!(issue_flags & IO_URING_F_COMPAT);
 	int optname, optlen, level;
 	void __user *optval;
 	sockptr_t optval_s;
 
-	optval = u64_to_user_ptr(READ_ONCE(cmd->sqe->optval));
-	optname = READ_ONCE(cmd->sqe->optname);
-	optlen = READ_ONCE(cmd->sqe->optlen);
-	level = READ_ONCE(cmd->sqe->level);
+	optval = u64_to_user_ptr(READ_ONCE(sqe->optval));
+	optname = READ_ONCE(sqe->optname);
+	optlen = READ_ONCE(sqe->optlen);
+	level = READ_ONCE(sqe->level);
 	optval_s = USER_SOCKPTR(optval);
 
 	return do_sock_setsockopt(sock, compat, level, optname, optval_s,
