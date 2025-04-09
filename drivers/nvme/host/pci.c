@@ -664,8 +664,9 @@ static bool nvme_try_setup_prp_simple(struct nvme_dev *dev, struct request *req,
 	struct bio_vec bv = req_bvec(req);
 	unsigned int first_prp_len;
 
-	if (is_pci_p2pdma_page(bv.bv_page))
+	if (IS_ENABLED(CONFIG_PCI_P2PDMA) && (req->cmd_flags & REQ_P2PDMA))
 		return false;
+
 	if ((bv.bv_offset & (NVME_CTRL_PAGE_SIZE - 1)) + bv.bv_len >
 	    NVME_CTRL_PAGE_SIZE * 2)
 		return false;
