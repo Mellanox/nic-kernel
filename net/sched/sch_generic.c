@@ -532,7 +532,7 @@ static void dev_watchdog(struct timer_list *t)
 
 			if (unlikely(timedout_ms)) {
 				trace_net_dev_xmit_timeout(dev, i);
-				netdev_crit(dev, "NETDEV WATCHDOG: CPU: %d: transmit queue %u timed out %u ms\n",
+				netdev_crit_once(dev, "NETDEV WATCHDOG: CPU: %d: transmit queue %u timed out %u ms\n",
 					    raw_smp_processor_id(),
 					    i, timedout_ms);
 				netif_freeze_queues(dev);
@@ -567,7 +567,7 @@ EXPORT_SYMBOL_GPL(netdev_watchdog_up);
 static void netdev_watchdog_down(struct net_device *dev)
 {
 	netif_tx_lock_bh(dev);
-	if (del_timer(&dev->watchdog_timer))
+	if (timer_delete(&dev->watchdog_timer))
 		netdev_put(dev, &dev->watchdog_dev_tracker);
 	netif_tx_unlock_bh(dev);
 }
