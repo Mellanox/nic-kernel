@@ -325,6 +325,8 @@ enum ib_odp_transport_cap_bits {
 	IB_ODP_SUPPORT_READ	= 1 << 3,
 	IB_ODP_SUPPORT_ATOMIC	= 1 << 4,
 	IB_ODP_SUPPORT_SRQ_RECV	= 1 << 5,
+	IB_ODP_SUPPORT_FLUSH	= 1 << 6,
+	IB_ODP_SUPPORT_ATOMIC_WRITE	= 1 << 7,
 };
 
 struct ib_odp_caps {
@@ -4790,7 +4792,14 @@ void roce_del_all_netdev_gids(struct ib_device *ib_dev,
 
 struct ib_ucontext *ib_uverbs_get_ucontext_file(struct ib_uverbs_file *ufile);
 
+#if IS_ENABLED(CONFIG_INFINIBAND_USER_ACCESS)
 int uverbs_destroy_def_handler(struct uverbs_attr_bundle *attrs);
+#else
+static inline int uverbs_destroy_def_handler(struct uverbs_attr_bundle *attrs)
+{
+	return 0;
+}
+#endif
 
 struct net_device *rdma_alloc_netdev(struct ib_device *device, u32 port_num,
 				     enum rdma_netdev_t type, const char *name,

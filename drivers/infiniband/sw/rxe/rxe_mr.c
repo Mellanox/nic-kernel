@@ -323,7 +323,7 @@ int rxe_mr_copy(struct rxe_mr *mr, u64 iova, void *addr,
 		return err;
 	}
 
-	if (mr->umem->is_odp)
+	if (is_odp_mr(mr))
 		return rxe_odp_mr_copy(mr, iova, addr, length, dir);
 	else
 		return rxe_mr_copy_xarray(mr, iova, addr, length, dir);
@@ -424,7 +424,7 @@ err1:
 	return err;
 }
 
-int rxe_flush_pmem_iova(struct rxe_mr *mr, u64 iova, unsigned int length)
+static int rxe_mr_flush_pmem_iova(struct rxe_mr *mr, u64 iova, unsigned int length)
 {
 	unsigned int page_offset;
 	unsigned long index;
@@ -432,16 +432,6 @@ int rxe_flush_pmem_iova(struct rxe_mr *mr, u64 iova, unsigned int length)
 	unsigned int bytes;
 	int err;
 	u8 *va;
-
-	/* mr must be valid even if length is zero */
-	if (WARN_ON(!mr))
-		return -EINVAL;
-
-	if (length == 0)
-		return 0;
-
-	if (mr->ibmr.type == IB_MR_TYPE_DMA)
-		return -EFAULT;
 
 	err = mr_check_range(mr, iova, length);
 	if (err)
@@ -454,7 +444,7 @@ int rxe_flush_pmem_iova(struct rxe_mr *mr, u64 iova, unsigned int length)
 		if (!page)
 			return -EFAULT;
 		bytes = min_t(unsigned int, length,
-				mr_page_size(mr) - page_offset);
+			      mr_page_size(mr) - page_offset);
 
 		va = kmap_local_page(page);
 		arch_wb_cache_pmem(va + page_offset, bytes);
@@ -466,6 +456,28 @@ int rxe_flush_pmem_iova(struct rxe_mr *mr, u64 iova, unsigned int length)
 	}
 
 	return 0;
+}
+
+int rxe_flush_pmem_iova(struct rxe_mr *mr, u64 start, unsigned int length)
+{
+	int err;
+
+	/* mr must be valid even if length is zero */
+	if (WARN_ON(!mr))
+		return -EINVAL;
+
+	if (length == 0)
+		return 0;
+
+	if (mr->ibmr.type == IB_MR_TYPE_DMA)
+		return -EFAULT;
+
+	if (mr->umem->is_odp)
+		err = rxe_odp_flush_pmem_iova(mr, start, length);
+	else
+		err = rxe_mr_flush_pmem_iova(mr, start, length);
+
+	return err;
 }
 
 /* Guarantee atomicity of atomic operations at the machine level. */
@@ -536,7 +548,7 @@ int rxe_mr_do_atomic_write(struct rxe_mr *mr, u64 iova, u64 value)
 	u64 *va;
 
 	/* ODP is not supported right now. WIP. */
-	if (mr->umem->is_odp)
+	if (is_odp_mr(mr))
 		return RESPST_ERR_UNSUPPORTED_OPCODE;
 
 	/* See IBA oA19-28 */
@@ -572,10 +584,8 @@ int rxe_mr_do_atomic_write(struct rxe_mr *mr, u64 iova, u64 value)
 	}
 
 	va = kmap_local_page(page);
-
 	/* Do atomic write after all prior operations have completed */
 	smp_store_release(&va[page_offset >> 3], value);
-
 	kunmap_local(va);
 
 	return 0;
