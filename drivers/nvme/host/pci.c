@@ -219,6 +219,7 @@ struct nvme_queue {
 enum {
 	IOD_LARGE_DESCRIPTORS = 1 << 0, /* uses the full page sized descriptor pool */
 	IOD_SINGLE_SEGMENT = 1 << 1, /* single segment dma mapping */
+	IOD_ABORTED = 1 << 2, /* abort timed out commands */
 };
 
 /*
@@ -227,7 +228,6 @@ enum {
 struct nvme_iod {
 	struct nvme_request req;
 	struct nvme_command cmd;
-	bool aborted;
 	u8 nr_descriptors;	/* # of PRP/SGL descriptors */
 	u8 flags;
 	unsigned int total_len; /* length of the entire transfer */
@@ -1029,7 +1029,6 @@ static blk_status_t nvme_prep_rq(struct nvme_dev *dev, struct request *req)
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
 	blk_status_t ret;
 
-	iod->aborted = false;
 	iod->nr_descriptors = 0;
 	iod->flags = 0;
 	iod->total_len = 0;
@@ -1578,7 +1577,7 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req)
 	 * returned to the driver, or if this is the admin queue.
 	 */
 	opcode = nvme_req(req)->cmd->common.opcode;
-	if (!nvmeq->qid || iod->aborted) {
+	if (!nvmeq->qid || (iod->flags & IOD_ABORTED)) {
 		dev_warn(dev->ctrl.device,
 			 "I/O tag %d (%04x) opcode %#x (%s) QID %d timeout, reset controller\n",
 			 req->tag, nvme_cid(req), opcode,
@@ -1591,7 +1590,7 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req)
 		atomic_inc(&dev->ctrl.abort_limit);
 		return BLK_EH_RESET_TIMER;
 	}
-	iod->aborted = true;
+	iod->flags |= IOD_ABORTED;
 
 	cmd.abort.opcode = nvme_admin_abort_cmd;
 	cmd.abort.cid = nvme_cid(req);
