@@ -1035,6 +1035,15 @@ int mlx5e_poll_ico_cq(struct mlx5e_cq *cq)
 				netdev_WARN_ONCE(cq->netdev,
 						 "Bad OP in ICOSQ CQE: 0x%x\n",
 						 get_cqe_opcode(cqe));
+#ifdef CONFIG_MLX5_EN_TLS
+				if (wi->wqe_type == MLX5E_ICOSQ_WQE_GET_PSV_TLS) {
+					struct mlx5e_ktls_rx_resync_buf *buf;
+
+					buf = wi->tls_get_params.buf;
+					print_resync_async_ptr_from_rx_resync_buf(buf);
+					WARN_ON_ONCE(1);
+				}
+#endif
 				mlx5e_dump_error_cqe(&sq->cq, sq->sqn,
 						     (struct mlx5_err_cqe *)cqe);
 				mlx5_wq_cyc_wqe_dump(&sq->wq, ci, wi->num_wqebbs);
