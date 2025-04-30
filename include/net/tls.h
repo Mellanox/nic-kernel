@@ -299,6 +299,8 @@ struct tls_offload_resync_async {
 	u32 log[TLS_DEVICE_RESYNC_ASYNC_LOGMAX];
 };
 
+struct mlx5e_ktls_rx_resync_buf;
+
 #define TLS_DRIVER_STATE_SIZE_RX	8
 struct tls_offload_context_rx {
 	/* sw must be the first member of tls_offload_context_rx */
@@ -329,6 +331,9 @@ struct tls_offload_context_rx {
 	 */
 	u8 driver_state[TLS_DRIVER_STATE_SIZE_RX] __aligned(8);
 };
+
+void print_resync_async_ptr(struct tls_offload_resync_async *resync_async);
+void print_resync_async_ptr_from_rx_resync_buf(struct mlx5e_ktls_rx_resync_buf *buf);
 
 struct tls_record_info *tls_get_record(struct tls_offload_context_tx *context,
 				       u32 seq, u64 *p_record_sn);
