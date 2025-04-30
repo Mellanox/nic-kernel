@@ -60,6 +60,24 @@ struct mlx5e_ktls_offload_context_rx {
 	struct list_head list;
 };
 
+void print_resync_async_ptr(struct tls_offload_resync_async *resync_async)
+{
+	pr_warn("!! DEBUG PATCH !! resync_async pointer: %p\n", resync_async);
+	pr_warn("resync_async->rcd_delta: %u\n", resync_async->rcd_delta);
+	pr_warn("resync_async->req: %lld\n", atomic64_read(&resync_async->req));
+	pr_warn("resync_async->loglen: %u\n", resync_async->loglen);
+
+	for (int i = 0; i < resync_async->loglen; i++)
+		pr_warn("Seq num of logged record #%d: %u\n", i, resync_async->log[i]);
+}
+
+void print_resync_async_ptr_from_rx_resync_buf(struct mlx5e_ktls_rx_resync_buf *buf)
+{
+	struct tls_offload_resync_async *resync_async = &buf->priv_rx->resync.core;
+
+	print_resync_async_ptr(resync_async);
+}
+
 static bool mlx5e_ktls_priv_rx_put(struct mlx5e_ktls_offload_context_rx *priv_rx)
 {
 	if (!refcount_dec_and_test(&priv_rx->resync.refcnt))
@@ -345,8 +363,11 @@ static void resync_handle_work(struct work_struct *work)
 	c = resync->priv->channels.c[priv_rx->rxq];
 	sq = &c->async_icosq;
 
-	if (resync_post_get_progress_params(sq, priv_rx))
+	if (resync_post_get_progress_params(sq, priv_rx)) {
+		WARN_ON_ONCE(1);
+		print_resync_async_ptr(&priv_rx->resync.core);
 		mlx5e_ktls_priv_rx_put(priv_rx);
+	}
 }
 
 static void resync_init(struct mlx5e_ktls_rx_resync_ctx *resync,
@@ -431,8 +452,12 @@ void mlx5e_ktls_handle_get_psv_completion(struct mlx5e_icosq_wqe_info *wi,
 
 	priv_rx = buf->priv_rx;
 	dev = mlx5_core_dma_dev(sq->channel->mdev);
-	if (unlikely(test_bit(MLX5E_PRIV_RX_FLAG_DELETING, priv_rx->flags)))
+	if (unlikely(test_bit(MLX5E_PRIV_RX_FLAG_DELETING, priv_rx->flags))) {
+		mlx5_core_warn(sq->channel->mdev,
+			       "!! DEBUG PATCH !! Closing TLS connection\n");
+		print_resync_async_ptr(&priv_rx->resync.core);
 		goto out;
+	}
 
 	dma_sync_single_for_cpu(dev, buf->dma_addr, PROGRESS_PARAMS_PADDED_SIZE,
 				DMA_FROM_DEVICE);
@@ -443,6 +468,9 @@ void mlx5e_ktls_handle_get_psv_completion(struct mlx5e_icosq_wqe_info *wi,
 	if (tracker_state != MLX5E_TLS_PROGRESS_PARAMS_RECORD_TRACKER_STATE_TRACKING ||
 	    auth_state != MLX5E_TLS_PROGRESS_PARAMS_AUTH_STATE_NO_OFFLOAD) {
 		priv_rx->rq_stats->tls_resync_req_skip++;
+		mlx5_core_warn(sq->channel->mdev,
+			       "!! DEBUG PATCH !! Tracking/ authentication state mismatch\n");
+		print_resync_async_ptr(&priv_rx->resync.core);
 		goto out;
 	}
 
