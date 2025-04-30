@@ -708,7 +708,8 @@ static void tls_device_resync_rx(struct tls_context *tls_ctx,
 
 static bool
 tls_device_rx_resync_async(struct tls_offload_resync_async *resync_async,
-			   s64 resync_req, u32 *seq, u16 *rcd_delta)
+			   s64 resync_req, u32 *seq, u16 *rcd_delta,
+			   u32 rcd_len)
 {
 	u32 is_async = resync_req & RESYNC_REQ_ASYNC;
 	u32 req_seq = resync_req >> 32;
@@ -721,8 +722,13 @@ tls_device_rx_resync_async(struct tls_offload_resync_async *resync_async,
 		/* shouldn't get to wraparound:
 		 * too long in async stage, something bad happened
 		 */
-		if (WARN_ON_ONCE(resync_async->rcd_delta == USHRT_MAX))
+		if (WARN_ON(resync_async->rcd_delta == USHRT_MAX)) {
+			pr_warn("TLS Resync Async Error: rcd_delta exceeds threshold\n");
+			pr_warn("!! DEGUB PATCH !! req_seq: %u, req_end: %u, seq: %u, loglen: %u, record len: %u\n",
+				req_seq, req_end, *seq, resync_async->loglen, rcd_len);
+			pr_warn("resync_async pointer: %p\n", resync_async);
 			return false;
+		}
 
 		/* asynchronous stage: log all headers seq such that
 		 * req_seq <= seq <= end_seq, and wait for real resync request
@@ -818,7 +824,7 @@ void tls_device_rx_resync_new_rec(struct sock *sk, u32 rcd_len, u32 seq)
 			return;
 
 		if (!tls_device_rx_resync_async(rx_ctx->resync_async,
-						resync_req, &seq, &rcd_delta))
+						resync_req, &seq, &rcd_delta, rcd_len))
 			return;
 		tls_bigint_subtract(rcd_sn, rcd_delta);
 		break;
