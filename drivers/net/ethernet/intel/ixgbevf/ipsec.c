@@ -201,6 +201,7 @@ struct xfrm_state *ixgbevf_ipsec_find_rx_state(struct ixgbevf_ipsec *ipsec,
 
 /**
  * ixgbevf_ipsec_parse_proto_keys - find the key and salt based on the protocol
+ * @dev: pointer to net device to program
  * @xs: pointer to xfrm_state struct
  * @mykey: pointer to key array to populate
  * @mysalt: pointer to salt value to populate
@@ -391,6 +392,7 @@ static int ixgbevf_ipsec_add_sa(struct net_device *dev,
 
 /**
  * ixgbevf_ipsec_del_sa - clear out this specific SA
+ * @dev: pointer to net device to program
  * @xs: pointer to transformer state struct
  * @dev: pointer to net device to program
  **/
