@@ -31,39 +31,33 @@
  */
 
 #include "port.h"
+#include "en/port_buffer.h"
 
-void mlx5_port_query_eth_autoneg(struct mlx5_core_dev *dev, u8 *an_status,
-				 u8 *an_disable_cap, u8 *an_disable_admin)
+void mlx5_port_query_eth_autoneg(struct mlx5_core_dev *dev,
+				 u8 *an_disable_cap, u8 *an_disable_admin,
+				 u32 *ext_eth_proto_admin, u32 *eth_proto_admin)
 {
-	u32 out[MLX5_ST_SZ_DW(ptys_reg)];
+	u32 out[MLX5_ST_SZ_DW(ptys_reg)] = {};
 
-	*an_status = 0;
-	*an_disable_cap = 0;
-	*an_disable_admin = 0;
+	mlx5_query_port_ptys(dev, out, sizeof(out), MLX5_PTYS_EN, 1, 0);
 
-	if (mlx5_query_port_ptys(dev, out, sizeof(out), MLX5_PTYS_EN, 1, 0))
-		return;
-
-	*an_status = MLX5_GET(ptys_reg, out, an_status);
-	*an_disable_cap = MLX5_GET(ptys_reg, out, an_disable_cap);
-	*an_disable_admin = MLX5_GET(ptys_reg, out, an_disable_admin);
+	if (an_disable_cap)
+		*an_disable_cap = MLX5_GET(ptys_reg, out, an_disable_cap);
+	if (an_disable_admin)
+		*an_disable_admin = MLX5_GET(ptys_reg, out, an_disable_admin);
+	if (ext_eth_proto_admin)
+		*ext_eth_proto_admin = MLX5_GET(ptys_reg, out,
+						ext_eth_proto_admin);
+	if (eth_proto_admin)
+		*eth_proto_admin = MLX5_GET(ptys_reg, out, eth_proto_admin);
 }
 
-int mlx5_port_set_eth_ptys(struct mlx5_core_dev *dev, bool an_disable,
-			   u32 proto_admin, bool ext)
+static int mlx5_port_set_eth_ptys_reg(struct mlx5_core_dev *mdev,
+				      bool an_disable, u32 proto_admin,
+				      bool ext)
 {
+	u32 in[MLX5_ST_SZ_DW(ptys_reg)] = {};
 	u32 out[MLX5_ST_SZ_DW(ptys_reg)];
-	u32 in[MLX5_ST_SZ_DW(ptys_reg)];
-	u8 an_disable_admin;
-	u8 an_disable_cap;
-	u8 an_status;
-
-	mlx5_port_query_eth_autoneg(dev, &an_status, &an_disable_cap,
-				    &an_disable_admin);
-	if (!an_disable_cap && an_disable)
-		return -EPERM;
-
-	memset(in, 0, sizeof(in));
 
 	MLX5_SET(ptys_reg, in, local_port, 1);
 	MLX5_SET(ptys_reg, in, an_disable_admin, an_disable);
@@ -73,8 +67,47 @@ int mlx5_port_set_eth_ptys(struct mlx5_core_dev *dev, bool an_disable,
 	else
 		MLX5_SET(ptys_reg, in, eth_proto_admin, proto_admin);
 
-	return mlx5_core_access_reg(dev, in, sizeof(in), out,
-			    sizeof(out), MLX5_REG_PTYS, 0, 1);
+	return mlx5_core_access_reg(mdev, in, sizeof(in), out,
+				   sizeof(out), MLX5_REG_PTYS, 0, 1);
+}
+
+int mlx5_port_set_eth_ptys(struct mlx5e_priv *priv, bool an_disable,
+			   u32 proto_admin, bool ext)
+{
+	u32 ext_eth_proto_admin, eth_proto_admin;
+	struct mlx5_core_dev *mdev = priv->mdev;
+	struct net_device *dev = priv->netdev;
+	u8 an_disable_admin, an_disable_cap;
+	int err;
+
+	mlx5_port_query_eth_autoneg(mdev, &an_disable_cap,
+				    &an_disable_admin,
+				    &ext_eth_proto_admin,
+				    &eth_proto_admin);
+	if (!an_disable_cap && an_disable)
+		return -EPERM;
+
+	err = mlx5_port_set_eth_ptys_reg(mdev, an_disable, proto_admin, ext);
+	if (err)
+		return err;
+
+	if (!mlx5_core_is_pf(mdev))
+		return 0;
+
+	err = mlx5e_port_manual_buffer_config(priv, 0, dev->mtu, NULL, NULL,
+					      NULL);
+	if (!err)
+		return 0;
+
+	netdev_warn(dev, "%s: Failed to set port speed, proto_admin=%d (err %d), setting back to previous speed proto_admin=%d\n",
+		    __func__, proto_admin, err,
+		    ext ? ext_eth_proto_admin : eth_proto_admin);
+
+	mlx5_port_set_eth_ptys_reg(mdev, an_disable_admin,
+				   ext ? ext_eth_proto_admin : eth_proto_admin,
+				   ext);
+
+	return err;
 }
 
 int mlx5e_port_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)

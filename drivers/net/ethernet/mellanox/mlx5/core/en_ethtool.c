@@ -1379,10 +1379,8 @@ static int mlx5e_ethtool_set_link_ksettings(struct mlx5e_priv *priv,
 	u8 an_disable_admin;
 	bool ext_supported;
 	bool ext_requested;
-	u8 an_disable_cap;
 	bool an_disable;
 	u32 link_modes;
-	u8 an_status;
 	u8 autoneg;
 	bool ext;
 	int err;
@@ -1423,8 +1421,7 @@ static int mlx5e_ethtool_set_link_ksettings(struct mlx5e_priv *priv,
 		goto out;
 	}
 
-	mlx5_port_query_eth_autoneg(mdev, &an_status, &an_disable_cap,
-				    &an_disable_admin);
+	mlx5_port_query_eth_autoneg(mdev, NULL, &an_disable_admin, NULL, NULL);
 
 	an_disable = autoneg == AUTONEG_DISABLE;
 	an_changes = ((!an_disable && an_disable_admin) ||
@@ -1433,7 +1430,7 @@ static int mlx5e_ethtool_set_link_ksettings(struct mlx5e_priv *priv,
 	if (!an_changes && link_modes == eproto.admin)
 		goto out;
 
-	err = mlx5_port_set_eth_ptys(mdev, an_disable, link_modes, ext);
+	err = mlx5_port_set_eth_ptys(priv, an_disable, link_modes, ext);
 	if (err) {
 		netdev_err(priv->netdev, "%s: failed to set ptys reg: %d\n", __func__, err);
 		goto out;
