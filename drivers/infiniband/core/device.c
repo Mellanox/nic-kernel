@@ -584,6 +584,8 @@ static void rdma_init_coredev(struct ib_core_device *coredev,
 /**
  * _ib_alloc_device - allocate an IB device struct
  * @size:size of structure to allocate
+ * @user_net: network namespace device should be located in, namespace
+ *	      must stay valid until ib_register_device() is completed.
  *
  * Low-level drivers should use ib_alloc_device() to allocate &struct
  * ib_device.  @size is the size of the structure to be allocated,
@@ -591,9 +593,10 @@ static void rdma_init_coredev(struct ib_core_device *coredev,
  * ib_dealloc_device() must be used to free structures allocated with
  * ib_alloc_device().
  */
-struct ib_device *_ib_alloc_device(size_t size)
+struct ib_device *_ib_alloc_device(size_t size, struct net *user_net)
 {
 	struct ib_device *device;
+	struct net *net;
 	unsigned int i;
 
 	if (WARN_ON(size < sizeof(struct ib_device)))
@@ -603,12 +606,18 @@ struct ib_device *_ib_alloc_device(size_t size)
 	if (!device)
 		return NULL;
 
-	if (rdma_restrack_init(device)) {
-		kfree(device);
-		return NULL;
-	}
+	if (rdma_restrack_init(device))
+		goto free_device;
 
-	rdma_init_coredev(&device->coredev, device, &init_net);
+	/* ib_devices_shared_netns can't change while we have active namespaces
+	 * in the system which means either init_net is passed or the user has
+	 * no idea what they are doing. Fail in such cases.
+	 */
+	if (ib_devices_shared_netns && &init_net != user_net)
+		goto clean_restrack;
+
+	net = ib_devices_shared_netns ? &init_net : user_net;
+	rdma_init_coredev(&device->coredev, device, net);
 
 	INIT_LIST_HEAD(&device->event_handler_list);
 	spin_lock_init(&device->qp_open_list_lock);
@@ -668,6 +677,12 @@ struct ib_device *_ib_alloc_device(size_t size)
 	INIT_LIST_HEAD(&device->subdev_list);
 
 	return device;
+
+clean_restrack:
+	rdma_restrack_clean(device);
+free_device:
+	kfree(device);
+	return NULL;
 }
 EXPORT_SYMBOL(_ib_alloc_device);
 
