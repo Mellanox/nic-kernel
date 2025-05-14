@@ -405,6 +405,7 @@ static int nsim_dev_port_debugfs_init(struct nsim_dev *nsim_dev,
 	sprintf(dev_link_name, "../../../" DRV_NAME "%u", nsim_bus_dev->dev.id);
 	if (nsim_dev_port_is_vf(nsim_dev_port)) {
 		unsigned int vf_id = nsim_dev_port_index_to_vf_index(port_index);
+		int i;
 
 		debugfs_create_u16("tx_share", 0400, nsim_dev_port->ddir,
 				   &nsim_dev->vfconfigs[vf_id].min_tx_rate);
@@ -415,6 +416,13 @@ static int nsim_dev_port_debugfs_init(struct nsim_dev *nsim_dev,
 								 nsim_dev_port->ddir,
 								 &nsim_dev_port->parent_name,
 								 &nsim_dev_rate_parent_fops);
+		for (i = 0; i < DEVLINK_RATE_TCS_MAX; i++) {
+			char name[16];
+
+			snprintf(name, sizeof(name), "tc%d_bw", i);
+			debugfs_create_u32(name, 0400, nsim_dev_port->ddir,
+					   &nsim_dev_port->tc_bw[i]);
+		}
 	}
 	debugfs_create_symlink("dev", nsim_dev_port->ddir, dev_link_name);
 
@@ -1172,6 +1180,19 @@ static int nsim_rate_bytes_to_units(char *name, u64 *rate, struct netlink_ext_ac
 	return 0;
 }
 
+static int nsim_leaf_tc_bw_set(struct devlink_rate *devlink_rate,
+			       void *priv, u32 *tc_bw,
+			       struct netlink_ext_ack *extack)
+{
+	struct nsim_dev_port *nsim_dev_port = priv;
+	int i;
+
+	for (i = 0; i < DEVLINK_RATE_TCS_MAX; i++)
+		nsim_dev_port->tc_bw[i] = tc_bw[i];
+
+	return 0;
+}
+
 static int nsim_leaf_tx_share_set(struct devlink_rate *devlink_rate, void *priv,
 				  u64 tx_share, struct netlink_ext_ack *extack)
 {
@@ -1210,7 +1231,20 @@ struct nsim_rate_node {
 	char *parent_name;
 	u16 tx_share;
 	u16 tx_max;
+	u32 tc_bw[DEVLINK_RATE_TCS_MAX];
 };
+
+static int nsim_node_tc_bw_set(struct devlink_rate *devlink_rate, void *priv,
+			       u32 *tc_bw, struct netlink_ext_ack *extack)
+{
+	struct nsim_rate_node *nsim_node = priv;
+	int i;
+
+	for (i = 0; i < DEVLINK_RATE_TCS_MAX; i++)
+		nsim_node->tc_bw[i] = tc_bw[i];
+
+	return 0;
+}
 
 static int nsim_node_tx_share_set(struct devlink_rate *devlink_rate, void *priv,
 				  u64 tx_share, struct netlink_ext_ack *extack)
@@ -1245,6 +1279,7 @@ static int nsim_rate_node_new(struct devlink_rate *node, void **priv,
 {
 	struct nsim_dev *nsim_dev = devlink_priv(node->devlink);
 	struct nsim_rate_node *nsim_node;
+	int i;
 
 	if (!nsim_esw_mode_is_switchdev(nsim_dev)) {
 		NL_SET_ERR_MSG_MOD(extack, "Node creation allowed only in switchdev mode.");
@@ -1263,6 +1298,13 @@ static int nsim_rate_node_new(struct devlink_rate *node, void **priv,
 						     nsim_node->ddir,
 						     &nsim_node->parent_name,
 						     &nsim_dev_rate_parent_fops);
+	for (i = 0; i < DEVLINK_RATE_TCS_MAX; i++) {
+		char name[16];
+
+		snprintf(name, sizeof(name), "tc%d_bw", i);
+		debugfs_create_u32(name, 0400, nsim_node->ddir,
+				   &nsim_node->tc_bw[i]);
+	}
 
 	*priv = nsim_node;
 	return 0;
@@ -1340,8 +1382,10 @@ static const struct devlink_ops nsim_dev_devlink_ops = {
 	.trap_policer_counter_get = nsim_dev_devlink_trap_policer_counter_get,
 	.rate_leaf_tx_share_set = nsim_leaf_tx_share_set,
 	.rate_leaf_tx_max_set = nsim_leaf_tx_max_set,
+	.rate_leaf_tc_bw_set = nsim_leaf_tc_bw_set,
 	.rate_node_tx_share_set = nsim_node_tx_share_set,
 	.rate_node_tx_max_set = nsim_node_tx_max_set,
+	.rate_node_tc_bw_set = nsim_node_tc_bw_set,
 	.rate_node_new = nsim_rate_node_new,
 	.rate_node_del = nsim_rate_node_del,
 	.rate_leaf_parent_set = nsim_rate_leaf_parent_set,
