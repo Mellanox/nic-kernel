@@ -417,6 +417,7 @@ static struct xfrm_state *ixgbe_ipsec_find_rx_state(struct ixgbe_ipsec *ipsec,
 
 /**
  * ixgbe_ipsec_parse_proto_keys - find the key and salt based on the protocol
+ * @dev: pointer to net device
  * @xs: pointer to xfrm_state struct
  * @mykey: pointer to key array to populate
  * @mysalt: pointer to salt value to populate
