@@ -223,10 +223,20 @@ static int auxiliary_bus_probe(struct device *dev)
 		return ret;
 	}
 
+	ret = auxiliary_bus_irq_dir_res_probe(auxdev);
+	if  (ret)
+		goto irq_dir_res_err;
+
 	ret = auxdrv->probe(auxdev, auxiliary_match_id(auxdrv->id_table, auxdev));
 	if (ret)
-		dev_pm_domain_detach(dev, true);
+		goto probe_err;
 
+	return 0;
+
+probe_err:
+	auxiliary_bus_irq_dir_res_remove(auxdev);
+irq_dir_res_err:
+	dev_pm_domain_detach(dev, true);
 	return ret;
 }
 
@@ -237,6 +247,7 @@ static void auxiliary_bus_remove(struct device *dev)
 
 	if (auxdrv->remove)
 		auxdrv->remove(auxdev);
+	auxiliary_bus_irq_dir_res_remove(auxdev);
 	dev_pm_domain_detach(dev, true);
 }
 
@@ -297,7 +308,6 @@ int auxiliary_device_init(struct auxiliary_device *auxdev)
 
 	dev->bus = &auxiliary_bus_type;
 	device_initialize(&auxdev->dev);
-	mutex_init(&auxdev->sysfs.lock);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(auxiliary_device_init);
