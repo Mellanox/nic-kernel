@@ -33,6 +33,7 @@
 #include <linux/dim.h>
 #include <linux/debugfs.h>
 #include <linux/mlx5/fs.h>
+#include <net/netdev_lock.h>
 #include <net/switchdev.h>
 #include <net/pkt_cls.h>
 #include <net/act_api.h>
@@ -886,6 +887,8 @@ static void mlx5e_build_rep_netdev(struct net_device *netdev,
 {
 	SET_NETDEV_DEV(netdev, mdev->device);
 	netdev->netdev_ops = &mlx5e_netdev_ops_rep;
+	netdev->request_ops_lock = true;
+	netdev_lockdep_set_classes(netdev);
 	eth_hw_addr_random(netdev);
 	netdev->ethtool_ops = &mlx5e_rep_ethtool_ops;
 
@@ -1345,9 +1348,11 @@ static void mlx5e_uplink_rep_enable(struct mlx5e_priv *priv)
 	netdev->wanted_features |= NETIF_F_HW_TC;
 
 	rtnl_lock();
+	netdev_lock(netdev);
 	if (netif_running(netdev))
 		mlx5e_open(netdev);
 	udp_tunnel_nic_reset_ntf(priv->netdev);
+	netdev_unlock(netdev);
 	netif_device_attach(netdev);
 	rtnl_unlock();
 }
@@ -1357,9 +1362,11 @@ static void mlx5e_uplink_rep_disable(struct mlx5e_priv *priv)
 	struct mlx5_core_dev *mdev = priv->mdev;
 
 	rtnl_lock();
+	netdev_lock(priv->netdev);
 	if (netif_running(priv->netdev))
 		mlx5e_close(priv->netdev);
 	netif_device_detach(priv->netdev);
+	netdev_unlock(priv->netdev);
 	rtnl_unlock();
 
 	mlx5e_rep_bridge_cleanup(priv);
