@@ -1198,7 +1198,8 @@ void mlx5_eswitch_unload_vf_vports(struct mlx5_eswitch *esw, u16 num_vfs)
 	unsigned long i;
 
 	mlx5_esw_for_each_vf_vport(esw, i, vport, num_vfs) {
-		if (!vport->enabled)
+		/* Adjacent VFs are unloaded separately */
+		if (!vport->enabled || vport->adjacent)
 			continue;
 		mlx5_eswitch_unload_pf_vf_vport(esw, vport->vport);
 	}
@@ -1215,6 +1216,42 @@ static void mlx5_eswitch_unload_ec_vf_vports(struct mlx5_eswitch *esw,
 			continue;
 		mlx5_eswitch_unload_pf_vf_vport(esw, vport->vport);
 	}
+}
+
+static void mlx5_eswitch_unload_adj_vf_vports(struct mlx5_eswitch *esw)
+{
+	struct mlx5_vport *vport;
+	unsigned long i;
+
+	mlx5_esw_for_each_vf_vport(esw, i, vport, U16_MAX) {
+		if (!vport->enabled || !vport->adjacent)
+			continue;
+		mlx5_eswitch_unload_pf_vf_vport(esw, vport->vport);
+	}
+}
+
+static int
+mlx5_eswitch_load_adj_vf_vports(struct mlx5_eswitch *esw,
+				enum mlx5_eswitch_vport_event enabled_events)
+{
+	struct mlx5_vport *vport;
+	unsigned long i;
+	int err;
+
+	mlx5_esw_for_each_vf_vport(esw, i, vport, U16_MAX) {
+		if (!vport->adjacent)
+			continue;
+		err = mlx5_eswitch_load_pf_vf_vport(esw, vport->vport,
+						    enabled_events);
+		if (err)
+			goto adj_vf_err;
+	}
+
+	return 0;
+
+adj_vf_err:
+	mlx5_eswitch_unload_adj_vf_vports(esw);
+	return err;
 }
 
 int mlx5_eswitch_load_vf_vports(struct mlx5_eswitch *esw, u16 num_vfs,
@@ -1324,7 +1361,15 @@ mlx5_eswitch_enable_pf_vf_vports(struct mlx5_eswitch *esw,
 					  enabled_events);
 	if (ret)
 		goto vf_err;
+
+	/* Enable adjacent VF vports */
+	ret = mlx5_eswitch_load_adj_vf_vports(esw, enabled_events);
+	if (ret)
+		goto adj_vf_err;
+
 	return 0;
+adj_vf_err:
+	mlx5_eswitch_unload_adj_vf_vports(esw);
 
 vf_err:
 	if (mlx5_core_ec_sriov_enabled(esw->dev))
@@ -1345,6 +1390,8 @@ pf_hca_err:
  */
 void mlx5_eswitch_disable_pf_vf_vports(struct mlx5_eswitch *esw)
 {
+	mlx5_eswitch_unload_adj_vf_vports(esw);
+
 	mlx5_eswitch_unload_vf_vports(esw, esw->esw_funcs.num_vfs);
 
 	if (mlx5_core_ec_sriov_enabled(esw->dev))
@@ -1766,8 +1813,7 @@ out_free:
 	return err;
 }
 
-static int mlx5_esw_vport_alloc(struct mlx5_eswitch *esw,
-				int index, u16 vport_num)
+int mlx5_esw_vport_alloc(struct mlx5_eswitch *esw, int index, u16 vport_num)
 {
 	struct mlx5_vport *vport;
 	int err;
@@ -1794,8 +1840,9 @@ insert_err:
 	return err;
 }
 
-static void mlx5_esw_vport_free(struct mlx5_eswitch *esw, struct mlx5_vport *vport)
+void mlx5_esw_vport_free(struct mlx5_eswitch *esw, struct mlx5_vport *vport)
 {
+	esw->total_vports--;
 	xa_erase(&esw->vports, vport->vport);
 	kfree(vport);
 }
@@ -1877,6 +1924,9 @@ static int mlx5_esw_vports_init(struct mlx5_eswitch *esw)
 	err = mlx5_esw_vport_alloc(esw, idx, MLX5_VPORT_UPLINK);
 	if (err)
 		goto err;
+
+	/* Adjacent vports or other dynamically create vports will use this */
+	esw->last_vport_idx = ++idx;
 	return 0;
 
 err:
