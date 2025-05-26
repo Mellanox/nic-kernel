@@ -1260,11 +1260,27 @@ void mlx5e_build_xdpsq_param(struct mlx5_core_dev *mdev,
 	mlx5e_build_tx_cq_param(mdev, params, &param->cqp);
 }
 
+unsigned int mlx5e_get_doorbell_index(struct mlx5_core_dev *mdev,
+				      unsigned int ch_ix)
+{
+	unsigned int num_doorbells = mdev->mlx5e_res.hw_objs.num_bfregs;
+
+	if (num_doorbells == 1)
+		return MLX5_DEFAULT_DOORBELL_IX;
+
+	/* With more than one doorbell, round-robin between doorbells
+	 * [1..num_doorbells-1], leaving doorbell 0 for all SQs not associated
+	 * with channels.
+	 */
+	return 1 + ch_ix % (num_doorbells - 1);
+}
+
 int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 			      struct mlx5e_params *params,
+			      unsigned int ch_ix,
 			      struct mlx5e_channel_param *cparam)
 {
-	unsigned int db_ix = MLX5_DEFAULT_DOORBELL_IX;
+	unsigned int db_ix = mlx5e_get_doorbell_index(mdev, ch_ix);
 	u8 icosq_log_wq_sz, async_icosq_log_wq_sz;
 	int err;
 

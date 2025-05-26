@@ -142,8 +142,11 @@ void mlx5e_build_xdpsq_param(struct mlx5_core_dev *mdev,
 			     struct mlx5e_params *params,
 			     unsigned int db_ix,
 			     struct mlx5e_sq_param *param);
+unsigned int mlx5e_get_doorbell_index(struct mlx5_core_dev *mdev,
+				      unsigned int ch_ix);
 int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 			      struct mlx5e_params *params,
+			      unsigned int ch_ix,
 			      struct mlx5e_channel_param *cparam);
 
 u16 mlx5e_calc_sq_stop_room(struct mlx5_core_dev *mdev, struct mlx5e_params *params);

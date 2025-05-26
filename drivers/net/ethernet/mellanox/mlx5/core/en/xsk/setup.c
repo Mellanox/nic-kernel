@@ -54,7 +54,7 @@ static void mlx5e_build_xsk_cparam(struct mlx5_core_dev *mdev,
 				   struct mlx5e_channel *c,
 				   struct mlx5e_channel_param *cparam)
 {
-	unsigned int db_ix = MLX5_DEFAULT_DOORBELL_IX;
+	unsigned int db_ix = mlx5e_get_doorbell_index(mdev, c->ix);
 
 	mlx5e_build_rq_param(mdev, params, xsk, &cparam->rq);
 	mlx5e_build_xdpsq_param(mdev, params, db_ix, &cparam->xdp_sq);

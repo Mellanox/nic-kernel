@@ -799,6 +799,10 @@ struct mlx5_db {
 };
 
 enum {
+	MLX5_DEFAULT_NUM_DOORBELLS = 8,
+};
+
+enum {
 	MLX5_DEFAULT_DOORBELL_IX = 0,
 };
 

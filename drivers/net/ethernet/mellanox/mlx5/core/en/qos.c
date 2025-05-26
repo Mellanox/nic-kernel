@@ -113,7 +113,7 @@ int mlx5e_open_qos_sq(struct mlx5e_priv *priv, struct mlx5e_channels *chs,
 	ix = node_qid % params->num_channels;
 	qid = node_qid / params->num_channels;
 	c = chs->c[ix];
-	db_ix = MLX5_DEFAULT_DOORBELL_IX;
+	db_ix = mlx5e_get_doorbell_index(c->mdev, ix);
 
 	qos_sqs = mlx5e_state_dereference(priv, c->qos_sqs);
 	sq = kzalloc(sizeof(*sq), GFP_KERNEL);

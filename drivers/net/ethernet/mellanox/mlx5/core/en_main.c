@@ -2753,7 +2753,7 @@ static int mlx5e_open_channel(struct mlx5e_priv *priv, int ix,
 		goto err_free;
 	}
 
-	err = mlx5e_build_channel_param(mdev, params, cparam);
+	err = mlx5e_build_channel_param(mdev, params, ix, cparam);
 	if (err)
 		goto err_free;
 
@@ -5549,7 +5549,7 @@ static int mlx5e_queue_mem_alloc(struct net_device *dev, void *newq,
 	}
 
 	mdev = mlx5_sd_ch_ix_get_dev(priv->mdev, queue_index);
-	err = mlx5e_build_channel_param(mdev, &params, &new->cparam);
+	err = mlx5e_build_channel_param(mdev, &params, queue_index, &new->cparam);
 	if (err)
 		goto unlock;
 
