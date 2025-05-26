@@ -164,7 +164,8 @@ int mlx5e_create_mdev_resources(struct mlx5_core_dev *mdev, bool create_tises)
 		goto err_dealloc_transport_domain;
 	}
 
-	num_doorbells = 1;
+	num_doorbells = 1 + min(MLX5_DEFAULT_NUM_DOORBELLS,
+				mlx5e_get_max_num_channels(mdev));
 	res->bfregs = kcalloc(num_doorbells, sizeof(struct mlx5_sq_bfreg),
 			      GFP_KERNEL);
 	if (!res->bfregs) {

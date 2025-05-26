@@ -798,6 +798,9 @@ struct mlx5_db {
 	int			index;
 };
 
+
+#define MLX5_DEFAULT_NUM_DOORBELLS 8
+
 enum {
 	MLX5_COMP_EQ_SIZE = 1024,
 };
