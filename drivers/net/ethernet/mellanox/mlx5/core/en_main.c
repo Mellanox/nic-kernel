@@ -2232,6 +2232,7 @@ static int mlx5e_alloc_cq(struct mlx5_core_dev *mdev,
 			  struct mlx5e_create_cq_param *ccp,
 			  struct mlx5e_cq *cq)
 {
+	struct mlx5_sq_bfreg *bfregs = mdev->mlx5e_res.hw_objs.bfregs;
 	int err;
 
 	param->wq.buf_numa_node = ccp->node;
@@ -2239,7 +2240,7 @@ static int mlx5e_alloc_cq(struct mlx5_core_dev *mdev,
 	param->eq_ix            = ccp->ix;
 
 	err = mlx5e_alloc_cq_common(mdev, ccp->netdev, ccp->wq,
-				    mdev->priv.uar, param, cq);
+				    bfregs[ccp->db_ix].up, param, cq);
 
 	cq->napi     = ccp->napi;
 	cq->ch_stats = ccp->ch_stats;
