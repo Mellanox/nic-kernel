@@ -143,3 +143,6 @@ own name.
    * - ``clock_id``
      - u64
      - Clock ID used by the device for registering DPLL devices and pins.
+   * - ``num_doorbells``
+     - u32
+     - Controls the number of doorbells used by the device.
