@@ -140,3 +140,6 @@ own name.
    * - ``enable_phc``
      - Boolean
      - Enable PHC (PTP Hardware Clock) functionality in the device.
+   * - ``num_doorbells``
+     - u32
+     - Controls the number of doorbells used by the device.
