@@ -559,5 +559,6 @@ extern MLX5E_DECLARE_STATS_GRP(ipsec_hw);
 extern MLX5E_DECLARE_STATS_GRP(ipsec_sw);
 extern MLX5E_DECLARE_STATS_GRP(ptp);
 extern MLX5E_DECLARE_STATS_GRP(macsec_hw);
+extern MLX5E_DECLARE_STATS_GRP(pcie_cong);
 
 #endif /* __MLX5_EN_STATS_H__ */
