@@ -253,9 +253,9 @@ int rdma_nl_put_driver_u64_hex(struct sk_buff *msg, const char *name, u64 value)
 }
 EXPORT_SYMBOL(rdma_nl_put_driver_u64_hex);
 
-bool rdma_nl_get_privileged_qkey(void)
+bool rdma_nl_get_privileged_qkey(const struct ib_device *device)
 {
-	return privileged_qkey || capable(CAP_NET_RAW);
+	return privileged_qkey || rdma_dev_has_raw_cap(device);
 }
 EXPORT_SYMBOL(rdma_nl_get_privileged_qkey);
 
