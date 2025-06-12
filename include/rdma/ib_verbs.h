@@ -314,17 +314,19 @@ enum ib_atomic_cap {
 };
 
 enum ib_odp_general_cap_bits {
-	IB_ODP_SUPPORT		= 1 << 0,
-	IB_ODP_SUPPORT_IMPLICIT = 1 << 1,
+	IB_ODP_SUPPORT		= IB_UVERBS_ODP_SUPPORT,
+	IB_ODP_SUPPORT_IMPLICIT = IB_UVERBS_ODP_SUPPORT_IMPLICIT,
 };
 
 enum ib_odp_transport_cap_bits {
-	IB_ODP_SUPPORT_SEND	= 1 << 0,
-	IB_ODP_SUPPORT_RECV	= 1 << 1,
-	IB_ODP_SUPPORT_WRITE	= 1 << 2,
-	IB_ODP_SUPPORT_READ	= 1 << 3,
-	IB_ODP_SUPPORT_ATOMIC	= 1 << 4,
-	IB_ODP_SUPPORT_SRQ_RECV	= 1 << 5,
+	IB_ODP_SUPPORT_SEND	= IB_UVERBS_ODP_SUPPORT_SEND,
+	IB_ODP_SUPPORT_RECV	= IB_UVERBS_ODP_SUPPORT_RECV,
+	IB_ODP_SUPPORT_WRITE	= IB_UVERBS_ODP_SUPPORT_WRITE,
+	IB_ODP_SUPPORT_READ	= IB_UVERBS_ODP_SUPPORT_READ,
+	IB_ODP_SUPPORT_ATOMIC	= IB_UVERBS_ODP_SUPPORT_ATOMIC,
+	IB_ODP_SUPPORT_SRQ_RECV	= IB_UVERBS_ODP_SUPPORT_SRQ_RECV,
+	IB_ODP_SUPPORT_FLUSH	= IB_UVERBS_ODP_SUPPORT_FLUSH,
+	IB_ODP_SUPPORT_ATOMIC_WRITE	= IB_UVERBS_ODP_SUPPORT_ATOMIC_WRITE,
 };
 
 struct ib_odp_caps {
@@ -2487,6 +2489,15 @@ struct ib_device_ops {
 	int (*modify_cq)(struct ib_cq *cq, u16 cq_count, u16 cq_period);
 	int (*destroy_cq)(struct ib_cq *cq, struct ib_udata *udata);
 	int (*resize_cq)(struct ib_cq *cq, int cqe, struct ib_udata *udata);
+	/**
+	 * pre_destroy_cq - Prevent a cq from generating any new work
+	 * completions, but not free any kernel resources
+	 */
+	int (*pre_destroy_cq)(struct ib_cq *cq);
+	/**
+	 * post_destroy_cq - Free all kernel resources
+	 */
+	void (*post_destroy_cq)(struct ib_cq *cq);
 	struct ib_mr *(*get_dma_mr)(struct ib_pd *pd, int mr_access_flags);
 	struct ib_mr *(*reg_user_mr)(struct ib_pd *pd, u64 start, u64 length,
 				     u64 virt_addr, int mr_access_flags,
@@ -2903,11 +2914,18 @@ struct ib_block_iter {
 	unsigned int __pg_bit;		/* alignment of current block */
 };
 
-struct ib_device *_ib_alloc_device(size_t size);
+struct ib_device *_ib_alloc_device(size_t size, struct net *net);
 #define ib_alloc_device(drv_struct, member)                                    \
 	container_of(_ib_alloc_device(sizeof(struct drv_struct) +              \
 				      BUILD_BUG_ON_ZERO(offsetof(              \
-					      struct drv_struct, member))),    \
+					      struct drv_struct, member)),     \
+				      &init_net),			       \
+		     struct drv_struct, member)
+
+#define ib_alloc_device_with_net(drv_struct, member, net)		       \
+	container_of(_ib_alloc_device(sizeof(struct drv_struct) +              \
+				      BUILD_BUG_ON_ZERO(offsetof(              \
+					struct drv_struct, member)), net),     \
 		     struct drv_struct, member)
 
 void ib_dealloc_device(struct ib_device *device);
@@ -4852,6 +4870,12 @@ static inline int ibdev_to_node(struct ib_device *ibdev)
 
 bool rdma_dev_access_netns(const struct ib_device *device,
 			   const struct net *net);
+
+bool rdma_dev_has_raw_cap(const struct ib_device *dev);
+static inline struct net *rdma_dev_net(struct ib_device *device)
+{
+	return read_pnet(&device->coredev.rdma_net);
+}
 
 #define IB_ROCE_UDP_ENCAP_VALID_PORT_MIN (0xC000)
 #define IB_ROCE_UDP_ENCAP_VALID_PORT_MAX (0xFFFF)

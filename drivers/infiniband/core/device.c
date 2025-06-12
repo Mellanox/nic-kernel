@@ -145,6 +145,33 @@ bool rdma_dev_access_netns(const struct ib_device *dev, const struct net *net)
 }
 EXPORT_SYMBOL(rdma_dev_access_netns);
 
+/**
+ * rdma_dev_has_raw_cap() - Returns whether a specified rdma device has
+ *			    CAP_NET_RAW capability or not.
+ *
+ * @dev:	Pointer to rdma device whose capability to be checked
+ *
+ * Returns true if a rdma device's owning user namespace has CAP_NET_RAW
+ * capability, otherwise false. When rdma subsystem is in legacy shared network,
+ * namespace mode, the default net namespace is considered.
+ */
+bool rdma_dev_has_raw_cap(const struct ib_device *dev)
+{
+	const struct net *net;
+
+	/* Network namespace is the resource whose user namespace
+	 * to be considered. When in shared mode, there is no reliable
+	 * network namespace resource, so consider the default net namespace.
+	 */
+	if (ib_devices_shared_netns)
+		net = &init_net;
+	else
+		net = read_pnet(&dev->coredev.rdma_net);
+
+	return ns_capable(net->user_ns, CAP_NET_RAW);
+}
+EXPORT_SYMBOL(rdma_dev_has_raw_cap);
+
 /*
  * xarray has this behavior where it won't iterate over NULL values stored in
  * allocated arrays.  So we need our own iterator to see all values stored in
@@ -557,6 +584,8 @@ static void rdma_init_coredev(struct ib_core_device *coredev,
 /**
  * _ib_alloc_device - allocate an IB device struct
  * @size:size of structure to allocate
+ * @user_net: network namespace device should be located in, namespace
+ *	      must stay valid until ib_register_device() is completed.
  *
  * Low-level drivers should use ib_alloc_device() to allocate &struct
  * ib_device.  @size is the size of the structure to be allocated,
@@ -564,9 +593,10 @@ static void rdma_init_coredev(struct ib_core_device *coredev,
  * ib_dealloc_device() must be used to free structures allocated with
  * ib_alloc_device().
  */
-struct ib_device *_ib_alloc_device(size_t size)
+struct ib_device *_ib_alloc_device(size_t size, struct net *user_net)
 {
 	struct ib_device *device;
+	struct net *net;
 	unsigned int i;
 
 	if (WARN_ON(size < sizeof(struct ib_device)))
@@ -576,12 +606,18 @@ struct ib_device *_ib_alloc_device(size_t size)
 	if (!device)
 		return NULL;
 
-	if (rdma_restrack_init(device)) {
-		kfree(device);
-		return NULL;
-	}
+	if (rdma_restrack_init(device))
+		goto free_device;
 
-	rdma_init_coredev(&device->coredev, device, &init_net);
+	/* ib_devices_shared_netns can't change while we have active namespaces
+	 * in the system which means either init_net is passed or the user has
+	 * no idea what they are doing. Fail in such cases.
+	 */
+	if (ib_devices_shared_netns && &init_net != user_net)
+		goto clean_restrack;
+
+	net = ib_devices_shared_netns ? &init_net : user_net;
+	rdma_init_coredev(&device->coredev, device, net);
 
 	INIT_LIST_HEAD(&device->event_handler_list);
 	spin_lock_init(&device->qp_open_list_lock);
@@ -641,6 +677,12 @@ struct ib_device *_ib_alloc_device(size_t size)
 	INIT_LIST_HEAD(&device->subdev_list);
 
 	return device;
+
+clean_restrack:
+	rdma_restrack_clean(device);
+free_device:
+	kfree(device);
+	return NULL;
 }
 EXPORT_SYMBOL(_ib_alloc_device);
 
@@ -2763,8 +2805,10 @@ void ib_set_device_ops(struct ib_device *dev, const struct ib_device_ops *ops)
 	SET_DEVICE_OP(dev_ops, modify_srq);
 	SET_DEVICE_OP(dev_ops, modify_wq);
 	SET_DEVICE_OP(dev_ops, peek_cq);
+	SET_DEVICE_OP(dev_ops, pre_destroy_cq);
 	SET_DEVICE_OP(dev_ops, poll_cq);
 	SET_DEVICE_OP(dev_ops, port_groups);
+	SET_DEVICE_OP(dev_ops, post_destroy_cq);
 	SET_DEVICE_OP(dev_ops, post_recv);
 	SET_DEVICE_OP(dev_ops, post_send);
 	SET_DEVICE_OP(dev_ops, post_srq_recv);
