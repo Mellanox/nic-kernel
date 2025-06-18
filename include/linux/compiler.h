@@ -192,9 +192,9 @@ void ftrace_likely_update(struct ftrace_likely_data *f, int val,
 })
 
 #ifdef __CHECKER__
-#define __BUILD_BUG_ON_ZERO_MSG(e, msg) (0)
+#define __BUILD_BUG_ON_ZERO_MSG(e, msg, ...) (0)
 #else /* __CHECKER__ */
-#define __BUILD_BUG_ON_ZERO_MSG(e, msg) ((int)sizeof(struct {_Static_assert(!(e), msg);}))
+#define __BUILD_BUG_ON_ZERO_MSG(e, msg, ...) ((int)sizeof(struct {_Static_assert(!(e), msg);}))
 #endif /* __CHECKER__ */
 
 /* &a[0] degrades to a pointer: a different type from an array */
@@ -229,10 +229,10 @@ void ftrace_likely_update(struct ftrace_likely_data *f, int val,
 /*
  * Use __typeof_unqual__() when available.
  *
- * XXX: Remove test for __CHECKER__ once
- * sparse learns about __typeof_unqual__().
+ * XXX: Remove test for __GENKSYMS__ once "genksyms" handles
+ * __typeof_unqual__(), and test for __CHECKER__ once "sparse" handles it.
  */
-#if CC_HAS_TYPEOF_UNQUAL && !defined(__CHECKER__)
+#if CC_HAS_TYPEOF_UNQUAL && !defined(__GENKSYMS__) && !defined(__CHECKER__)
 # define USE_TYPEOF_UNQUAL 1
 #endif
 
