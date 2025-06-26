@@ -1312,9 +1312,6 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 
 	switch (cmd->qp_type) {
 	case IB_QPT_RAW_PACKET:
-		if (!capable(CAP_NET_RAW))
-			return -EPERM;
-		break;
 	case IB_QPT_RC:
 	case IB_QPT_UC:
 	case IB_QPT_UD:
@@ -1330,6 +1327,12 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 						 &ib_dev);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
+
+	if (cmd->qp_type == IB_QPT_RAW_PACKET) {
+		if (!rdma_dev_has_raw_cap(ib_dev))
+			return -EPERM;
+	}
+
 	obj->uxrcd = NULL;
 	obj->uevent.uobject.user_handle = cmd->user_handle;
 	mutex_init(&obj->mcast_lock);
@@ -1451,7 +1454,7 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 	}
 
 	if (attr.create_flags & IB_QP_CREATE_SOURCE_QPN) {
-		if (!capable(CAP_NET_RAW)) {
+		if (!rdma_dev_has_raw_cap(device)) {
 			ret = -EPERM;
 			goto err_put;
 		}
@@ -1877,7 +1880,7 @@ static int modify_qp(struct uverbs_attr_bundle *attrs,
 		attr->path_mig_state = cmd->base.path_mig_state;
 	if (cmd->base.attr_mask & IB_QP_QKEY) {
 		if (cmd->base.qkey & IB_QP_SET_QKEY &&
-		    !rdma_nl_get_privileged_qkey()) {
+		    !rdma_nl_get_privileged_qkey(qp->device)) {
 			ret = -EPERM;
 			goto release_qp;
 		}
@@ -3225,9 +3228,6 @@ static int ib_uverbs_ex_create_flow(struct uverbs_attr_bundle *attrs)
 	if (cmd.comp_mask)
 		return -EINVAL;
 
-	if (!capable(CAP_NET_RAW))
-		return -EPERM;
-
 	if (cmd.flow_attr.flags >= IB_FLOW_ATTR_FLAGS_RESERVED)
 		return -EINVAL;
 
@@ -3270,6 +3270,11 @@ static int ib_uverbs_ex_create_flow(struct uverbs_attr_bundle *attrs)
 	if (IS_ERR(uobj)) {
 		err = PTR_ERR(uobj);
 		goto err_free_attr;
+	}
+
+	if (!rdma_dev_has_raw_cap(uobj->context->device)) {
+		err = -EPERM;
+		goto err_uobj;
 	}
 
 	if (!rdma_is_port_valid(uobj->context->device, cmd.flow_attr.port)) {
