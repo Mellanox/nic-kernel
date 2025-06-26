@@ -256,6 +256,7 @@ enum mlx5e_priv_flag {
 	MLX5E_PFLAG_XDP_TX_MPWQE,
 	MLX5E_PFLAG_SKB_TX_MPWQE,
 	MLX5E_PFLAG_TX_PORT_TS,
+	MLX5E_PFLAG_TX_BACKPRESSURE,
 	MLX5E_NUM_PFLAGS, /* Keep last */
 };
 
@@ -422,6 +423,7 @@ struct mlx5e_txqsq {
 	u16                        skb_fifo_pc;
 	u32                        dma_fifo_pc;
 	struct mlx5e_tx_mpwqe      mpwqe;
+	bool                       xmit_more;
 
 	struct mlx5e_cq            cq;
 
@@ -877,6 +879,7 @@ struct mlx5e_priv {
 	struct mlx5e_selq selq;
 	struct mlx5e_txqsq **txq2sq;
 	struct mlx5e_sq_stats **txq2sq_stats;
+	u8 cong_state; /* For PCIe congestion state, used in tx path. */
 
 #ifdef CONFIG_MLX5_CORE_EN_DCB
 	struct mlx5e_dcbx_dp       dcbx_dp;
@@ -920,6 +923,8 @@ struct mlx5e_priv {
 	u16                        drop_rq_q_counter;
 	struct notifier_block      events_nb;
 	struct notifier_block      blocking_events_nb;
+
+	struct mlx5e_pcie_cong_event *cong_event;
 
 	struct udp_tunnel_nic_info nic_info;
 #ifdef CONFIG_MLX5_CORE_EN_DCB
