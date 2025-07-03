@@ -887,8 +887,8 @@ static void swiotlb_bounce(struct device *dev, phys_addr_t tlb_addr, size_t size
 
 	if (size > alloc_size) {
 		dev_WARN_ONCE(dev, 1,
-			"Buffer overflow detected. Allocation size: %zu. Mapping size: %zu.\n",
-			alloc_size, size);
+			"Buffer overflow detected. Allocation size: %zu. Mapping size: %zu. TLB offset: %d\n",
+			alloc_size, size, tlb_offset);
 		size = alloc_size;
 	}
 
