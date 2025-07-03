@@ -1859,7 +1859,9 @@ struct mlx5_ifc_cmd_hca_cap_bits {
 	u8         reserved_at_280[0x10];
 	u8         max_wqe_sz_sq[0x10];
 
-	u8         reserved_at_2a0[0xb];
+	u8         reserved_at_2a0[0x7];
+	u8         mkey_pcie_tph[0x1];
+	u8         reserved_at_2a8[0x3];
 	u8         shampo[0x1];
 	u8         reserved_at_2ac[0x4];
 	u8         max_wqe_sz_rq[0x10];
@@ -2171,7 +2173,9 @@ struct mlx5_ifc_cmd_hca_cap_2_bits {
 	u8	   min_mkey_log_entity_size_fixed_buffer[0x5];
 	u8	   ec_vf_vport_base[0x10];
 
-	u8	   reserved_at_3a0[0xa];
+	u8	   reserved_at_3a0[0x2];
+	u8	   max_mkey_log_entity_size_fixed_buffer[0x6];
+	u8	   reserved_at_3a8[0x2];
 	u8	   max_mkey_log_entity_size_mtt[0x6];
 	u8	   max_rqt_vhca_id[0x10];
 
@@ -4404,6 +4408,10 @@ enum {
 	MLX5_MKC_ACCESS_MODE_CROSSING = 0x6,
 };
 
+enum {
+	MLX5_MKC_PCIE_TPH_NO_STEERING_TAG_INDEX = 0,
+};
+
 struct mlx5_ifc_mkc_bits {
 	u8         reserved_at_0[0x1];
 	u8         free[0x1];
@@ -4455,7 +4463,11 @@ struct mlx5_ifc_mkc_bits {
 	u8         relaxed_ordering_read[0x1];
 	u8         log_page_size[0x6];
 
-	u8         reserved_at_1e0[0x20];
+	u8         reserved_at_1e0[0x5];
+	u8         pcie_tph_en[0x1];
+	u8         pcie_tph_ph[0x2];
+	u8         pcie_tph_steering_tag_index[0x8];
+	u8         reserved_at_1f0[0x10];
 };
 
 struct mlx5_ifc_pkey_bits {

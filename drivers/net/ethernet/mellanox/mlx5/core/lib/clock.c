@@ -1353,7 +1353,7 @@ static void mlx5_shared_clock_register(struct mlx5_core_dev *mdev, u64 key)
 	mdev->clock_state->compdev = mlx5_devcom_register_component(mdev->priv.devc,
 								    MLX5_DEVCOM_SHARED_CLOCK,
 								    key, NULL, mdev);
-	if (IS_ERR(mdev->clock_state->compdev))
+	if (!mdev->clock_state->compdev)
 		return;
 
 	mlx5_devcom_comp_lock(mdev->clock_state->compdev);

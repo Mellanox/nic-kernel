@@ -1321,16 +1321,21 @@ int siw_dereg_mr(struct ib_mr *base_mr, struct ib_udata *udata)
  * @len:	len of MR
  * @rnic_va:	not used by siw
  * @rights:	MR access rights
+ * @dmah:	dma handle
  * @udata:	user buffer to communicate STag and Key.
  */
 struct ib_mr *siw_reg_user_mr(struct ib_pd *pd, u64 start, u64 len,
-			      u64 rnic_va, int rights, struct ib_udata *udata)
+			      u64 rnic_va, int rights,  struct ib_dmah *dmah,
+			      struct ib_udata *udata)
 {
 	struct siw_mr *mr = NULL;
 	struct siw_umem *umem = NULL;
 	struct siw_ureq_reg_mr ureq;
 	struct siw_device *sdev = to_siw_dev(pd->device);
 	int rv;
+
+	if (dmah)
+		return ERR_PTR(-EOPNOTSUPP);
 
 	siw_dbg_pd(pd, "start: 0x%p, va: 0x%p, len: %llu\n",
 		   (void *)(uintptr_t)start, (void *)(uintptr_t)rnic_va,
