@@ -2218,12 +2218,12 @@ struct ib_mr *ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 		if (!(pd->device->attrs.kernel_cap_flags &
 		      IBK_ON_DEMAND_PAGING)) {
 			pr_debug("ODP support not available\n");
-			return ERR_PTR(-EINVAL);
+			return ERR_PTR(-EOPNOTSUPP);
 		}
 	}
 
 	mr = pd->device->ops.reg_user_mr(pd, start, length, virt_addr,
-					 access_flags, NULL);
+					 access_flags, NULL, NULL);
 
 	if (IS_ERR(mr))
 		return mr;
@@ -2262,6 +2262,7 @@ int ib_dereg_mr_user(struct ib_mr *mr, struct ib_udata *udata)
 {
 	struct ib_pd *pd = mr->pd;
 	struct ib_dm *dm = mr->dm;
+	struct ib_dmah *dmah = mr->dmah;
 	struct ib_sig_attrs *sig_attrs = mr->sig_attrs;
 	int ret;
 
@@ -2272,6 +2273,8 @@ int ib_dereg_mr_user(struct ib_mr *mr, struct ib_udata *udata)
 		atomic_dec(&pd->usecnt);
 		if (dm)
 			atomic_dec(&dm->usecnt);
+		if (dmah)
+			atomic_dec(&dmah->usecnt);
 		kfree(sig_attrs);
 	}
 
