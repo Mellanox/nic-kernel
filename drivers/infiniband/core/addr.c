@@ -323,12 +323,31 @@ static int ib_nl_fetch_ha(struct rdma_dev_addr *dev_addr,
 	return ib_nl_ip_send_msg(dev_addr, daddr, seq, family);
 }
 
+static bool is_dst_local(const struct dst_entry *dst)
+{
+	if (dst->ops->family == AF_INET)
+		return !!(dst_rtable(dst)->rt_type & RTN_LOCAL);
+	else if (dst->ops->family == AF_INET6)
+		return !!(dst_rt6_info(dst)->rt6i_flags & RTF_LOCAL);
+	else
+		return false;
+}
+
 static int dst_fetch_ha(const struct dst_entry *dst,
 			struct rdma_dev_addr *dev_addr,
 			const void *daddr)
 {
 	struct neighbour *n;
 	int ret = 0;
+
+	if (is_dst_local(dst)) {
+		/* When the destination is local entry, destination
+		 * is same as that of the source. Skip the neighbour lookup.
+		 */
+		memcpy(dev_addr->dst_dev_addr, dev_addr->src_dev_addr,
+		       MAX_ADDR_LEN);
+		return 0;
+	}
 
 	n = dst_neigh_lookup(dst, daddr);
 	if (!n)
@@ -484,10 +503,12 @@ static int rdma_set_src_addr_rcu(struct rdma_dev_addr *dev_addr,
 		ret = rdma_translate_ip(dst_in, dev_addr);
 		if (ret)
 			return ret;
-	} else {
-		rdma_copy_src_l2_addr(dev_addr, dst->dev);
+	} else if (is_dst_local(dst)) {
+		ndev = rdma_find_ndev_for_src_ip_rcu(dev_net(ndev), dst_in);
+		if (IS_ERR(ndev))
+			return PTR_ERR(ndev);
 	}
-
+	rdma_copy_src_l2_addr(dev_addr, ndev);
 	/*
 	 * If there's a gateway and type of device not ARPHRD_INFINIBAND,
 	 * we're definitely in RoCE v2 (as RoCE v1 isn't routable) set the
