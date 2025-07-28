@@ -169,3 +169,9 @@ mlx5_core-$(CONFIG_MLX5_SF_MANAGER) += sf/cmd.o sf/hw_table.o sf/devlink.o
 
 obj-$(CONFIG_MLX5_DPLL) += mlx5_dpll.o
 mlx5_dpll-y :=	dpll.o
+
+#
+# NEON WC specific for mlx5
+#
+mlx5_core-$(CONFIG_KERNEL_MODE_NEON) += lib/wc_neon_iowrite64_copy.o
+FLAGS_lib/wc_neon_iowrite64_copy.o += $(CC_FLAGS_FPU)
