@@ -251,9 +251,15 @@ enum {
 	MLX5_ETH_WQE_SWP_OUTER_L4_UDP   = 1 << 5,
 };
 
+/* Metadata bits 0-7 are used by timestamping */
+/* Base shift for metadata bits used by IPsec and MACsec */
+#define MLX5_ETH_WQE_FT_META_SHIFT 8
+
 enum {
-	MLX5_ETH_WQE_FT_META_IPSEC = BIT(0),
-	MLX5_ETH_WQE_FT_META_MACSEC = BIT(1),
+	MLX5_ETH_WQE_FT_META_IPSEC = BIT(0) << MLX5_ETH_WQE_FT_META_SHIFT,
+	MLX5_ETH_WQE_FT_META_MACSEC = BIT(1) << MLX5_ETH_WQE_FT_META_SHIFT,
+	MLX5_ETH_WQE_FT_META_MACSEC_FS_ID_MASK =
+		GENMASK(5, 2) << MLX5_ETH_WQE_FT_META_SHIFT,
 };
 
 struct mlx5_wqe_eth_seg {
