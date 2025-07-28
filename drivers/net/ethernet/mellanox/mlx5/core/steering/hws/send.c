@@ -685,12 +685,13 @@ static int hws_send_ring_alloc_sq(struct mlx5_core_dev *mdev,
 				  void *sqc_data)
 {
 	void *sqc_wq = MLX5_ADDR_OF(sqc, sqc_data, wq);
+	unsigned int db_ix = MLX5_DEFAULT_DOORBELL_IX;
 	struct mlx5_wq_cyc *wq = &sq->wq;
 	struct mlx5_wq_param param;
 	size_t buf_sz;
 	int err;
 
-	sq->uar_map = mdev->mlx5e_res.hw_objs.bfreg.map;
+	sq->uar_map = mdev->mlx5e_res.hw_objs.bfregs[db_ix].map;
 	sq->mdev = mdev;
 
 	param.db_numa_node = numa_node;
@@ -739,6 +740,7 @@ static int hws_send_ring_create_sq(struct mlx5_core_dev *mdev, u32 pdn,
 				   struct mlx5hws_send_ring_sq *sq,
 				   struct mlx5hws_send_ring_cq *cq)
 {
+	unsigned int db_ix = MLX5_DEFAULT_DOORBELL_IX;
 	void *in, *sqc, *wq;
 	int inlen, err;
 	u8 ts_format;
@@ -764,7 +766,7 @@ static int hws_send_ring_create_sq(struct mlx5_core_dev *mdev, u32 pdn,
 	MLX5_SET(sqc, sqc, ts_format, ts_format);
 
 	MLX5_SET(wq, wq, wq_type, MLX5_WQ_TYPE_CYCLIC);
-	MLX5_SET(wq, wq, uar_page, mdev->mlx5e_res.hw_objs.bfreg.index);
+	MLX5_SET(wq, wq, uar_page, mdev->mlx5e_res.hw_objs.bfregs[db_ix].index);
 	MLX5_SET(wq, wq, log_wq_pg_sz, sq->wq_ctrl.buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET64(wq, wq, dbr_addr, sq->wq_ctrl.db.dma);
 

@@ -320,6 +320,7 @@ static int mlx5e_ptp_alloc_txqsq(struct mlx5e_ptp *c, int txq_ix,
 				 struct mlx5e_txqsq *sq, int tc,
 				 struct mlx5e_ptpsq *ptpsq)
 {
+	struct mlx5_sq_bfreg *bfregs = c->mdev->mlx5e_res.hw_objs.bfregs;
 	void *sqc_wq               = MLX5_ADDR_OF(sqc, param->sqc, wq);
 	struct mlx5_core_dev *mdev = c->mdev;
 	struct mlx5_wq_cyc *wq = &sq->wq;
@@ -334,7 +335,7 @@ static int mlx5e_ptp_alloc_txqsq(struct mlx5e_ptp *c, int txq_ix,
 	sq->mdev      = mdev;
 	sq->ch_ix     = MLX5E_PTP_CHANNEL_IX;
 	sq->txq_ix    = txq_ix;
-	sq->uar_map   = mdev->mlx5e_res.hw_objs.bfreg.map;
+	sq->uar_map   = bfregs[param->db_ix].map;
 	sq->min_inline_mode = params->tx_min_inline_mode;
 	sq->hw_mtu    = MLX5E_SW2HW_MTU(params, params->sw_mtu);
 	sq->stats     = &c->priv->ptp_stats.sq[tc];
@@ -577,6 +578,7 @@ static int mlx5e_ptp_open_tx_cqs(struct mlx5e_ptp *c,
 	ccp.ch_stats = c->stats;
 	ccp.napi     = &c->napi;
 	ccp.ix       = MLX5E_PTP_CHANNEL_IX;
+	ccp.db_ix    = MLX5_DEFAULT_DOORBELL_IX;
 
 	cq_param = &cparams->txq_sq_param.cqp;
 
@@ -626,6 +628,7 @@ static int mlx5e_ptp_open_rx_cq(struct mlx5e_ptp *c,
 	ccp.ch_stats = c->stats;
 	ccp.napi     = &c->napi;
 	ccp.ix       = MLX5E_PTP_CHANNEL_IX;
+	ccp.db_ix    = MLX5_DEFAULT_DOORBELL_IX;
 
 	cq_param = &cparams->rq_param.cqp;
 
@@ -650,7 +653,7 @@ static void mlx5e_ptp_build_sq_param(struct mlx5_core_dev *mdev,
 	void *sqc = param->sqc;
 	void *wq;
 
-	mlx5e_build_sq_param_common(mdev, param);
+	mlx5e_build_sq_param_common(mdev, MLX5_DEFAULT_DOORBELL_IX, param);
 
 	wq = MLX5_ADDR_OF(sqc, sqc, wq);
 	MLX5_SET(wq, wq, log_wq_sz, params->log_sq_size);

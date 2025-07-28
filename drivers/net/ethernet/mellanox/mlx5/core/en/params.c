@@ -611,6 +611,7 @@ void mlx5e_build_create_cq_param(struct mlx5e_create_cq_param *ccp, struct mlx5e
 		.ch_stats = c->stats,
 		.node = cpu_to_node(c->cpu),
 		.ix = c->vec_ix,
+		.db_ix = mlx5e_get_doorbell_index(c->mdev, c->vec_ix),
 	};
 }
 
@@ -983,6 +984,7 @@ void mlx5e_build_tx_cq_param(struct mlx5_core_dev *mdev,
 }
 
 void mlx5e_build_sq_param_common(struct mlx5_core_dev *mdev,
+				 unsigned int db_ix,
 				 struct mlx5e_sq_param *param)
 {
 	void *sqc = param->sqc;
@@ -992,10 +994,11 @@ void mlx5e_build_sq_param_common(struct mlx5_core_dev *mdev,
 	MLX5_SET(wq, wq, pd,            mdev->mlx5e_res.hw_objs.pdn);
 
 	param->wq.buf_numa_node = dev_to_node(mlx5_core_dma_dev(mdev));
+	param->db_ix = db_ix;
 }
 
 void mlx5e_build_sq_param(struct mlx5_core_dev *mdev,
-			  struct mlx5e_params *params,
+			  struct mlx5e_params *params, unsigned int db_ix,
 			  struct mlx5e_sq_param *param)
 {
 	void *sqc = param->sqc;
@@ -1004,7 +1007,7 @@ void mlx5e_build_sq_param(struct mlx5_core_dev *mdev,
 
 	allow_swp = mlx5_geneve_tx_allowed(mdev) ||
 		    (mlx5_ipsec_device_caps(mdev) & MLX5_IPSEC_CAP_CRYPTO);
-	mlx5e_build_sq_param_common(mdev, param);
+	mlx5e_build_sq_param_common(mdev, db_ix, param);
 	MLX5_SET(wq, wq, log_wq_sz, params->log_sq_size);
 	MLX5_SET(sqc, sqc, allow_swp, allow_swp);
 	param->is_mpw = MLX5E_GET_PFLAG(params, MLX5E_PFLAG_SKB_TX_MPWQE);
@@ -1198,12 +1201,13 @@ static u8 mlx5e_build_async_icosq_log_wq_sz(struct mlx5_core_dev *mdev)
 
 static void mlx5e_build_icosq_param(struct mlx5_core_dev *mdev,
 				    u8 log_wq_size,
+				    unsigned int db_ix,
 				    struct mlx5e_sq_param *param)
 {
 	void *sqc = param->sqc;
 	void *wq = MLX5_ADDR_OF(sqc, sqc, wq);
 
-	mlx5e_build_sq_param_common(mdev, param);
+	mlx5e_build_sq_param_common(mdev, db_ix, param);
 
 	MLX5_SET(wq, wq, log_wq_sz, log_wq_size);
 	MLX5_SET(sqc, sqc, reg_umr, MLX5_CAP_ETH(mdev, reg_umr_sq));
@@ -1212,12 +1216,13 @@ static void mlx5e_build_icosq_param(struct mlx5_core_dev *mdev,
 
 static void mlx5e_build_async_icosq_param(struct mlx5_core_dev *mdev,
 					  u8 log_wq_size,
+					  unsigned int db_ix,
 					  struct mlx5e_sq_param *param)
 {
 	void *sqc = param->sqc;
 	void *wq = MLX5_ADDR_OF(sqc, sqc, wq);
 
-	mlx5e_build_sq_param_common(mdev, param);
+	mlx5e_build_sq_param_common(mdev, db_ix, param);
 	param->stop_room = mlx5e_stop_room_for_wqe(mdev, 1); /* for XSK NOP */
 	param->is_tls = mlx5e_is_ktls_rx(mdev);
 	if (param->is_tls)
@@ -1229,20 +1234,36 @@ static void mlx5e_build_async_icosq_param(struct mlx5_core_dev *mdev,
 
 void mlx5e_build_xdpsq_param(struct mlx5_core_dev *mdev,
 			     struct mlx5e_params *params,
-			     struct mlx5e_xsk_param *xsk,
+			     unsigned int db_ix,
 			     struct mlx5e_sq_param *param)
 {
 	void *sqc = param->sqc;
 	void *wq = MLX5_ADDR_OF(sqc, sqc, wq);
 
-	mlx5e_build_sq_param_common(mdev, param);
+	mlx5e_build_sq_param_common(mdev, db_ix, param);
 	MLX5_SET(wq, wq, log_wq_sz, params->log_sq_size);
 	param->is_mpw = MLX5E_GET_PFLAG(params, MLX5E_PFLAG_XDP_TX_MPWQE);
 	mlx5e_build_tx_cq_param(mdev, params, &param->cqp);
 }
 
+unsigned int mlx5e_get_doorbell_index(struct mlx5_core_dev *mdev,
+				      unsigned int vec_ix)
+{
+	unsigned int num_doorbells = mdev->mlx5e_res.hw_objs.num_bfregs;
+
+	if (num_doorbells == 1)
+		return MLX5_DEFAULT_DOORBELL_IX;
+
+	/* With more than one doorbell, round-robin between doorbells
+	 * [1..num_doorbells-1], leaving doorbell 0 for all SQs not associated
+	 * with channels.
+	 */
+	return 1 + vec_ix % (num_doorbells - 1);
+}
+
 int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 			      struct mlx5e_params *params,
+			      unsigned int db_ix,
 			      struct mlx5e_channel_param *cparam)
 {
 	u8 icosq_log_wq_sz, async_icosq_log_wq_sz;
@@ -1255,10 +1276,12 @@ int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 	icosq_log_wq_sz = mlx5e_build_icosq_log_wq_sz(mdev, params, &cparam->rq);
 	async_icosq_log_wq_sz = mlx5e_build_async_icosq_log_wq_sz(mdev);
 
-	mlx5e_build_sq_param(mdev, params, &cparam->txq_sq);
-	mlx5e_build_xdpsq_param(mdev, params, NULL, &cparam->xdp_sq);
-	mlx5e_build_icosq_param(mdev, icosq_log_wq_sz, &cparam->icosq);
-	mlx5e_build_async_icosq_param(mdev, async_icosq_log_wq_sz, &cparam->async_icosq);
+	mlx5e_build_sq_param(mdev, params, db_ix, &cparam->txq_sq);
+	mlx5e_build_xdpsq_param(mdev, params, db_ix, &cparam->xdp_sq);
+	mlx5e_build_icosq_param(mdev, icosq_log_wq_sz, db_ix,
+				&cparam->icosq);
+	mlx5e_build_async_icosq_param(mdev, async_icosq_log_wq_sz, db_ix,
+				      &cparam->async_icosq);
 
 	return 0;
 }
