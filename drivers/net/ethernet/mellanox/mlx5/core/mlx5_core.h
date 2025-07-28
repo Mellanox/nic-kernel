@@ -496,6 +496,8 @@ static inline int mlx5_max_eq_cap_get(const struct mlx5_core_dev *dev)
 	return 1 << MLX5_CAP_GEN(dev, log_max_eq);
 }
 
+#define MLX5_DEFAULT_DOORBELL_IX 0
+
 static inline bool mlx5_pcie_cong_event_supported(struct mlx5_core_dev *dev)
 {
 	u64 features = MLX5_CAP_GEN_2_64(dev, general_obj_types_127_64);

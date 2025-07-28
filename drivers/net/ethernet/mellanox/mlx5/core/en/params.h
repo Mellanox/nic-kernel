@@ -34,6 +34,7 @@ struct mlx5e_sq_param {
 	bool                       is_mpw;
 	bool                       is_tls;
 	u16                        stop_room;
+	unsigned int               db_ix;
 };
 
 struct mlx5e_channel_param {
@@ -123,18 +124,23 @@ int mlx5e_build_rq_param(struct mlx5_core_dev *mdev,
 void mlx5e_build_drop_rq_param(struct mlx5_core_dev *mdev,
 			       struct mlx5e_rq_param *param);
 void mlx5e_build_sq_param_common(struct mlx5_core_dev *mdev,
+				 unsigned int db_ix,
 				 struct mlx5e_sq_param *param);
 void mlx5e_build_sq_param(struct mlx5_core_dev *mdev,
-			  struct mlx5e_params *params,
+			  struct mlx5e_params *params, unsigned int db_ix,
 			  struct mlx5e_sq_param *param);
 void mlx5e_build_tx_cq_param(struct mlx5_core_dev *mdev,
 			     struct mlx5e_params *params,
 			     struct mlx5e_cq_param *param);
 void mlx5e_build_xdpsq_param(struct mlx5_core_dev *mdev,
 			     struct mlx5e_params *params,
+			     unsigned int db_ix,
 			     struct mlx5e_sq_param *param);
+unsigned int mlx5e_get_doorbell_index(struct mlx5_core_dev *mdev,
+				      unsigned int vec_ix);
 int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 			      struct mlx5e_params *params,
+			      unsigned int db_ix,
 			      struct mlx5e_channel_param *cparam);
 
 u16 mlx5e_calc_sq_stop_room(struct mlx5_core_dev *mdev, struct mlx5e_params *params);
