@@ -749,9 +749,9 @@ static int create_cq_user(struct mlx5_ib_dev *dev, struct ib_udata *udata,
 
 	*cqe_size = ucmd.cqe_size;
 
-	cq->buf.umem =
-		ib_umem_get(&dev->ib_dev, ucmd.buf_addr,
-			    entries * ucmd.cqe_size, IB_ACCESS_LOCAL_WRITE);
+	cq->buf.umem = ib_umem_get_peer(&dev->ib_dev, ucmd.buf_addr,
+					entries * ucmd.cqe_size,
+					IB_ACCESS_LOCAL_WRITE, 0);
 	if (IS_ERR(cq->buf.umem)) {
 		err = PTR_ERR(cq->buf.umem);
 		return err;
@@ -1055,20 +1055,31 @@ err_cqb:
 	return err;
 }
 
-int mlx5_ib_destroy_cq(struct ib_cq *cq, struct ib_udata *udata)
+int mlx5_ib_pre_destroy_cq(struct ib_cq *cq)
 {
 	struct mlx5_ib_dev *dev = to_mdev(cq->device);
 	struct mlx5_ib_cq *mcq = to_mcq(cq);
+
+	return mlx5_core_destroy_cq(dev->mdev, &mcq->mcq);
+}
+
+void mlx5_ib_post_destroy_cq(struct ib_cq *cq)
+{
+	destroy_cq_kernel(to_mdev(cq->device), to_mcq(cq));
+}
+
+int mlx5_ib_destroy_cq(struct ib_cq *cq, struct ib_udata *udata)
+{
 	int ret;
 
-	ret = mlx5_core_destroy_cq(dev->mdev, &mcq->mcq);
+	ret = mlx5_ib_pre_destroy_cq(cq);
 	if (ret)
 		return ret;
 
 	if (udata)
-		destroy_cq_user(mcq, udata);
+		destroy_cq_user(to_mcq(cq), udata);
 	else
-		destroy_cq_kernel(dev, mcq);
+		mlx5_ib_post_destroy_cq(cq);
 	return 0;
 }
 
@@ -1177,9 +1188,9 @@ static int resize_user(struct mlx5_ib_dev *dev, struct mlx5_ib_cq *cq,
 	if (ucmd.cqe_size && SIZE_MAX / ucmd.cqe_size <= entries - 1)
 		return -EINVAL;
 
-	umem = ib_umem_get(&dev->ib_dev, ucmd.buf_addr,
-			   (size_t)ucmd.cqe_size * entries,
-			   IB_ACCESS_LOCAL_WRITE);
+	umem = ib_umem_get_peer(&dev->ib_dev, ucmd.buf_addr,
+				(size_t)ucmd.cqe_size * entries,
+				IB_ACCESS_LOCAL_WRITE, 0);
 	if (IS_ERR(umem)) {
 		err = PTR_ERR(umem);
 		return err;

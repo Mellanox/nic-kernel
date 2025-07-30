@@ -11022,7 +11022,8 @@ F:	Documentation/ABI/testing/debugfs-hisi-zip
 F:	drivers/crypto/hisilicon/zip/
 
 HMM - Heterogeneous Memory Management
-M:	Jérôme Glisse <jglisse@redhat.com>
+M:	Jason Gunthorpe <jgg@nvidia.com>
+M:	Leon Romanovsky <leonro@nvidia.com>
 L:	linux-mm@kvack.org
 S:	Maintained
 F:	Documentation/mm/hmm.rst
@@ -20210,12 +20211,6 @@ S:	Maintained
 F:	drivers/firmware/qemu_fw_cfg.c
 F:	include/uapi/linux/qemu_fw_cfg.h
 
-QIB DRIVER
-M:	Dennis Dalessandro <dennis.dalessandro@cornelisnetworks.com>
-L:	linux-rdma@vger.kernel.org
-S:	Supported
-F:	drivers/infiniband/hw/qib/
-
 QLOGIC QL41xxx FCOE DRIVER
 M:	Saurav Kashyap <skashyap@marvell.com>
 M:	Javed Hasan <jhasan@marvell.com>
@@ -23014,7 +23009,7 @@ S:	Maintained
 F:	drivers/leds/leds-net48xx.c
 
 SOFT-IWARP DRIVER (siw)
-M:	Bernard Metzler <bmt@zurich.ibm.com>
+M:	Bernard Metzler <bernard.metzler@linux.dev>
 L:	linux-rdma@vger.kernel.org
 S:	Supported
 F:	drivers/infiniband/sw/siw/
@@ -26108,7 +26103,6 @@ S:	Maintained
 F:	drivers/vfio/platform/
 
 VFIO QAT PCI DRIVER
-M:	Xin Zeng <xin.zeng@intel.com>
 M:	Giovanni Cabiddu <giovanni.cabiddu@intel.com>
 L:	kvm@vger.kernel.org
 L:	qat-linux@intel.com

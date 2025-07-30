@@ -1000,8 +1000,7 @@ static int mlx5_init_once(struct mlx5_core_dev *dev)
 
 	dev->priv.devc = mlx5_devcom_register_device(dev);
 	if (!dev->priv.devc)
-		mlx5_core_warn(dev, "failed to register devcom device %pe\n",
-			       dev->priv.devc);
+		mlx5_core_warn(dev, "failed to register devcom device\n");
 	mlx5_register_hca_devcom_comp(dev);
 
 	err = mlx5_query_board_id(dev);
@@ -1102,6 +1101,7 @@ static int mlx5_init_once(struct mlx5_core_dev *dev)
 	}
 
 	dev->dm = mlx5_dm_create(dev);
+	dev->st = mlx5_st_create(dev);
 	dev->tracer = mlx5_fw_tracer_create(dev);
 	dev->hv_vhca = mlx5_hv_vhca_create(dev);
 	dev->rsc_dump = mlx5_rsc_dump_create(dev);
@@ -1150,6 +1150,7 @@ static void mlx5_cleanup_once(struct mlx5_core_dev *dev)
 	mlx5_rsc_dump_destroy(dev);
 	mlx5_hv_vhca_destroy(dev->hv_vhca);
 	mlx5_fw_tracer_destroy(dev->tracer);
+	mlx5_st_destroy(dev);
 	mlx5_dm_cleanup(dev);
 	mlx5_fs_core_free(dev);
 	mlx5_sf_table_cleanup(dev);
