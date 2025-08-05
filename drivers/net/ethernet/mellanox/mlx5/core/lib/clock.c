@@ -343,7 +343,7 @@ static u64 mlx5_read_time(struct mlx5_core_dev *dev,
 			   (u64)timer_l | (u64)timer_h1 << 32;
 }
 
-static u64 read_internal_timer(const struct cyclecounter *cc)
+static u64 read_internal_timer(struct cyclecounter *cc)
 {
 	struct mlx5_timer *timer = container_of(cc, struct mlx5_timer, cycles);
 	struct mlx5_clock *clock = container_of(timer, struct mlx5_clock, timer);
@@ -1353,7 +1353,7 @@ static void mlx5_shared_clock_register(struct mlx5_core_dev *mdev, u64 key)
 	mdev->clock_state->compdev = mlx5_devcom_register_component(mdev->priv.devc,
 								    MLX5_DEVCOM_SHARED_CLOCK,
 								    key, NULL, mdev);
-	if (IS_ERR(mdev->clock_state->compdev))
+	if (!mdev->clock_state->compdev)
 		return;
 
 	mlx5_devcom_comp_lock(mdev->clock_state->compdev);

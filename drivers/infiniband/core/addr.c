@@ -323,12 +323,31 @@ static int ib_nl_fetch_ha(struct rdma_dev_addr *dev_addr,
 	return ib_nl_ip_send_msg(dev_addr, daddr, seq, family);
 }
 
+static bool is_dst_local(const struct dst_entry *dst)
+{
+	if (dst->ops->family == AF_INET)
+		return !!(dst_rtable(dst)->rt_type & RTN_LOCAL);
+	else if (dst->ops->family == AF_INET6)
+		return !!(dst_rt6_info(dst)->rt6i_flags & RTF_LOCAL);
+	else
+		return false;
+}
+
 static int dst_fetch_ha(const struct dst_entry *dst,
 			struct rdma_dev_addr *dev_addr,
 			const void *daddr)
 {
 	struct neighbour *n;
 	int ret = 0;
+
+	if (is_dst_local(dst)) {
+		/* When the destination is local entry, destination
+		 * is same as that of the source. Skip the neighbour lookup.
+		 */
+		memcpy(dev_addr->dst_dev_addr, dev_addr->src_dev_addr,
+		       MAX_ADDR_LEN);
+		return 0;
+	}
 
 	n = dst_neigh_lookup(dst, daddr);
 	if (!n)
@@ -454,42 +473,10 @@ static int addr_resolve_neigh(const struct dst_entry *dst,
 {
 	int ret = 0;
 
-	if (ndev_flags & IFF_LOOPBACK) {
+	if (ndev_flags & IFF_LOOPBACK)
 		memcpy(addr->dst_dev_addr, addr->src_dev_addr, MAX_ADDR_LEN);
-	} else {
-		if (!(ndev_flags & IFF_NOARP)) {
-			/* If the device doesn't do ARP internally */
-			ret = fetch_ha(dst, addr, dst_in, seq);
-		}
-	}
-	return ret;
-}
-
-static int copy_src_l2_addr(struct rdma_dev_addr *dev_addr,
-			    const struct sockaddr *dst_in,
-			    const struct dst_entry *dst,
-			    const struct net_device *ndev)
-{
-	int ret = 0;
-
-	if (dst->dev->flags & IFF_LOOPBACK)
-		ret = rdma_translate_ip(dst_in, dev_addr);
 	else
-		rdma_copy_src_l2_addr(dev_addr, dst->dev);
-
-	/*
-	 * If there's a gateway and type of device not ARPHRD_INFINIBAND,
-	 * we're definitely in RoCE v2 (as RoCE v1 isn't routable) set the
-	 * network type accordingly.
-	 */
-	if (has_gateway(dst, dst_in->sa_family) &&
-	    ndev->type != ARPHRD_INFINIBAND)
-		dev_addr->network = dst_in->sa_family == AF_INET ?
-						RDMA_NETWORK_IPV4 :
-						RDMA_NETWORK_IPV6;
-	else
-		dev_addr->network = RDMA_NETWORK_IB;
-
+		ret = fetch_ha(dst, addr, dst_in, seq);
 	return ret;
 }
 
@@ -503,6 +490,7 @@ static int rdma_set_src_addr_rcu(struct rdma_dev_addr *dev_addr,
 	*ndev_flags = ndev->flags;
 	/* A physical device must be the RDMA device to use */
 	if (ndev->flags & IFF_LOOPBACK) {
+		int ret;
 		/*
 		 * RDMA (IB/RoCE, iWarp) doesn't run on lo interface or
 		 * loopback IP address. So if route is resolved to loopback
@@ -512,9 +500,29 @@ static int rdma_set_src_addr_rcu(struct rdma_dev_addr *dev_addr,
 		ndev = rdma_find_ndev_for_src_ip_rcu(dev_net(ndev), dst_in);
 		if (IS_ERR(ndev))
 			return -ENODEV;
+		ret = rdma_translate_ip(dst_in, dev_addr);
+		if (ret)
+			return ret;
+	} else if (is_dst_local(dst)) {
+		ndev = rdma_find_ndev_for_src_ip_rcu(dev_net(ndev), dst_in);
+		if (IS_ERR(ndev))
+			return PTR_ERR(ndev);
 	}
+	rdma_copy_src_l2_addr(dev_addr, ndev);
+	/*
+	 * If there's a gateway and type of device not ARPHRD_INFINIBAND,
+	 * we're definitely in RoCE v2 (as RoCE v1 isn't routable) set the
+	 * network type accordingly.
+	 */
+	if (has_gateway(dst, dst_in->sa_family) &&
+	    ndev->type != ARPHRD_INFINIBAND)
+		dev_addr->network = dst_in->sa_family == AF_INET ?
+						RDMA_NETWORK_IPV4 :
+						RDMA_NETWORK_IPV6;
+	else
+		dev_addr->network = RDMA_NETWORK_IB;
 
-	return copy_src_l2_addr(dev_addr, dst_in, dst, ndev);
+	return 0;
 }
 
 static int set_addr_netns_by_gid_rcu(struct rdma_dev_addr *addr)
