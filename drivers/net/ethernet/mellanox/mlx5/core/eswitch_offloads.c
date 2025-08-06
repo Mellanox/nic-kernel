@@ -2373,7 +2373,20 @@ static int esw_offloads_start(struct mlx5_eswitch *esw,
 	return 0;
 }
 
-static int mlx5_esw_offloads_rep_init(struct mlx5_eswitch *esw, const struct mlx5_vport *vport)
+void mlx5_esw_offloads_rep_remove(struct mlx5_eswitch *esw,
+				  const struct mlx5_vport *vport)
+{
+	struct mlx5_eswitch_rep *rep = xa_load(&esw->offloads.vport_reps,
+					       vport->vport);
+
+	if (!rep)
+		return;
+	xa_erase(&esw->offloads.vport_reps, vport->vport);
+	kfree(rep);
+}
+
+int mlx5_esw_offloads_rep_add(struct mlx5_eswitch *esw,
+			      const struct mlx5_vport *vport)
 {
 	struct mlx5_eswitch_rep *rep;
 	int rep_type;
@@ -2385,9 +2398,19 @@ static int mlx5_esw_offloads_rep_init(struct mlx5_eswitch *esw, const struct mlx
 
 	rep->vport = vport->vport;
 	rep->vport_index = vport->index;
-	for (rep_type = 0; rep_type < NUM_REP_TYPES; rep_type++)
-		atomic_set(&rep->rep_data[rep_type].state, REP_UNREGISTERED);
-
+	for (rep_type = 0; rep_type < NUM_REP_TYPES; rep_type++) {
+		if (!esw->offloads.rep_ops[rep_type]) {
+			atomic_set(&rep->rep_data[rep_type].state,
+				   REP_UNREGISTERED);
+			continue;
+		}
+		/* Dynamic/delegated vports add their representors after
+		 * mlx5_eswitch_register_vport_reps, so mark them as registered
+		 * for them to be loaded later with the others.
+		 */
+		rep->esw = esw;
+		atomic_set(&rep->rep_data[rep_type].state, REP_REGISTERED);
+	}
 	err = xa_insert(&esw->offloads.vport_reps, rep->vport, rep, GFP_KERNEL);
 	if (err)
 		goto insert_err;
@@ -2425,7 +2448,7 @@ static int esw_offloads_init_reps(struct mlx5_eswitch *esw)
 	xa_init(&esw->offloads.vport_reps);
 
 	mlx5_esw_for_each_vport(esw, i, vport) {
-		err = mlx5_esw_offloads_rep_init(esw, vport);
+		err = mlx5_esw_offloads_rep_add(esw, vport);
 		if (err)
 			goto err;
 	}
@@ -3533,6 +3556,8 @@ int esw_offloads_enable(struct mlx5_eswitch *esw)
 	int err;
 
 	mutex_init(&esw->offloads.termtbl_mutex);
+	mlx5_esw_adjacent_vhcas_setup(esw);
+
 	err = mlx5_rdma_enable_roce(esw->dev);
 	if (err)
 		goto err_roce;
@@ -3597,6 +3622,7 @@ err_vport_metadata:
 err_metadata:
 	mlx5_rdma_disable_roce(esw->dev);
 err_roce:
+	mlx5_esw_adjacent_vhcas_cleanup(esw);
 	mutex_destroy(&esw->offloads.termtbl_mutex);
 	return err;
 }
@@ -3630,6 +3656,7 @@ void esw_offloads_disable(struct mlx5_eswitch *esw)
 	mapping_destroy(esw->offloads.reg_c0_obj_pool);
 	esw_offloads_metadata_uninit(esw);
 	mlx5_rdma_disable_roce(esw->dev);
+	mlx5_esw_adjacent_vhcas_cleanup(esw);
 	mutex_destroy(&esw->offloads.termtbl_mutex);
 }
 
@@ -4161,23 +4188,28 @@ u32 mlx5_eswitch_get_vport_metadata_for_match(struct mlx5_eswitch *esw,
 }
 EXPORT_SYMBOL(mlx5_eswitch_get_vport_metadata_for_match);
 
-int mlx5_esw_vport_vhca_id_set(struct mlx5_eswitch *esw, u16 vport_num)
+int mlx5_esw_vport_vhca_id_map(struct mlx5_eswitch *esw,
+			       struct mlx5_vport *vport)
 {
 	u16 *old_entry, *vhca_map_entry, vhca_id;
-	int err;
 
-	err = mlx5_vport_get_vhca_id(esw->dev, vport_num, &vhca_id);
-	if (err) {
-		esw_warn(esw->dev, "Getting vhca_id for vport failed (vport=%u,err=%d)\n",
-			 vport_num, err);
-		return err;
+	if (WARN_ONCE(MLX5_VPORT_INVAL_VHCA_ID(vport),
+		      "vport %d vhca_id is not set", vport->vport)) {
+		int err;
+
+		err = mlx5_vport_get_vhca_id(vport->dev, vport->vport,
+					     &vhca_id);
+		if (err)
+			return err;
+		vport->vhca_id = vhca_id;
 	}
 
+	vhca_id = vport->vhca_id;
 	vhca_map_entry = kmalloc(sizeof(*vhca_map_entry), GFP_KERNEL);
 	if (!vhca_map_entry)
 		return -ENOMEM;
 
-	*vhca_map_entry = vport_num;
+	*vhca_map_entry = vport->vport;
 	old_entry = xa_store(&esw->offloads.vhca_map, vhca_id, vhca_map_entry, GFP_KERNEL);
 	if (xa_is_err(old_entry)) {
 		kfree(vhca_map_entry);
@@ -4187,17 +4219,12 @@ int mlx5_esw_vport_vhca_id_set(struct mlx5_eswitch *esw, u16 vport_num)
 	return 0;
 }
 
-void mlx5_esw_vport_vhca_id_clear(struct mlx5_eswitch *esw, u16 vport_num)
+void mlx5_esw_vport_vhca_id_unmap(struct mlx5_eswitch *esw,
+				  struct mlx5_vport *vport)
 {
-	u16 *vhca_map_entry, vhca_id;
-	int err;
+	u16 *vhca_map_entry;
 
-	err = mlx5_vport_get_vhca_id(esw->dev, vport_num, &vhca_id);
-	if (err)
-		esw_warn(esw->dev, "Getting vhca_id for vport failed (vport=%hu,err=%d)\n",
-			 vport_num, err);
-
-	vhca_map_entry = xa_erase(&esw->offloads.vhca_map, vhca_id);
+	vhca_map_entry = xa_erase(&esw->offloads.vhca_map, vport->vhca_id);
 	kfree(vhca_map_entry);
 }
 
