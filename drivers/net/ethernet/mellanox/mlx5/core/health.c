@@ -709,8 +709,8 @@ void mlx5_fw_reporters_create(struct mlx5_core_dev *dev)
 	health->fw_reporter =
 		devl_health_reporter_create(devlink, fw_ops, 0, dev);
 	if (IS_ERR(health->fw_reporter))
-		mlx5_core_warn(dev, "Failed to create fw reporter, err = %ld\n",
-			       PTR_ERR(health->fw_reporter));
+		mlx5_core_warn(dev, "Failed to create fw reporter, err = %pe\n",
+			       health->fw_reporter);
 
 	health->fw_fatal_reporter =
 		devl_health_reporter_create(devlink,
@@ -718,8 +718,8 @@ void mlx5_fw_reporters_create(struct mlx5_core_dev *dev)
 					    grace_period,
 					    dev);
 	if (IS_ERR(health->fw_fatal_reporter))
-		mlx5_core_warn(dev, "Failed to create fw fatal reporter, err = %ld\n",
-			       PTR_ERR(health->fw_fatal_reporter));
+		mlx5_core_warn(dev, "Failed to create fw fatal reporter, err = %pe\n",
+			       health->fw_fatal_reporter);
 }
 
 static void mlx5_fw_reporters_destroy(struct mlx5_core_dev *dev)
