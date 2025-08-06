@@ -102,6 +102,8 @@ struct mlx5_esw_sched_node {
 	u8 level;
 	/* Valid only when this node represents a traffic class. */
 	u8 tc;
+	/* Valid only for a TC arbiter node or vport TC arbiter. */
+	u32 tc_bw[DEVLINK_RATE_TCS_MAX];
 };
 
 static void esw_qos_node_attach_to_parent(struct mlx5_esw_sched_node *node)
@@ -608,10 +610,7 @@ static void
 esw_qos_tc_arbiter_get_bw_shares(struct mlx5_esw_sched_node *tc_arbiter_node,
 				 u32 *tc_bw)
 {
-	struct mlx5_esw_sched_node *vports_tc_node;
-
-	list_for_each_entry(vports_tc_node, &tc_arbiter_node->children, entry)
-		tc_bw[vports_tc_node->tc] = vports_tc_node->bw_share;
+	memcpy(tc_bw, tc_arbiter_node->tc_bw, sizeof(tc_arbiter_node->tc_bw));
 }
 
 static void
@@ -628,6 +627,7 @@ esw_qos_set_tc_arbiter_bw_shares(struct mlx5_esw_sched_node *tc_arbiter_node,
 		u8 tc = vports_tc_node->tc;
 		u32 bw_share;
 
+		tc_arbiter_node->tc_bw[tc] = tc_bw[tc];
 		bw_share = tc_bw[tc] * fw_max_bw_share;
 		bw_share = esw_qos_calc_bw_share(bw_share, divider,
 						 fw_max_bw_share);
@@ -1142,8 +1142,10 @@ static int mlx5_esw_qos_vport_enable(struct mlx5_vport *vport, enum sched_node_t
 
 	parent = parent ?: esw->qos.node0;
 	sched_node = __esw_qos_alloc_node(parent->esw, 0, type, parent);
-	if (!sched_node)
+	if (!sched_node) {
+		esw_qos_put(esw);
 		return -ENOMEM;
+	}
 
 	sched_node->max_rate = max_rate;
 	sched_node->min_rate = min_rate;
@@ -1151,11 +1153,25 @@ static int mlx5_esw_qos_vport_enable(struct mlx5_vport *vport, enum sched_node_t
 	vport->qos.sched_node = sched_node;
 	err = esw_qos_vport_enable(vport, type, parent, extack);
 	if (err) {
+		__esw_qos_free_node(sched_node);
 		esw_qos_put(esw);
 		vport->qos.sched_node = NULL;
 	}
 
 	return err;
+}
+
+static void mlx5_esw_qos_vport_disable_locked(struct mlx5_vport *vport)
+{
+	struct mlx5_eswitch *esw = vport->dev->priv.eswitch;
+
+	esw_assert_qos_lock_held(esw);
+	if (!vport->qos.sched_node)
+		return;
+
+	esw_qos_vport_disable(vport, NULL);
+	mlx5_esw_qos_vport_qos_free(vport);
+	esw_qos_put(esw);
 }
 
 void mlx5_esw_qos_vport_disable(struct mlx5_vport *vport)
@@ -1171,9 +1187,7 @@ void mlx5_esw_qos_vport_disable(struct mlx5_vport *vport)
 	parent = vport->qos.sched_node->parent;
 	WARN(parent != esw->qos.node0, "Disabling QoS on port before detaching it from node");
 
-	esw_qos_vport_disable(vport, NULL);
-	mlx5_esw_qos_vport_qos_free(vport);
-	esw_qos_put(esw);
+	mlx5_esw_qos_vport_disable_locked(vport);
 unlock:
 	esw_qos_unlock(esw);
 }
@@ -1263,8 +1277,9 @@ static int esw_qos_vport_update(struct mlx5_vport *vport,
 				struct mlx5_esw_sched_node *parent,
 				struct netlink_ext_ack *extack)
 {
-	struct mlx5_esw_sched_node *curr_parent = vport->qos.sched_node->parent;
-	enum sched_node_type curr_type = vport->qos.sched_node->type;
+	struct mlx5_esw_sched_node *vport_node = vport->qos.sched_node;
+	struct mlx5_esw_sched_node *curr_parent = vport_node->parent;
+	enum sched_node_type curr_type = vport_node->type;
 	u32 curr_tc_bw[DEVLINK_RATE_TCS_MAX] = {0};
 	int err;
 
@@ -1277,10 +1292,8 @@ static int esw_qos_vport_update(struct mlx5_vport *vport,
 	if (err)
 		return err;
 
-	if (curr_type == SCHED_NODE_TYPE_TC_ARBITER_TSAR && curr_type == type) {
-		esw_qos_tc_arbiter_get_bw_shares(vport->qos.sched_node,
-						 curr_tc_bw);
-	}
+	if (curr_type == SCHED_NODE_TYPE_TC_ARBITER_TSAR && curr_type == type)
+		esw_qos_tc_arbiter_get_bw_shares(vport_node, curr_tc_bw);
 
 	esw_qos_vport_disable(vport, extack);
 
@@ -1675,6 +1688,23 @@ static bool esw_qos_tc_bw_disabled(u32 *tc_bw)
 	return true;
 }
 
+static bool esw_vport_qos_check_and_disable(struct mlx5_vport *vport,
+					    struct devlink_rate *parent,
+					    u64 tx_max, u64 tx_share,
+					    u32 *tc_bw)
+{
+	struct mlx5_eswitch *esw = vport->dev->priv.eswitch;
+
+	if (parent || tx_max || tx_share || !esw_qos_tc_bw_disabled(tc_bw))
+		return false;
+
+	esw_qos_lock(esw);
+	mlx5_esw_qos_vport_disable_locked(vport);
+	esw_qos_unlock(esw);
+
+	return true;
+}
+
 int mlx5_esw_qos_init(struct mlx5_eswitch *esw)
 {
 	if (esw->qos.domain)
@@ -1702,6 +1732,11 @@ int mlx5_esw_devlink_rate_leaf_tx_share_set(struct devlink_rate *rate_leaf, void
 	if (!mlx5_esw_allowed(esw))
 		return -EPERM;
 
+	if (esw_vport_qos_check_and_disable(vport, rate_leaf->parent,
+					    rate_leaf->tx_max, tx_share,
+					    rate_leaf->tc_bw))
+		return 0;
+
 	err = esw_qos_devlink_rate_to_mbps(vport->dev, "tx_share", &tx_share, extack);
 	if (err)
 		return err;
@@ -1722,6 +1757,11 @@ int mlx5_esw_devlink_rate_leaf_tx_max_set(struct devlink_rate *rate_leaf, void *
 	esw = vport->dev->priv.eswitch;
 	if (!mlx5_esw_allowed(esw))
 		return -EPERM;
+
+	if (esw_vport_qos_check_and_disable(vport, rate_leaf->parent, tx_max,
+					    rate_leaf->tx_share,
+					    rate_leaf->tc_bw))
+		return 0;
 
 	err = esw_qos_devlink_rate_to_mbps(vport->dev, "tx_max", &tx_max, extack);
 	if (err)
@@ -1747,6 +1787,11 @@ int mlx5_esw_devlink_rate_leaf_tc_bw_set(struct devlink_rate *rate_leaf,
 	esw = vport->dev->priv.eswitch;
 	if (!mlx5_esw_allowed(esw))
 		return -EPERM;
+
+	if (esw_vport_qos_check_and_disable(vport, rate_leaf->parent,
+					    rate_leaf->tx_max,
+					    rate_leaf->tx_share, tc_bw))
+		return 0;
 
 	disable = esw_qos_tc_bw_disabled(tc_bw);
 	esw_qos_lock(esw);
@@ -1928,6 +1973,11 @@ int mlx5_esw_devlink_rate_leaf_parent_set(struct devlink_rate *devlink_rate,
 {
 	struct mlx5_esw_sched_node *node;
 	struct mlx5_vport *vport = priv;
+
+	if (esw_vport_qos_check_and_disable(vport, parent, devlink_rate->tx_max,
+					    devlink_rate->tx_share,
+					    devlink_rate->tc_bw))
+		return 0;
 
 	if (!parent)
 		return mlx5_esw_qos_vport_update_parent(vport, NULL, extack);
