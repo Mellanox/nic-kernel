@@ -51,6 +51,7 @@ struct mlx5e_create_sq_param {
 	u32                         tisn;
 	u8                          tis_lst_sz;
 	u8                          min_inline_mode;
+	struct mlx5_sq_bfreg       *bfreg;
 };
 
 /* Striding RQ dynamic parameters */
@@ -132,7 +133,6 @@ void mlx5e_build_tx_cq_param(struct mlx5_core_dev *mdev,
 			     struct mlx5e_cq_param *param);
 void mlx5e_build_xdpsq_param(struct mlx5_core_dev *mdev,
 			     struct mlx5e_params *params,
-			     struct mlx5e_xsk_param *xsk,
 			     struct mlx5e_sq_param *param);
 int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 			      struct mlx5e_params *params,
