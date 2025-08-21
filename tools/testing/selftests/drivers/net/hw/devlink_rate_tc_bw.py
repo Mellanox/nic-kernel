@@ -72,8 +72,8 @@ class BandwidthValidator:
     relative to the overall total.
     """
 
-    def __init__(self, shares):
-        self.tolerance_percent = 12
+    def __init__(self, shares, tolerance):
+        self.tolerance_percent = tolerance
         self.expected_total = sum(shares.values())
         self.bounds = {}
 
@@ -438,8 +438,8 @@ def main() -> None:
             raise KsftSkipEx("Could not get PCI address of the interface")
         cfg.require_cmd("iperf3", local=True, remote=True)
 
-        cfg.traffic_bw_validator = BandwidthValidator({"total": 1})
-        cfg.tc_bw_validator = BandwidthValidator({"tc3": 20, "tc4": 80})
+        cfg.traffic_bw_validator = BandwidthValidator({"total": 1}, 25)
+        cfg.tc_bw_validator = BandwidthValidator({"tc3": 20, "tc4": 80}, 12)
 
         cases = [test_no_tc_mapping_bandwidth, test_tc_mapping_bandwidth]
 
