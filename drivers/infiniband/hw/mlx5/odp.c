@@ -97,22 +97,22 @@ struct mlx5_pagefault {
  * a pagefault. */
 #define MMU_NOTIFIER_TIMEOUT 1000
 
-#define MLX5_IMR_MTT_BITS (30 - PAGE_SHIFT)
-#define MLX5_IMR_MTT_SHIFT (MLX5_IMR_MTT_BITS + PAGE_SHIFT)
-#define MLX5_IMR_MTT_ENTRIES BIT_ULL(MLX5_IMR_MTT_BITS)
+#define MLX5_IMR_MTT_SHIFT ((TASK_SIZE > (1UL << 47)) ? 34 : 30)
 #define MLX5_IMR_MTT_SIZE BIT_ULL(MLX5_IMR_MTT_SHIFT)
+#define MLX5_IMR_MTT_BITS (MLX5_IMR_MTT_SHIFT - PAGE_SHIFT)
+#define MLX5_IMR_MTT_ENTRIES BIT_ULL(MLX5_IMR_MTT_BITS)
 #define MLX5_IMR_MTT_MASK (~(MLX5_IMR_MTT_SIZE - 1))
 
 #define MLX5_KSM_PAGE_SHIFT MLX5_IMR_MTT_SHIFT
 
 static u64 mlx5_imr_ksm_entries;
 
-static void populate_klm(struct mlx5_klm *pklm, size_t idx, size_t nentries,
+static void populate_ksm(struct mlx5_ksm *pksm, size_t idx, size_t nentries,
 			struct mlx5_ib_mr *imr, int flags)
 {
 	struct mlx5_core_dev *dev = mr_to_mdev(imr)->mdev;
-	struct mlx5_klm *end = pklm + nentries;
-	int step = MLX5_CAP_ODP(dev, mem_page_fault) ? MLX5_IMR_MTT_SIZE : 0;
+	struct mlx5_ksm *end = pksm + nentries;
+	u64 step = MLX5_CAP_ODP(dev, mem_page_fault) ? MLX5_IMR_MTT_SIZE : 0;
 	__be32 key = MLX5_CAP_ODP(dev, mem_page_fault) ?
 			     cpu_to_be32(imr->null_mmkey.key) :
 			     mr_to_mdev(imr)->mkeys.null_mkey;
@@ -120,10 +120,9 @@ static void populate_klm(struct mlx5_klm *pklm, size_t idx, size_t nentries,
 		MLX5_CAP_ODP(dev, mem_page_fault) ? idx * MLX5_IMR_MTT_SIZE : 0;
 
 	if (flags & MLX5_IB_UPD_XLT_ZAP) {
-		for (; pklm != end; pklm++, idx++, va += step) {
-			pklm->bcount = cpu_to_be32(MLX5_IMR_MTT_SIZE);
-			pklm->key = key;
-			pklm->va = cpu_to_be64(va);
+		for (; pksm != end; pksm++, idx++, va += step) {
+			pksm->key = key;
+			pksm->va = cpu_to_be64(va);
 		}
 		return;
 	}
@@ -147,16 +146,15 @@ static void populate_klm(struct mlx5_klm *pklm, size_t idx, size_t nentries,
 	 */
 	lockdep_assert_held(&to_ib_umem_odp(imr->umem)->umem_mutex);
 
-	for (; pklm != end; pklm++, idx++, va += step) {
+	for (; pksm != end; pksm++, idx++, va += step) {
 		struct mlx5_ib_mr *mtt = xa_load(&imr->implicit_children, idx);
 
-		pklm->bcount = cpu_to_be32(MLX5_IMR_MTT_SIZE);
 		if (mtt) {
-			pklm->key = cpu_to_be32(mtt->ibmr.lkey);
-			pklm->va = cpu_to_be64(idx * MLX5_IMR_MTT_SIZE);
+			pksm->key = cpu_to_be32(mtt->ibmr.lkey);
+			pksm->va = cpu_to_be64(idx * MLX5_IMR_MTT_SIZE);
 		} else {
-			pklm->key = key;
-			pklm->va = cpu_to_be64(va);
+			pksm->key = key;
+			pksm->va = cpu_to_be64(va);
 		}
 	}
 }
@@ -201,7 +199,7 @@ int mlx5_odp_populate_xlt(void *xlt, size_t idx, size_t nentries,
 			  struct mlx5_ib_mr *mr, int flags)
 {
 	if (flags & MLX5_IB_UPD_XLT_INDIRECT) {
-		populate_klm(xlt, idx, nentries, mr, flags);
+		populate_ksm(xlt, idx, nentries, mr, flags);
 		return 0;
 	} else {
 		return populate_mtt(xlt, idx, nentries, mr, flags);
