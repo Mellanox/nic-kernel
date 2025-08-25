@@ -32,6 +32,14 @@ Parameters
    * - ``max_macs``
      - driverinit
      - The range is between 1 and 2^31. Only power of 2 values are supported.
+   * - ``num_doorbells``
+     - driverinit
+     - This controls the number of channel doorbells used by the netdev. In all
+       cases, an additional doorbell is allocated and used for non-channel
+       communication (e.g. for PTP, HWS, etc.). Supported values are:
+       - 0: No channel-specific doorbells, use the global one for everything.
+       - [1, max_num_channels]: Spread netdev channels equally across these
+         doorbells.
 
 The ``mlx5`` driver also implements the following driver-specific
 parameters.

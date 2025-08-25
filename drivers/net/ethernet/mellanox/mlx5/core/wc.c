@@ -99,7 +99,7 @@ static int create_wc_cq(struct mlx5_wc_cq *cq, void *cqc_data)
 
 	MLX5_SET(cqc,   cqc, cq_period_mode, MLX5_CQ_PERIOD_MODE_START_FROM_EQE);
 	MLX5_SET(cqc,   cqc, c_eqn_or_apu_element, eqn);
-	MLX5_SET(cqc,   cqc, uar_page,      mdev->priv.uar->index);
+	MLX5_SET(cqc,   cqc, uar_page,      mdev->priv.bfreg.up->index);
 	MLX5_SET(cqc,   cqc, log_page_size, cq->wq_ctrl.buf.page_shift -
 					    MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET64(cqc, cqc, dbr_addr,      cq->wq_ctrl.db.dma);
@@ -121,7 +121,7 @@ static int mlx5_wc_create_cq(struct mlx5_core_dev *mdev, struct mlx5_wc_cq *cq)
 		return -ENOMEM;
 
 	MLX5_SET(cqc, cqc, log_cq_size, TEST_WC_LOG_CQ_SZ);
-	MLX5_SET(cqc, cqc, uar_page, mdev->priv.uar->index);
+	MLX5_SET(cqc, cqc, uar_page, mdev->priv.bfreg.up->index);
 	if (MLX5_CAP_GEN(mdev, cqe_128_always) && cache_line_size() >= 128)
 		MLX5_SET(cqc, cqc, cqe_sz, CQE_STRIDE_128_PAD);
 
@@ -255,18 +255,18 @@ err_create_wq_cyc:
 }
 
 static void mlx5_iowrite64_copy(struct mlx5_wc_sq *sq, __be32 mmio_wqe[16],
-				size_t mmio_wqe_size)
+				size_t mmio_wqe_size, unsigned int *offset)
 {
 #ifdef CONFIG_KERNEL_MODE_NEON
 	if (cpu_has_neon()) {
 		kernel_neon_begin();
-		mlx5_wc_neon_iowrite64_copy(sq->bfreg.map + sq->bfreg.offset,
+		mlx5_wc_neon_iowrite64_copy(sq->bfreg.map + *offset,
 					    mmio_wqe);
 		kernel_neon_end();
 		return;
 	}
 #endif
-	__iowrite64_copy(sq->bfreg.map + sq->bfreg.offset, mmio_wqe,
+	__iowrite64_copy(sq->bfreg.map + *offset, mmio_wqe,
 			 mmio_wqe_size / 8);
 }
 
@@ -276,7 +276,8 @@ static void mlx5_wc_destroy_sq(struct mlx5_wc_sq *sq)
 	mlx5_wq_destroy(&sq->wq_ctrl);
 }
 
-static void mlx5_wc_post_nop(struct mlx5_wc_sq *sq, bool signaled)
+static void mlx5_wc_post_nop(struct mlx5_wc_sq *sq, unsigned int *offset,
+			     bool signaled)
 {
 	int buf_size = (1 << MLX5_CAP_GEN(sq->cq.mdev, log_bf_reg_size)) / 2;
 	struct mlx5_wqe_ctrl_seg *ctrl;
@@ -309,9 +310,9 @@ static void mlx5_wc_post_nop(struct mlx5_wc_sq *sq, bool signaled)
 	 */
 	wmb();
 
-	mlx5_iowrite64_copy(sq, mmio_wqe, sizeof(mmio_wqe));
+	mlx5_iowrite64_copy(sq, mmio_wqe, sizeof(mmio_wqe), offset);
 
-	sq->bfreg.offset ^= buf_size;
+	*offset ^= buf_size;
 }
 
 static int mlx5_wc_poll_cq(struct mlx5_wc_sq *sq)
@@ -352,6 +353,7 @@ static int mlx5_wc_poll_cq(struct mlx5_wc_sq *sq)
 
 static void mlx5_core_test_wc(struct mlx5_core_dev *mdev)
 {
+	unsigned int offset = 0;
 	unsigned long expires;
 	struct mlx5_wc_sq *sq;
 	int i, err;
@@ -378,9 +380,9 @@ static void mlx5_core_test_wc(struct mlx5_core_dev *mdev)
 		goto err_create_sq;
 
 	for (i = 0; i < TEST_WC_NUM_WQES - 1; i++)
-		mlx5_wc_post_nop(sq, false);
+		mlx5_wc_post_nop(sq, &offset, false);
 
-	mlx5_wc_post_nop(sq, true);
+	mlx5_wc_post_nop(sq, &offset, true);
 
 	expires = jiffies + TEST_WC_POLLING_MAX_TIME_JIFFIES;
 	do {
