@@ -668,8 +668,8 @@ void mlx5e_reporter_rx_create(struct mlx5e_priv *priv)
 						       &mlx5_rx_reporter_ops,
 						       MLX5E_REPORTER_RX_GRACEFUL_PERIOD, priv);
 	if (IS_ERR(reporter)) {
-		netdev_warn(priv->netdev, "Failed to create rx reporter, err = %ld\n",
-			    PTR_ERR(reporter));
+		netdev_warn(priv->netdev, "Failed to create rx reporter, err = %pe\n",
+			    reporter);
 		return;
 	}
 	priv->rx_reporter = reporter;
