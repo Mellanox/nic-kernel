@@ -32,8 +32,7 @@ static inline bool blk_rq_integrity_dma_unmap(struct request *req,
 		struct device *dma_dev, struct dma_iova_state *state,
 		size_t mapped_len)
 {
-	return blk_dma_unmap(req, dma_dev, state, mapped_len,
-			bio_integrity(req->bio)->bip_flags & BIP_P2P_DMA);
+	return blk_rq_dma_unmap(req, dma_dev, state, mapped_len);
 }
 
 int blk_rq_count_integrity_sg(struct request_queue *, struct bio *);
