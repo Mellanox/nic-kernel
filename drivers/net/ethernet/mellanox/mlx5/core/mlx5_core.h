@@ -100,6 +100,7 @@ do {								\
 
 #define ACCESS_KEY_LEN  32
 #define FT_ID_FT_TYPE_OFFSET 24
+#define MLX5_MAX_CABLE_LENGTH 6300 /* meters */
 
 struct mlx5_cmd_allow_other_vhca_access_attr {
 	u16 obj_type;
@@ -296,6 +297,10 @@ int mlx5_query_mtpps(struct mlx5_core_dev *dev, u32 *mtpps, u32 mtpps_size);
 int mlx5_set_mtpps(struct mlx5_core_dev *mdev, u32 *mtpps, u32 mtpps_size);
 int mlx5_query_mtppse(struct mlx5_core_dev *mdev, u8 pin, u8 *arm, u8 *mode);
 int mlx5_set_mtppse(struct mlx5_core_dev *mdev, u8 pin, u8 arm, u8 mode);
+
+int mlx5_set_port_cable_len(struct mlx5_core_dev *dev, u16 length_in_meters);
+int mlx5_query_port_cable_len(struct mlx5_core_dev *dev, u16 *length_in_meters);
+u16 mlx5_get_default_cable_length(struct mlx5_core_dev *dev);
 
 struct mlx5_dm *mlx5_dm_create(struct mlx5_core_dev *dev);
 void mlx5_dm_cleanup(struct mlx5_core_dev *dev);
