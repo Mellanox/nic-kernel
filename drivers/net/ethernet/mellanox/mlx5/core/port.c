@@ -607,6 +607,89 @@ int mlx5_query_port_pfc(struct mlx5_core_dev *dev, u8 *pfc_en_tx, u8 *pfc_en_rx)
 	return 0;
 }
 
+static int mlx5_cable_len_hw_to_meters(u8 cable_len_hw)
+{
+	u8 base_cable_len = cable_len_hw & 0x3f;
+	u8 multiplier_bits = cable_len_hw >> 6;
+
+	return base_cable_len * int_pow(10, multiplier_bits) / 10;
+}
+
+static u8 mlx5_cable_len_meters_to_hw(u16 cable_len_meters)
+{
+	if (!cable_len_meters)
+		return 0;
+
+	if (cable_len_meters <= MLX5_MAX_CABLE_LENGTH / 100)
+		return cable_len_meters | 0x40;
+
+	if (cable_len_meters <= MLX5_MAX_CABLE_LENGTH / 10)
+		return DIV_ROUND_UP(cable_len_meters, 10) | 0x80;
+
+	return DIV_ROUND_UP(cable_len_meters, 100) | 0xc0;
+}
+
+int mlx5_set_port_cable_len(struct mlx5_core_dev *dev, u16 length_in_meters)
+{
+	u32 out[MLX5_ST_SZ_DW(pfcc_reg)] = {};
+	u32 in[MLX5_ST_SZ_DW(pfcc_reg)] = {};
+	u8 cable_len_bits;
+
+	cable_len_bits = mlx5_cable_len_meters_to_hw(length_in_meters);
+
+	MLX5_SET(pfcc_reg, in, local_port, 1);
+	MLX5_SET(pfcc_reg, in, pprx_mask_n, 1);
+	MLX5_SET(pfcc_reg, in, pptx_mask_n, 1);
+	MLX5_SET(pfcc_reg, in, cable_length_mask, 1);
+	MLX5_SET(pfcc_reg, in, cable_length, cable_len_bits);
+
+	return mlx5_core_access_reg(dev, in, sizeof(in), out,
+				    sizeof(out), MLX5_REG_PFCC, 0, 1);
+}
+
+enum {
+	MLX5_CABLE_LEN_100GBPS_PER_LANE = 2,
+	MLX5_CABLE_LEN_50GBPS_PER_LANE = 3,
+	MLX5_CABLE_LEN_DEFAULT = 30,
+};
+
+u16 mlx5_get_default_cable_length(struct mlx5_core_dev *dev)
+{
+	u32 out[MLX5_ST_SZ_DW(ptys_reg)] = {};
+	u32 connector_type;
+	u32 rate_per_lane;
+	int err;
+
+	err = mlx5_query_port_ptys(dev, out, sizeof(out), MLX5_PTYS_EN, 1, 0);
+	if (err)
+		return MLX5_CABLE_LEN_DEFAULT;
+
+	connector_type = MLX5_GET(ptys_reg, out, connector_type);
+	if (connector_type != MLX5_PTYS_CONNECTOR_TYPE_PORT_DA)
+		return MLX5_CABLE_LEN_DEFAULT;
+
+	rate_per_lane = MLX5_GET(ptys_reg, out, lane_rate_oper);
+	if (rate_per_lane <= SPEED_50000 / 10)
+		return MLX5_CABLE_LEN_50GBPS_PER_LANE;
+
+	return MLX5_CABLE_LEN_100GBPS_PER_LANE;
+}
+
+int mlx5_query_port_cable_len(struct mlx5_core_dev *dev, u16 *length_in_meters)
+{
+	u32 out[MLX5_ST_SZ_DW(pfcc_reg)] = {};
+	u8 cable_len_hw;
+	int err;
+
+	err = mlx5_query_pfcc_reg(dev, out, sizeof(out));
+	if (err)
+		return err;
+
+	cable_len_hw = MLX5_GET(pfcc_reg, out, cable_length);
+	*length_in_meters = mlx5_cable_len_hw_to_meters(cable_len_hw);
+	return 0;
+}
+
 int mlx5_max_tc(struct mlx5_core_dev *mdev)
 {
 	u8 num_tc = MLX5_CAP_GEN(mdev, max_tc) ? : 8;

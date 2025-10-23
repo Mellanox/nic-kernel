@@ -350,6 +350,37 @@ out:
 	return err;
 }
 
+int mlx5e_port_set_cable_len(struct mlx5e_priv *priv, u16 length_in_meters)
+{
+	struct mlx5_core_dev *dev = priv->mdev;
+
+	if (length_in_meters > MLX5_MAX_CABLE_LENGTH) {
+		mlx5_core_err(dev, "Cable length: (%u) exceeds max: (%u)\n",
+			      length_in_meters, MLX5_MAX_CABLE_LENGTH);
+		return -EINVAL;
+	}
+
+	if (!MLX5_CAP_PCAM_FEATURE(dev, cable_length)) {
+		if (!length_in_meters) {
+			mlx5_core_err(dev, "Cable length cannot be set to zero\n");
+			return -EINVAL;
+		}
+		priv->dcbx.cable_len = length_in_meters;
+		return 0;
+	}
+	return mlx5_set_port_cable_len(dev, length_in_meters);
+}
+
+int mlx5e_port_get_cable_len(struct mlx5e_priv *priv, u16 *length_in_meters)
+{
+	if (!MLX5_CAP_PCAM_FEATURE(priv->mdev, cable_length)) {
+		*length_in_meters = priv->dcbx.cable_len;
+		return 0;
+	}
+
+	return mlx5_query_port_cable_len(priv->mdev, length_in_meters);
+}
+
 struct mlx5e_pause_quanta_entry {
 	u32 speed_mbps;
 	u32 num_quantas;
@@ -386,8 +417,8 @@ static int mlx5e_calculate_buf_sz_and_thresholds(struct mlx5e_priv *priv,
 {
 	u32 mac_rsp_time_bytes, buffer_minus_xoff_bytes;
 	u32 cable_len_bytes, port_speed_mbs;
+	u16 oper_mtu, cable_len_meters;
 	int cell_factor, err;
-	u16 oper_mtu;
 
 	err = mlx5e_port_linkspeed(priv->mdev, &port_speed_mbs);
 	if (err)
@@ -397,7 +428,11 @@ static int mlx5e_calculate_buf_sz_and_thresholds(struct mlx5e_priv *priv,
 
 	mac_rsp_time_bytes = mlx5e_get_mac_response_time_bytes(port_speed_mbs);
 
-	cable_len_bytes = priv->dcbx.cable_len * (port_speed_mbs / 1000) *
+	err = mlx5e_port_get_cable_len(priv, &cable_len_meters);
+	if (err)
+		return err;
+ 
+	cable_len_bytes = cable_len_meters * (port_speed_mbs / 1000) *
 			  MLX5E_CABLE_FACTOR / CABLE_DELAY_CALC_ACCURACY_FACTOR;
 
 	cell_factor = priv->dcbx.port_buff_cell_sz * MLX5E_ACCURATE_FACTOR /
