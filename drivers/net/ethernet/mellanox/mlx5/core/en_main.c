@@ -2594,8 +2594,10 @@ static int mlx5e_set_tx_maxrate(struct net_device *dev, int index, u32 rate)
 	return err;
 }
 
-static int mlx5e_open_rxq_rq(struct mlx5e_channel *c, struct mlx5e_params *params,
-			     struct mlx5e_rq_param *rq_param)
+static int mlx5e_open_rxq_rq(struct mlx5e_channel *c,
+			     struct mlx5e_params *params,
+			     struct mlx5e_rq_param *rq_param,
+			     struct mlx5e_rq_opt_param *rqo)
 {
 	u16 q_counter = c->priv->q_counter[c->sd_ix];
 	int err;
@@ -2604,7 +2606,7 @@ static int mlx5e_open_rxq_rq(struct mlx5e_channel *c, struct mlx5e_params *param
 	if (err)
 		return err;
 
-	return mlx5e_open_rq(params, rq_param, NULL, cpu_to_node(c->cpu),
+	return mlx5e_open_rq(params, rq_param, rqo, cpu_to_node(c->cpu),
 			     q_counter, &c->rq);
 }
 
@@ -2708,7 +2710,7 @@ static int mlx5e_open_queues(struct mlx5e_channel *c,
 	if (err)
 		goto err_close_icosq;
 
-	err = mlx5e_open_rxq_rq(c, params, &cparam->rq);
+	err = mlx5e_open_rxq_rq(c, params, &cparam->rq, &cparam->rq_opt);
 	if (err)
 		goto err_close_sqs;
 
@@ -2843,6 +2845,7 @@ static void mlx5e_channel_pick_doorbell(struct mlx5e_channel *c)
 
 static int mlx5e_open_channel(struct mlx5e_priv *priv, int ix,
 			      struct mlx5e_params *params,
+			      struct netdev_queue_config *qcfg,
 			      struct xsk_buff_pool *xsk_pool,
 			      struct mlx5e_channel **cp)
 {
@@ -2876,7 +2879,7 @@ static int mlx5e_open_channel(struct mlx5e_priv *priv, int ix,
 		goto err_free;
 	}
 
-	err = mlx5e_build_channel_param(mdev, params, cparam);
+	err = mlx5e_build_channel_param(mdev, params, qcfg, cparam);
 	if (err)
 		goto err_free;
 
@@ -3001,7 +3004,8 @@ int mlx5e_open_channels(struct mlx5e_priv *priv,
 		if (chs->params.xdp_prog)
 			xsk_pool = mlx5e_xsk_get_pool(&chs->params, chs->params.xsk, i);
 
-		err = mlx5e_open_channel(priv, i, &chs->params, xsk_pool, &chs->c[i]);
+		err = mlx5e_open_channel(priv, i, &chs->params, NULL,
+					 xsk_pool, &chs->c[i]);
 		if (err)
 			goto err_close_channels;
 	}
@@ -5715,7 +5719,8 @@ static int mlx5e_queue_mem_alloc(struct net_device *dev,
 		goto unlock;
 	}
 
-	err = mlx5e_open_channel(priv, queue_index, &params, NULL, &new->c);
+	err = mlx5e_open_channel(priv, queue_index, &params, qcfg, NULL,
+				 &new->c);
 unlock:
 	mutex_unlock(&priv->state_lock);
 	return err;
