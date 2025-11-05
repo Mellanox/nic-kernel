@@ -5652,7 +5652,6 @@ static const struct netdev_stat_ops mlx5e_stat_ops = {
 
 struct mlx5_qmgmt_data {
 	struct mlx5e_channel *c;
-	struct mlx5e_channel_param cparam;
 };
 
 static int mlx5e_queue_mem_alloc(struct net_device *dev,
@@ -5663,7 +5662,6 @@ static int mlx5e_queue_mem_alloc(struct net_device *dev,
 	struct mlx5e_priv *priv = netdev_priv(dev);
 	struct mlx5e_channels *chs = &priv->channels;
 	struct mlx5e_params params = chs->params;
-	struct mlx5_core_dev *mdev;
 	int err;
 
 	mutex_lock(&priv->state_lock);
@@ -5686,11 +5684,6 @@ static int mlx5e_queue_mem_alloc(struct net_device *dev,
 		err = -EOPNOTSUPP;
 		goto unlock;
 	}
-
-	mdev = mlx5_sd_ch_ix_get_dev(priv->mdev, queue_index);
-	err = mlx5e_build_channel_param(mdev, &params, &new->cparam);
-	if (err)
-		goto unlock;
 
 	err = mlx5e_open_channel(priv, queue_index, &params, NULL, &new->c);
 unlock:
