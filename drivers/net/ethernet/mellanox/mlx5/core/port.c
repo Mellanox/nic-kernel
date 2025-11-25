@@ -770,7 +770,7 @@ int mlx5_query_port_tc_bw_alloc(struct mlx5_core_dev *mdev,
 }
 
 int mlx5_modify_port_ets_rate_limit(struct mlx5_core_dev *mdev,
-				    u8 *max_bw_value,
+				    u16 *max_bw_value,
 				    u8 *max_bw_units)
 {
 	u32 in[MLX5_ST_SZ_DW(qetc_reg)] = {0};
@@ -793,7 +793,7 @@ int mlx5_modify_port_ets_rate_limit(struct mlx5_core_dev *mdev,
 }
 
 int mlx5_query_port_ets_rate_limit(struct mlx5_core_dev *mdev,
-				   u8 *max_bw_value,
+				   u16 *max_bw_value,
 				   u8 *max_bw_units)
 {
 	u32 out[MLX5_ST_SZ_DW(qetc_reg)];
