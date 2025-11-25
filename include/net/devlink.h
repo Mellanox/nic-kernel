@@ -1644,6 +1644,20 @@ void devlink_register(struct devlink *devlink);
 void devlink_unregister(struct devlink *devlink);
 void devlink_free(struct devlink *devlink);
 
+/* Shared devlink instance management */
+struct devlink_shd_owner {
+	struct list_head list;
+};
+
+struct devlink *devlink_shd_get(const char *id,
+				const struct devlink_ops *ops,
+				size_t priv_size,
+				struct devlink_shd_owner *owner);
+void devlink_shd_put(struct devlink *devlink, struct devlink_shd_owner *owner);
+void *devlink_shd_get_priv(struct devlink *devlink);
+void devlink_shd_lock(struct devlink *devlink);
+void devlink_shd_unlock(struct devlink *devlink);
+
 /**
  * struct devlink_port_ops - Port operations
  * @port_split: Callback used to split the port into multiple ones.
