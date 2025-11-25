@@ -47,6 +47,7 @@
 #include <linux/mlx5/mlx5_ifc.h>
 #include <linux/mlx5/vport.h>
 #include <linux/version.h>
+#include <linux/pci-p2pdma.h>
 #include <net/devlink.h>
 #include "mlx5_core.h"
 #include "lib/eq.h"
@@ -897,8 +898,13 @@ static int mlx5_pci_init(struct mlx5_core_dev *dev, struct pci_dev *pdev,
 
 	pci_enable_ptm(pdev, NULL);
 
+	err = pcim_p2pdma_init(pdev);
+	if (err && err != -EOPNOTSUPP)
+		goto err_ptm;
 	return 0;
 
+err_ptm:
+	pci_disable_ptm(dev->pdev);
 err_clr_master:
 	release_bar(dev->pdev);
 err_disable:
