@@ -338,13 +338,44 @@ out:
 	return err;
 }
 
+int mlx5e_port_set_cable_len(struct mlx5e_priv *priv, u16 length_in_meters)
+{
+	struct mlx5_core_dev *dev = priv->mdev;
+
+	if (length_in_meters > MLX5_MAX_CABLE_LENGTH) {
+		mlx5_core_err(dev, "Cable length: (%u) exceeds max: (%u)\n",
+			      length_in_meters, MLX5_MAX_CABLE_LENGTH);
+		return -EINVAL;
+	}
+
+	if (!MLX5_CAP_PCAM_FEATURE(dev, cable_length)) {
+		if (!length_in_meters) {
+			mlx5_core_err(dev, "Cable length cannot be set to zero\n");
+			return -EINVAL;
+		}
+		priv->dcbx.cable_len = length_in_meters;
+		return 0;
+	}
+	return mlx5_set_port_cable_len(dev, length_in_meters);
+}
+
+int mlx5e_port_get_cable_len(struct mlx5e_priv *priv, u16 *length_in_meters)
+{
+	if (!MLX5_CAP_PCAM_FEATURE(priv->mdev, cable_length)) {
+		*length_in_meters = priv->dcbx.cable_len;
+		return 0;
+	}
+
+	return mlx5_query_port_cable_len(priv->mdev, length_in_meters);
+}
+
 /* xoff = ((301+2.16 * len [m]) * speed [Gbps] + 2.72 MTU [B])
  * minimum speed value is 40Gbps
  */
-static u32 calculate_xoff(struct mlx5e_priv *priv, unsigned int mtu)
+static int calculate_xoff(struct mlx5e_priv *priv, unsigned int mtu, u32 *xoff)
 {
+	u16 cable_len;
 	u32 speed;
-	u32 xoff;
 	int err;
 
 	err = mlx5e_port_linkspeed(priv->mdev, &speed);
@@ -352,10 +383,14 @@ static u32 calculate_xoff(struct mlx5e_priv *priv, unsigned int mtu)
 		speed = SPEED_40000;
 	speed = max_t(u32, speed, SPEED_40000);
 
-	xoff = (301 + 216 * priv->dcbx.cable_len / 100) * speed / 1000 + 272 * mtu / 100;
+	err = mlx5e_port_get_cable_len(priv, &cable_len);
+	if (err)
+		return err;
 
-	netdev_dbg(priv->netdev, "%s: xoff=%d\n", __func__, xoff);
-	return xoff;
+	*xoff = (301 + 216 * cable_len / 100) * speed / 1000 + 272 * mtu / 100;
+
+	netdev_dbg(priv->netdev, "%s: xoff=%u\n", __func__, *xoff);
+	return 0;
 }
 
 static int update_xoff_threshold(struct mlx5e_port_buffer *port_buffer,
@@ -488,15 +523,19 @@ int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
 	u16 port_buff_cell_sz = priv->dcbx.port_buff_cell_sz;
 	struct net_device *netdev = priv->netdev;
 	struct mlx5e_port_buffer port_buffer;
-	u32 xoff = calculate_xoff(priv, mtu);
 	bool update_prio2buffer = false;
 	u8 buffer[MLX5E_MAX_PRIORITY];
 	bool update_buffer = false;
 	unsigned int max_mtu;
 	u32 total_used = 0;
 	u8 curr_pfc_en;
+	u32 xoff;
 	int err;
 	int i;
+
+	err = calculate_xoff(priv, mtu, &xoff);
+	if (err)
+		return err;
 
 	netdev_dbg(netdev, "%s: change=%x\n", __func__, change);
 	max_mtu = max_t(unsigned int, priv->netdev->max_mtu, MINIMUM_MAX_MTU);

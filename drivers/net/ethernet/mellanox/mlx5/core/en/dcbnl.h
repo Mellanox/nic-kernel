@@ -26,9 +26,10 @@ struct mlx5e_dcbx {
 	u8                         cap;
 
 	/* Buffer configuration */
-	u32                        cable_len;
 	u32                        xoff;
 	u16                        port_buff_cell_sz;
+	/* valid only if cable_len capability in PCAM is supported */
+	u16                        cable_len;
 };
 
 #define MLX5E_MAX_DSCP (64)
