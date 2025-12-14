@@ -392,10 +392,9 @@ static int mlx5_query_mcia(struct mlx5_core_dev *dev,
 	if (err)
 		return err;
 
-	status = MLX5_GET(mcia_reg, out, status);
-	if (status) {
-		mlx5_core_err(dev, "query_mcia_reg failed: status: 0x%x\n",
-			      status);
+	if (MLX5_GET(mcia_reg, out, status)) {
+		if (status)
+			*status = MLX5_GET(mcia_reg, out, status);
 		return -EIO;
 	}
 
