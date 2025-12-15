@@ -743,12 +743,6 @@ struct mlx5_ib_mw {
 	struct mlx5_ib_mkey	mmkey;
 };
 
-struct mlx5_ib_umr_context {
-	struct ib_cqe		cqe;
-	enum ib_wc_status	status;
-	struct completion	done;
-};
-
 enum {
 	MLX5_UMR_STATE_UNINIT,
 	MLX5_UMR_STATE_ACTIVE,

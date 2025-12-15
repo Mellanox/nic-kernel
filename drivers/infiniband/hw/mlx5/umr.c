@@ -337,8 +337,8 @@ err:
 
 static void mlx5r_umr_done(struct ib_cq *cq, struct ib_wc *wc)
 {
-	struct mlx5_ib_umr_context *context =
-		container_of(wc->wr_cqe, struct mlx5_ib_umr_context, cqe);
+	struct mlx5r_umr_context *context =
+		container_of(wc->wr_cqe, struct mlx5r_umr_context, cqe);
 
 	context->status = wc->status;
 	complete(&context->done);
