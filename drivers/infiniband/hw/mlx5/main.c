@@ -4153,7 +4153,7 @@ static int mlx5_rdma_user_mmap_entry_insert(struct mlx5_ib_ucontext *c,
 }
 
 static struct mlx5_user_mmap_entry *
-alloc_var_entry(struct mlx5_ib_ucontext *c)
+alloc_var_entry(struct mlx5_ib_ucontext *c, u32 flags)
 {
 	struct mlx5_user_mmap_entry *entry;
 	struct mlx5_var_region *var_region;
@@ -4162,7 +4162,11 @@ alloc_var_entry(struct mlx5_ib_ucontext *c)
 	int err;
 
 	var_table = &to_mdev(c->ibucontext.device)->var_table;
-	var_region = &var_table->var_region;
+	if (flags & MLX5_IB_UAPI_VAR_ALLOC_FLAG_TLP)
+		var_region = &var_table->tlp_var_region;
+	else
+		var_region = &var_table->var_region;
+
 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return ERR_PTR(-ENOMEM);
@@ -4182,7 +4186,9 @@ alloc_var_entry(struct mlx5_ib_ucontext *c)
 	entry->address = var_region->hw_start_addr +
 				(page_idx * var_region->stride_size);
 	entry->page_idx = page_idx;
-	entry->mmap_flag = MLX5_IB_MMAP_TYPE_VAR;
+	entry->mmap_flag = flags & MLX5_IB_UAPI_VAR_ALLOC_FLAG_TLP ?
+				   MLX5_IB_MMAP_TYPE_TLP_VAR :
+				   MLX5_IB_MMAP_TYPE_VAR;
 
 	err = mlx5_rdma_user_mmap_entry_insert(c, entry,
 					       var_region->stride_size);
@@ -4205,9 +4211,10 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_VAR_OBJ_ALLOC)(
 {
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(
 		attrs, MLX5_IB_ATTR_VAR_OBJ_ALLOC_HANDLE);
-	struct mlx5_ib_ucontext *c;
 	struct mlx5_user_mmap_entry *entry;
+	struct mlx5_ib_ucontext *c;
 	u64 mmap_offset;
+	u32 flags = 0;
 	u32 length;
 	int err;
 
@@ -4215,7 +4222,24 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_VAR_OBJ_ALLOC)(
 	if (IS_ERR(c))
 		return PTR_ERR(c);
 
-	entry = alloc_var_entry(c);
+	err = uverbs_get_flags32(&flags, attrs,
+				 MLX5_IB_ATTR_VAR_OBJ_ALLOC_FLAGS,
+				 MLX5_IB_UAPI_VAR_ALLOC_FLAG_TLP);
+	if (err)
+		return err;
+
+	if (flags & MLX5_IB_UAPI_VAR_ALLOC_FLAG_TLP) {
+		if (!MLX5_CAP_GEN(to_mdev(c->ibucontext.device)->mdev,
+				  tlp_device_emulation_manager))
+			return -EOPNOTSUPP;
+	} else {
+		if (!(MLX5_CAP_GEN_64(to_mdev(c->ibucontext.device)->mdev,
+				      general_obj_types) &
+		      MLX5_GENERAL_OBJ_TYPES_CAP_VIRTIO_NET_Q))
+			return -EOPNOTSUPP;
+	}
+
+	entry = alloc_var_entry(c, flags);
 	if (IS_ERR(entry))
 		return PTR_ERR(entry);
 
@@ -4248,6 +4272,9 @@ DECLARE_UVERBS_NAMED_METHOD(
 			MLX5_IB_OBJECT_VAR,
 			UVERBS_ACCESS_NEW,
 			UA_MANDATORY),
+	UVERBS_ATTR_FLAGS_IN(MLX5_IB_ATTR_VAR_OBJ_ALLOC_FLAGS,
+			     enum mlx5_ib_uapi_var_alloc_flags,
+			     UA_OPTIONAL),
 	UVERBS_ATTR_PTR_OUT(MLX5_IB_ATTR_VAR_OBJ_ALLOC_PAGE_ID,
 			   UVERBS_ATTR_TYPE(u32),
 			   UA_MANDATORY),
@@ -4275,7 +4302,8 @@ static bool var_is_supported(struct ib_device *device)
 	struct mlx5_ib_dev *dev = to_mdev(device);
 
 	return (MLX5_CAP_GEN_64(dev->mdev, general_obj_types) &
-			MLX5_GENERAL_OBJ_TYPES_CAP_VIRTIO_NET_Q);
+			MLX5_GENERAL_OBJ_TYPES_CAP_VIRTIO_NET_Q) ||
+		MLX5_CAP_GEN(dev->mdev, tlp_device_emulation_manager);
 }
 
 static struct mlx5_user_mmap_entry *
