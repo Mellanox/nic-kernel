@@ -1121,19 +1121,20 @@ int rdma_compatdev_set(u8 enable)
 	return ret;
 }
 
-static void rdma_dev_exit_net(struct net *net)
+static void rdma_dev_cleanup_net(struct net *net)
 {
 	struct rdma_dev_net *rnet = rdma_net_to_dev_net(net);
 	struct ib_device *dev;
 	unsigned long index;
-	int ret;
+
+	if (net_eq(net, &init_net))
+		return;
 
 	down_write(&rdma_nets_rwsem);
 	/*
 	 * Prevent the ID from being re-used and hide the id from xa_for_each.
 	 */
-	ret = xa_err(xa_store(&rdma_nets, rnet->id, NULL, GFP_KERNEL));
-	WARN_ON(ret);
+	WARN_ON(!xa_erase(&rdma_nets, rnet->id));
 	up_write(&rdma_nets_rwsem);
 
 	down_read(&devices_rwsem);
@@ -1156,9 +1157,14 @@ static void rdma_dev_exit_net(struct net *net)
 		down_read(&devices_rwsem);
 	}
 	up_read(&devices_rwsem);
+}
 
+static void rdma_dev_exit_net(struct net *net)
+{
+	struct rdma_dev_net *rnet = rdma_net_to_dev_net(net);
+
+	rdma_dev_cleanup_net(net);
 	rdma_nl_net_exit(rnet);
-	xa_erase(&rdma_nets, rnet->id);
 }
 
 static __net_init int rdma_dev_init_net(struct net *net)
