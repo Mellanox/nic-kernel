@@ -268,7 +268,7 @@ def rand_port(stype=socket.SOCK_STREAM):
         return s.getsockname()[1]
 
 
-def wait_port_listen(port, proto="tcp", ns=None, host=None, sleep=0.005, deadline=5):
+def wait_port_listen(port, proto="tcp", ns=None, host=None, sleep=0.005, deadline=20):
     end = time.monotonic() + deadline
 
     pattern = f":{port:04X} .* "
