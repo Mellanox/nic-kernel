@@ -965,7 +965,7 @@ static void set_timeout(int fd)
 {
 	struct timeval timeout;
 
-	timeout.tv_sec = 3;
+	timeout.tv_sec = 20;
 	timeout.tv_usec = 0;
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
 		       sizeof(timeout)) < 0)
