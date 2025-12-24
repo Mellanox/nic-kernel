@@ -28,7 +28,6 @@
 #include <linux/mm.h>
 #include <linux/pagemap.h>
 #include <linux/gfp.h>
-#include <linux/rmap.h>
 #include <linux/swap.h>
 #include <linux/compaction.h>
 
@@ -283,37 +282,6 @@ nfs_file_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 }
 EXPORT_SYMBOL_GPL(nfs_file_fsync);
 
-void nfs_truncate_last_folio(struct address_space *mapping, loff_t from,
-			     loff_t to)
-{
-	struct folio *folio;
-
-	if (from >= to)
-		return;
-
-	folio = filemap_lock_folio(mapping, from >> PAGE_SHIFT);
-	if (IS_ERR(folio))
-		return;
-
-	if (folio_mkclean(folio))
-		folio_mark_dirty(folio);
-
-	if (folio_test_uptodate(folio)) {
-		loff_t fpos = folio_pos(folio);
-		size_t offset = from - fpos;
-		size_t end = folio_size(folio);
-
-		if (to - fpos < end)
-			end = to - fpos;
-		folio_zero_segment(folio, offset, end);
-		trace_nfs_size_truncate_folio(mapping->host, to);
-	}
-
-	folio_unlock(folio);
-	folio_put(folio);
-}
-EXPORT_SYMBOL_GPL(nfs_truncate_last_folio);
-
 /*
  * Decide whether a read/modify/write cycle may be more efficient
  * then a modify/write/read cycle when writing to a page in the
@@ -393,7 +361,6 @@ static int nfs_write_begin(const struct kiocb *iocb,
 
 	dfprintk(PAGECACHE, "NFS: write_begin(%pD2(%lu), %u@%lld)\n",
 		file, mapping->host->i_ino, len, (long long) pos);
-	nfs_truncate_last_folio(mapping, i_size_read(mapping->host), pos);
 
 start:
 	folio = write_begin_get_folio(iocb, mapping, pos >> PAGE_SHIFT, len);
