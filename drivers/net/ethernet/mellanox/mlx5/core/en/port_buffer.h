@@ -37,7 +37,6 @@
 
 #define MLX5E_MAX_NETWORK_BUFFER 8
 #define MLX5E_TOTAL_BUFFERS 10
-#define MLX5E_DEFAULT_CABLE_LEN 7 /* 7 meters */
 
 #define MLX5_BUFFER_SUPPORTED(mdev) (MLX5_CAP_GEN(mdev, pcam_reg) && \
 				     MLX5_CAP_PCAM_REG(mdev, pbmc) && \
@@ -67,11 +66,12 @@ struct mlx5e_port_buffer {
 };
 
 int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
-				    u32 change, unsigned int mtu,
-				    struct ieee_pfc *pfc,
-				    u32 *buffer_size,
-				    u8 *prio2buffer);
+				    u32 change, struct ieee_pfc *pfc,
+				    u32 *buffer_size, u8 *prio2buffer);
 
 int mlx5e_port_query_buffer(struct mlx5e_priv *priv,
 			    struct mlx5e_port_buffer *port_buffer);
+
+int mlx5e_port_set_cable_len(struct mlx5e_priv *priv, u16 length_in_meters);
+int mlx5e_port_get_cable_len(struct mlx5e_priv *priv, u16 *length_in_meters);
 #endif

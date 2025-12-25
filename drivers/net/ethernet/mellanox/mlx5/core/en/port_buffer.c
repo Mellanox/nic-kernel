@@ -31,6 +31,18 @@
  */
 #include "port_buffer.h"
 
+#define CABLE_DELAY_CALC_ACCURACY_FACTOR (1000)
+#define MLX5E_ACCURATE_FACTOR (100)
+#define MLX5E_INTER_PACKET_GAP (20)
+#define MINIMAL_PACKET_SIZE (64)
+/*
+ * MLX5E_CABLE_FACTOR =
+ *	(CABLE_DELAY_CALC_ACCURACY_FACTOR * CABLE_BIDIR * BITS_IN_GBIT) /
+ *	(SPEED_OF_LIGHT_IN_FIBER * BITS_IN_BYTE) =
+ *	((1000 * 2 * 10^9) / (1.98 * 10^8 * 8)) = 1262
+ */
+#define MLX5E_CABLE_FACTOR (1262)
+
 int mlx5e_port_query_buffer(struct mlx5e_priv *priv,
 			    struct mlx5e_port_buffer *port_buffer)
 {
@@ -310,10 +322,10 @@ static int port_set_buffer(struct mlx5e_priv *priv,
 		u64 xoff = port_buffer->buffer[i].xoff;
 		u64 xon = port_buffer->buffer[i].xon;
 
-		do_div(size, port_buff_cell_sz);
+		size = DIV_ROUND_UP(size, port_buff_cell_sz);
 		new_headroom_cells += size;
-		do_div(xoff, port_buff_cell_sz);
-		do_div(xon, port_buff_cell_sz);
+		xoff = DIV_ROUND_UP(xoff, port_buff_cell_sz);
+		xon = DIV_ROUND_UP(xon, port_buff_cell_sz);
 		MLX5_SET(bufferx_reg, buffer, size, size);
 		MLX5_SET(bufferx_reg, buffer, lossy, port_buffer->buffer[i].lossy);
 		MLX5_SET(bufferx_reg, buffer, xoff_threshold, xoff);
@@ -338,48 +350,196 @@ out:
 	return err;
 }
 
-/* xoff = ((301+2.16 * len [m]) * speed [Gbps] + 2.72 MTU [B])
- * minimum speed value is 40Gbps
- */
-static u32 calculate_xoff(struct mlx5e_priv *priv, unsigned int mtu)
+int mlx5e_port_set_cable_len(struct mlx5e_priv *priv, u16 length_in_meters)
 {
-	u32 speed;
-	u32 xoff;
-	int err;
+	struct mlx5_core_dev *dev = priv->mdev;
 
-	err = mlx5e_port_linkspeed(priv->mdev, &speed);
-	if (err)
-		speed = SPEED_40000;
-	speed = max_t(u32, speed, SPEED_40000);
+	if (length_in_meters > MLX5_MAX_CABLE_LENGTH) {
+		mlx5_core_err(dev, "Cable length: (%u) exceeds max: (%u)\n",
+			      length_in_meters, MLX5_MAX_CABLE_LENGTH);
+		return -EINVAL;
+	}
 
-	xoff = (301 + 216 * priv->dcbx.cable_len / 100) * speed / 1000 + 272 * mtu / 100;
-
-	netdev_dbg(priv->netdev, "%s: xoff=%d\n", __func__, xoff);
-	return xoff;
+	if (!MLX5_CAP_PCAM_FEATURE(dev, cable_length)) {
+		if (!length_in_meters) {
+			mlx5_core_err(dev, "Cable length cannot be set to zero\n");
+			return -EINVAL;
+		}
+		priv->dcbx.cable_len = length_in_meters;
+		return 0;
+	}
+	return mlx5_set_port_cable_len(dev, length_in_meters);
 }
 
-static int update_xoff_threshold(struct mlx5e_port_buffer *port_buffer,
-				 u32 xoff, unsigned int max_mtu, u16 port_buff_cell_sz)
+int mlx5e_port_get_cable_len(struct mlx5e_priv *priv, u16 *length_in_meters)
+{
+	if (!MLX5_CAP_PCAM_FEATURE(priv->mdev, cable_length)) {
+		*length_in_meters = priv->dcbx.cable_len;
+		return 0;
+	}
+
+	return mlx5_query_port_cable_len(priv->mdev, length_in_meters);
+}
+
+struct mlx5e_pause_quanta_entry {
+	u32 speed_mbps;
+	u32 num_quantas;
+};
+
+/* Keep array sorted when adding new speeds */
+static const struct mlx5e_pause_quanta_entry mlx5e_pause_quanta_tbl[] = {
+	{ SPEED_25000, 80 },
+	{ SPEED_40000, 118 },
+	{ SPEED_100000, 394 },
+	{ SPEED_200000, 453 },
+	{ SPEED_400000, 905 },
+	{ SPEED_800000, 1810 },
+	{ SPEED_1600000, 3620 },
+};
+
+#define MLX5E_PAUSE_QUANTA_SIZE_BYTES 64
+static int mlx5e_get_mac_response_time_bytes(u32 port_speed_mbs)
 {
 	int i;
 
+	for (i = 0; i < ARRAY_SIZE(mlx5e_pause_quanta_tbl) - 1; i++)
+		if (port_speed_mbs <= mlx5e_pause_quanta_tbl[i].speed_mbps)
+			break;
+
+	return mlx5e_pause_quanta_tbl[i].num_quantas *
+	       MLX5E_PAUSE_QUANTA_SIZE_BYTES;
+}
+
+static int mlx5e_calculate_buf_sz_and_thresholds(struct mlx5e_priv *priv,
+						 u32 *xoff, u32 *xon,
+						 u16 max_mtu,
+						 u32 *lossless_buffer_sz)
+{
+	u32 mac_rsp_time_bytes, buffer_minus_xoff_bytes;
+	u32 cable_len_bytes, port_speed_mbs;
+	u16 oper_mtu, cable_len_meters;
+	int cell_factor, err;
+
+	err = mlx5e_port_linkspeed(priv->mdev, &port_speed_mbs);
+	if (err)
+		return err;
+
+	mlx5_query_port_oper_mtu(priv->mdev, &oper_mtu, 1);
+
+	mac_rsp_time_bytes = mlx5e_get_mac_response_time_bytes(port_speed_mbs);
+
+	err = mlx5e_port_get_cable_len(priv, &cable_len_meters);
+	if (err)
+		return err;
+ 
+	cable_len_bytes = cable_len_meters * (port_speed_mbs / 1000) *
+			  MLX5E_CABLE_FACTOR / CABLE_DELAY_CALC_ACCURACY_FACTOR;
+
+	cell_factor = priv->dcbx.port_buff_cell_sz * MLX5E_ACCURATE_FACTOR /
+			   (MLX5E_INTER_PACKET_GAP + MINIMAL_PACKET_SIZE);
+
+	buffer_minus_xoff_bytes  = (cable_len_bytes +
+				    2 * mac_rsp_time_bytes + oper_mtu) *
+				   cell_factor / MLX5E_ACCURATE_FACTOR +
+				   oper_mtu;
+	*xon = buffer_minus_xoff_bytes - oper_mtu + port_speed_mbs / 8;
+	*xoff = *xon + 2 * max_mtu;
+	*lossless_buffer_sz = buffer_minus_xoff_bytes + *xoff;
+
+	return 0;
+}
+
+static int get_buffer_max_cell_size(struct mlx5_core_dev *mdev,
+				    struct mlx5e_port_buffer *port_buffer,
+				    u32 *max_buffer_size)
+{
+	int i, err, num_of_lossy_buffers = 0;
+	int sz = MLX5_ST_SZ_BYTES(pbmc_reg);
+	u32 lossless_buffers_max_sz;
+	void *out;
+
+	out = kzalloc(sz, GFP_KERNEL);
+	if (!out)
+		return -ENOMEM;
+
+	err = mlx5e_port_query_pbmc(mdev, out);
+	if (err)
+		goto out;
+
+	lossless_buffers_max_sz = MLX5_GET(pbmc_reg, out, port_buffer_size);
+
 	for (i = 0; i < MLX5E_MAX_NETWORK_BUFFER; i++) {
 		if (port_buffer->buffer[i].lossy) {
-			port_buffer->buffer[i].xoff = 0;
-			port_buffer->buffer[i].xon  = 0;
-			continue;
+			lossless_buffers_max_sz -= port_buffer->buffer[i].size;
+			num_of_lossy_buffers++;
 		}
+	}
+	if (num_of_lossy_buffers < MLX5E_MAX_NETWORK_BUFFER)
+		*max_buffer_size = lossless_buffers_max_sz /
+				   (MLX5E_MAX_NETWORK_BUFFER -
+				    num_of_lossy_buffers);
+	else
+		*max_buffer_size = 0;
 
-		if (port_buffer->buffer[i].size <
-		    (xoff + max_mtu + port_buff_cell_sz)) {
-			pr_err("buffer_size[%d]=%d is not enough for lossless buffer\n",
-			       i, port_buffer->buffer[i].size);
-			return -ENOMEM;
-		}
+out:
+	kfree(out);
+	return err;
+}
 
-		port_buffer->buffer[i].xoff = port_buffer->buffer[i].size - xoff;
-		port_buffer->buffer[i].xon  =
-			port_buffer->buffer[i].xoff - max_mtu;
+static int update_xoff_threshold(struct mlx5_core_dev *mdev,
+				 struct mlx5e_port_buffer *port_buffer,
+				 struct mlx5e_bufferx_reg *buffer,
+				 u32 xoff, u32 xon, u32 lossless_buffer_size,
+				 u16 max_mtu, u16 port_buff_cell_sz)
+{
+	u32 max_buffer_cell_size;
+	int err;
+
+	err = get_buffer_max_cell_size(mdev, port_buffer,
+				       &max_buffer_cell_size);
+	if (err)
+		return err;
+
+	if (buffer->lossy) {
+		buffer->xoff = 0;
+		buffer->xon  = 0;
+		return 0;
+	}
+
+	/* Validate that the existing buffer size is sufficient for lossless operation */
+	if (buffer->size < (xoff + max_mtu + port_buff_cell_sz)) {
+		pr_err("buffer size %d is not enough for lossless buffer\n",
+		       buffer->size);
+		return -ENOMEM;
+	}
+
+	if (lossless_buffer_size > max_buffer_cell_size * port_buff_cell_sz) {
+		lossless_buffer_size = max_buffer_cell_size;
+		xoff = lossless_buffer_size / 2;
+		xon = xoff > (max_mtu / 2) ? (xoff - (max_mtu * 2)) : 0;
+	}
+
+	buffer->xoff = xoff;
+	buffer->xon = xon;
+	buffer->size = lossless_buffer_size;
+
+	return 0;
+}
+
+static int update_xoffs_threshold(struct mlx5_core_dev *mdev,
+	struct mlx5e_port_buffer *port_buffer,
+	u32 xoff, u32 xon, u32 lossless_buffer_size,
+	u16 max_mtu, u16 port_buff_cell_sz)
+{
+	int i, err;
+
+	for (i = 0; i < MLX5E_MAX_NETWORK_BUFFER; i++) {
+		err = update_xoff_threshold(mdev, port_buffer,
+					    &port_buffer->buffer[i],
+					    xoff, xon, lossless_buffer_size,
+					    max_mtu, port_buff_cell_sz);
+		if (err)
+			return err;
 	}
 
 	return 0;
@@ -392,6 +552,8 @@ static int update_xoff_threshold(struct mlx5e_port_buffer *port_buffer,
  *	@pfc_en: <input> current pfc configuration
  *	@buffer: <input> current prio to buffer mapping
  *	@xoff:   <input> xoff value
+ *	@xon:    <input> xon value
+ *	@port_buff_sz: <input> port buffer size
  *	@port_buff_cell_sz: <input> port buffer cell_size
  *	@port_buffer: <output> port receive buffer configuration
  *	@change: <output>
@@ -407,8 +569,9 @@ static int update_xoff_threshold(struct mlx5e_port_buffer *port_buffer,
  *	sets change to true if buffer configuration was modified.
  */
 static int update_buffer_lossy(struct mlx5_core_dev *mdev,
-			       unsigned int max_mtu,
-			       u8 pfc_en, u8 *buffer, u32 xoff, u16 port_buff_cell_sz,
+			       u16 max_mtu, u8 pfc_en, u8 *buffer,
+			       u32 xoff, u32 xon, u32 port_buff_sz,
+			       u16 port_buff_cell_sz,
 			       struct mlx5e_port_buffer *port_buffer,
 			       bool *change)
 {
@@ -444,7 +607,9 @@ static int update_buffer_lossy(struct mlx5_core_dev *mdev,
 	}
 
 	if (changed) {
-		err = update_xoff_threshold(port_buffer, xoff, max_mtu, port_buff_cell_sz);
+		err = update_xoffs_threshold(mdev, port_buffer, xoff, xon,
+					    port_buff_sz, max_mtu,
+					    port_buff_cell_sz);
 		if (err)
 			return err;
 
@@ -480,26 +645,31 @@ static int fill_pfc_en(struct mlx5_core_dev *mdev, u8 *pfc_en)
 
 #define MINIMUM_MAX_MTU 9216
 int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
-				    u32 change, unsigned int mtu,
-				    struct ieee_pfc *pfc,
-				    u32 *buffer_size,
-				    u8 *prio2buffer)
+				    u32 change, struct ieee_pfc *pfc,
+				    u32 *buffer_size, u8 *prio2buffer)
 {
+	u32 xoff, xon, lossless_buffer_size, min_buffer_size;
 	u16 port_buff_cell_sz = priv->dcbx.port_buff_cell_sz;
 	struct net_device *netdev = priv->netdev;
 	struct mlx5e_port_buffer port_buffer;
-	u32 xoff = calculate_xoff(priv, mtu);
 	bool update_prio2buffer = false;
 	u8 buffer[MLX5E_MAX_PRIORITY];
 	bool update_buffer = false;
-	unsigned int max_mtu;
 	u32 total_used = 0;
 	u8 curr_pfc_en;
+	u16 max_mtu;
 	int err;
 	int i;
 
 	netdev_dbg(netdev, "%s: change=%x\n", __func__, change);
-	max_mtu = max_t(unsigned int, priv->netdev->max_mtu, MINIMUM_MAX_MTU);
+	mlx5_query_port_oper_mtu(priv->mdev, &max_mtu, 1);
+
+	err = mlx5e_calculate_buf_sz_and_thresholds(priv, &xoff, &xon, max_mtu,
+						    &lossless_buffer_size);
+	if (err)
+		return err;
+
+	min_buffer_size = xoff + max_mtu + port_buff_cell_sz;
 
 	err = mlx5e_port_query_buffer(priv, &port_buffer);
 	if (err)
@@ -507,7 +677,9 @@ int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
 
 	if (change & MLX5E_PORT_BUFFER_CABLE_LEN) {
 		update_buffer = true;
-		err = update_xoff_threshold(&port_buffer, xoff, max_mtu, port_buff_cell_sz);
+		err = update_xoffs_threshold(priv->mdev, &port_buffer, xoff, xon,
+					    lossless_buffer_size, max_mtu,
+					    port_buff_cell_sz);
 		if (err)
 			return err;
 	}
@@ -519,8 +691,10 @@ int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
 		if (err)
 			return err;
 
-		err = update_buffer_lossy(priv->mdev, max_mtu, pfc->pfc_en, buffer, xoff,
-					  port_buff_cell_sz, &port_buffer,
+		err = update_buffer_lossy(priv->mdev, max_mtu, pfc->pfc_en,
+					  buffer, xoff, xon,
+					  lossless_buffer_size,
+					  port_buff_cell_sz,  &port_buffer,
 					  &update_buffer);
 		if (err)
 			return err;
@@ -536,8 +710,11 @@ int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
 		if (err)
 			return err;
 
-		err = update_buffer_lossy(priv->mdev, max_mtu, curr_pfc_en, prio2buffer, xoff,
-					  port_buff_cell_sz, &port_buffer, &update_buffer);
+		err = update_buffer_lossy(priv->mdev, max_mtu, curr_pfc_en,
+					  prio2buffer, xoff, xon,
+					  lossless_buffer_size,
+					  port_buff_cell_sz, &port_buffer,
+					  &update_buffer);
 		if (err)
 			return err;
 	}
@@ -551,7 +728,13 @@ int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
 				return -EINVAL;
 			}
 
-			port_buffer.buffer[i].size = buffer_size[i];
+			if (!port_buffer.buffer[i].lossy &&
+			    buffer_size[i] < min_buffer_size) {
+				pr_err("buffer_size[%d]=%d is not enough for lossless buffer, minimun buffer size: %d\n",
+				       i, buffer_size[i], min_buffer_size);
+				return -ENOMEM;
+			}
+
 			total_used += buffer_size[i];
 		}
 
@@ -563,15 +746,22 @@ int mlx5e_port_manual_buffer_config(struct mlx5e_priv *priv,
 			return -EINVAL;
 
 		update_buffer = true;
-		err = update_xoff_threshold(&port_buffer, xoff, max_mtu, port_buff_cell_sz);
-		if (err)
-			return err;
+		for (i = 0; i < MLX5E_MAX_NETWORK_BUFFER; i++) {
+			err = update_xoff_threshold(priv->mdev, &port_buffer,
+						    &port_buffer.buffer[i],
+						    xoff, xon, buffer_size[i],
+						    max_mtu, port_buff_cell_sz);
+			if (err)
+				return err;
+		}
 	}
 
 	/* Need to update buffer configuration if xoff value is changed */
 	if (!update_buffer && xoff != priv->dcbx.xoff) {
 		update_buffer = true;
-		err = update_xoff_threshold(&port_buffer, xoff, max_mtu, port_buff_cell_sz);
+		err = update_xoffs_threshold(priv->mdev, &port_buffer, xoff, xon,
+					    lossless_buffer_size,
+					    max_mtu, port_buff_cell_sz);
 		if (err)
 			return err;
 	}

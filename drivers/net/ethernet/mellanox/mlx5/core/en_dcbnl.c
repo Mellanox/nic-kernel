@@ -44,9 +44,6 @@
 #define MLX5E_CEE_STATE_UP    1
 #define MLX5E_CEE_STATE_DOWN  0
 
-/* Max supported cable length is 1000 meters */
-#define MLX5E_MAX_CABLE_LENGTH 1000
-
 enum {
 	MLX5E_VENDOR_TC_GROUP_NUM = 7,
 	MLX5E_LOWEST_PRIO_GROUP   = 0,
@@ -368,8 +365,13 @@ static int mlx5e_dcbnl_ieee_getpfc(struct net_device *dev,
 		pfc->indications[i] = PPORT_PER_PRIO_GET(pstats, i, rx_pause);
 	}
 
-	if (MLX5_BUFFER_SUPPORTED(mdev))
-		pfc->delay = priv->dcbx.cable_len;
+	if (MLX5_BUFFER_SUPPORTED(mdev)) {
+		int err;
+
+		err = mlx5e_port_get_cable_len(priv, &pfc->delay);
+		if (err)
+			return err;
+	}
 
 	return mlx5_query_port_pfc(mdev, &pfc->pfc_en, NULL);
 }
@@ -380,11 +382,11 @@ static int mlx5e_dcbnl_ieee_setpfc(struct net_device *dev,
 	u8 buffer_ownership = MLX5_BUF_OWNERSHIP_UNKNOWN;
 	struct mlx5e_priv *priv = netdev_priv(dev);
 	struct mlx5_core_dev *mdev = priv->mdev;
-	u32 old_cable_len = priv->dcbx.cable_len;
 	struct ieee_pfc pfc_new;
+	u16 old_cable_len;
 	u32 changed = 0;
 	u8 curr_pfc_en;
-	int ret = 0;
+	int ret;
 
 	/* pfc_en */
 	mlx5_query_port_pfc(mdev, &curr_pfc_en, NULL);
@@ -396,11 +398,26 @@ static int mlx5e_dcbnl_ieee_setpfc(struct net_device *dev,
 		changed |= MLX5E_PORT_BUFFER_PFC;
 	}
 
-	if (pfc->delay &&
-	    pfc->delay < MLX5E_MAX_CABLE_LENGTH &&
-	    pfc->delay != priv->dcbx.cable_len) {
-		priv->dcbx.cable_len = pfc->delay;
-		changed |= MLX5E_PORT_BUFFER_CABLE_LEN;
+	ret = mlx5e_port_get_cable_len(priv, &old_cable_len);
+	if (ret)
+		return ret;
+
+	if (pfc->delay != old_cable_len) {
+		ret = mlx5e_port_set_cable_len(priv, pfc->delay);
+		if (ret)
+			return ret;
+
+		if (MLX5_CAP_PCAM_FEATURE(mdev, cable_length)) {
+			ret = mlx5_query_port_buffer_ownership(mdev,
+							       &buffer_ownership);
+			if (ret)
+				return ret;
+
+			if (buffer_ownership == MLX5_BUF_OWNERSHIP_SW_OWNED)
+				changed |= MLX5E_PORT_BUFFER_CABLE_LEN;
+		} else {
+			changed = MLX5E_PORT_BUFFER_CABLE_LEN;
+		}
 	}
 
 	if (MLX5_BUFFER_SUPPORTED(mdev)) {
@@ -412,13 +429,16 @@ static int mlx5e_dcbnl_ieee_setpfc(struct net_device *dev,
 				   "%s, Failed to get buffer ownership: %d\n",
 				   __func__, ret);
 
-		if (buffer_ownership == MLX5_BUF_OWNERSHIP_SW_OWNED)
+		if (changed && buffer_ownership == MLX5_BUF_OWNERSHIP_SW_OWNED)
 			ret = mlx5e_port_manual_buffer_config(priv, changed,
-							      dev->mtu, &pfc_new,
+							      &pfc_new,
 							      NULL, NULL);
 
-		if (ret && (changed & MLX5E_PORT_BUFFER_CABLE_LEN))
-			priv->dcbx.cable_len = old_cable_len;
+		if (ret && (changed & MLX5E_PORT_BUFFER_CABLE_LEN)) {
+			ret = mlx5e_port_set_cable_len(priv, old_cable_len);
+			if (ret)
+				return ret;
+		}
 	}
 
 	if (!ret) {
@@ -1020,7 +1040,7 @@ static int mlx5e_dcbnl_setbuffer(struct net_device *dev,
 	if (!changed)
 		return 0;
 
-	err = mlx5e_port_manual_buffer_config(priv, changed, dev->mtu, NULL,
+	err = mlx5e_port_manual_buffer_config(priv, changed, NULL,
 					      buffer_size, prio2buffer);
 	return err;
 }
@@ -1289,7 +1309,8 @@ void mlx5e_dcbnl_initialize(struct mlx5e_priv *priv)
 		priv->dcbx.cap |= DCB_CAP_DCBX_HOST;
 
 	priv->dcbx.port_buff_cell_sz = mlx5e_query_port_buffers_cell_size(priv);
-	priv->dcbx.cable_len = MLX5E_DEFAULT_CABLE_LEN;
+	if (!MLX5_CAP_PCAM_FEATURE(priv->mdev, buffer_ownership))
+		priv->dcbx.cable_len = mlx5_get_default_cable_length(priv->mdev);
 
 	mlx5e_ets_init(priv);
 }
