@@ -728,6 +728,7 @@ void vfio_pci_core_close_device(struct vfio_device *core_vdev)
 #endif
 	vfio_pci_core_disable(vdev);
 
+	core_vdev->pre_copy_info_flags_supp = 0;
 	vfio_pci_dma_buf_cleanup(vdev);
 
 	mutex_lock(&vdev->igate);
