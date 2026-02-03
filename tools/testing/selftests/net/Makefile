@@ -197,6 +197,7 @@ TEST_GEN_PROGS := \
 	tap \
 	tcp_port_share \
 	tls \
+	tls_hw_offload \
 # end of TEST_GEN_PROGS
 
 TEST_FILES := \
