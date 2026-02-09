@@ -1054,6 +1054,7 @@ int mlx5e_poll_ico_cq(struct mlx5e_cq *cq)
 				wi->umr.rq->mpwqe.umr_completed++;
 				break;
 			case MLX5E_ICOSQ_WQE_NOP:
+			case MLX5E_ICOSQ_WQE_UMR_RX_INIT:
 				break;
 			case MLX5E_ICOSQ_WQE_SHAMPO_HD_UMR:
 				mlx5e_handle_shampo_hd_umr(wi->shampo, sq);
