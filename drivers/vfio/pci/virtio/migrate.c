@@ -443,19 +443,14 @@ static long virtiovf_precopy_ioctl(struct file *filp, unsigned int cmd,
 	struct vfio_precopy_info info = {};
 	loff_t *pos = &filp->f_pos;
 	bool end_of_data = false;
-	unsigned long minsz;
 	u32 ctx_size = 0;
+	bool v2_opt_in;
 	int ret;
 
-	if (cmd != VFIO_MIG_GET_PRECOPY_INFO)
-		return -ENOTTY;
-
-	minsz = offsetofend(struct vfio_precopy_info, dirty_bytes);
-	if (copy_from_user(&info, (void __user *)arg, minsz))
-		return -EFAULT;
-
-	if (info.argsz < minsz)
-		return -EINVAL;
+	v2_opt_in = virtvdev->core_device.vdev.pre_copy_info_flags_supp;
+	ret = vfio_check_precopy_ioctl(cmd, arg, v2_opt_in, &info);
+	if (ret)
+		return ret;
 
 	mutex_lock(&virtvdev->state_mutex);
 	if (virtvdev->mig_state != VFIO_DEVICE_STATE_PRE_COPY &&
@@ -514,7 +509,8 @@ static long virtiovf_precopy_ioctl(struct file *filp, unsigned int cmd,
 
 done:
 	virtiovf_state_mutex_unlock(virtvdev);
-	if (copy_to_user((void __user *)arg, &info, minsz))
+	if (copy_to_user((void __user *)arg, &info,
+			 offsetofend(struct vfio_precopy_info, dirty_bytes)))
 		return -EFAULT;
 	return 0;
 
