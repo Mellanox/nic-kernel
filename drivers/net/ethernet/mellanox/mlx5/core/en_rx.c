@@ -647,13 +647,9 @@ static int mlx5e_alloc_rx_mpwqe(struct mlx5e_rq *rq, u16 ix)
 	/* Pad if needed, in case the value set to ucseg->xlt_octowords
 	 * in mlx5e_build_umr_wqe() needed alignment.
 	 */
-	if (rq->mpwqe.pages_per_wqe & (MLX5_UMR_MTT_NUM_ENTRIES_ALIGNMENT - 1)) {
-		int pad = ALIGN(rq->mpwqe.pages_per_wqe, MLX5_UMR_MTT_NUM_ENTRIES_ALIGNMENT) -
-			rq->mpwqe.pages_per_wqe;
-
+	if (rq->mpwqe.entries_pad)
 		memset(&umr_wqe->inline_mtts[rq->mpwqe.pages_per_wqe], 0,
-		       sizeof(*umr_wqe->inline_mtts) * pad);
-	}
+		       rq->mpwqe.entries_pad);
 
 	bitmap_zero(wi->skip_release_bitmap, rq->mpwqe.pages_per_wqe);
 	wi->consumed_strides = 0;
@@ -843,6 +839,7 @@ int mlx5e_poll_ico_cq(struct mlx5e_cq *cq)
 				wi->umr.rq->mpwqe.umr_completed++;
 				break;
 			case MLX5E_ICOSQ_WQE_NOP:
+			case MLX5E_ICOSQ_WQE_UMR_RX_INIT:
 				break;
 #ifdef CONFIG_MLX5_EN_TLS
 			case MLX5E_ICOSQ_WQE_UMR_TLS:

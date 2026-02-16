@@ -245,6 +245,7 @@ struct mlx5e_umr_wqe {
 		DECLARE_FLEX_ARRAY(struct mlx5_mtt, inline_mtts);
 		DECLARE_FLEX_ARRAY(struct mlx5_klm, inline_klms);
 		DECLARE_FLEX_ARRAY(struct mlx5_ksm, inline_ksms);
+		DECLARE_FLEX_ARRAY(struct mlx5_wqe_data_seg, dseg);
 	};
 };
 static_assert(offsetof(struct mlx5e_umr_wqe, inline_mtts) == sizeof(struct mlx5e_umr_wqe_hdr),
@@ -674,7 +675,6 @@ struct mlx5e_rq {
 			struct mlx5e_umr_wqe_hdr umr_wqe;
 			struct mlx5e_mpw_info *info;
 			mlx5e_fp_skb_from_cqe_mpwrq skb_from_cqe_mpwrq;
-			__be32                 umr_mkey_be;
 			u16                    num_strides;
 			u16                    actual_wq_head;
 			u8                     log_stride_sz;
@@ -684,6 +684,7 @@ struct mlx5e_rq {
 			u8                     min_wqe_bulk;
 			u8                     page_shift;
 			u8                     pages_per_wqe;
+			u8                     entries_pad;
 			u8                     umr_wqebbs;
 			u8                     mtts_per_wqe;
 			u8                     umr_mode;
@@ -743,6 +744,10 @@ struct mlx5e_rq {
 	struct mlx5_core_dev  *mdev;
 	struct mlx5e_channel  *channel;
 	struct mlx5e_dma_info  wqe_overflow;
+	struct {
+		__be32 umr_mkey_be;
+		void *umr_data_unaligned;
+	} mpwqe_sp;
 
 	/* XDP read-mostly */
 	struct xdp_rxq_info    xdp_rxq;
