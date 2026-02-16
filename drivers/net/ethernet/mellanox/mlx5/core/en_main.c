@@ -5532,6 +5532,19 @@ static void mlx5e_get_queue_stats_rx(struct net_device *dev, int i,
 	stats->bytes = rq_stats->bytes + xskrq_stats->bytes;
 	stats->alloc_fail = rq_stats->buff_alloc_err +
 			    xskrq_stats->buff_alloc_err;
+
+	stats->hw_gro_packets = rq_stats->gro_skbs + xskrq_stats->gro_skbs;
+	stats->hw_gro_wire_packets =
+		rq_stats->gro_packets + xskrq_stats->gro_packets;
+	stats->hw_gro_wire_bytes = rq_stats->gro_bytes + xskrq_stats->gro_bytes;
+
+	stats->csum_complete =
+		rq_stats->csum_complete + xskrq_stats->csum_complete;
+	stats->csum_unnecessary = rq_stats->csum_unnecessary +
+				  xskrq_stats->csum_unnecessary +
+				  rq_stats->csum_unnecessary_inner +
+				  xskrq_stats->csum_unnecessary_inner;
+	stats->csum_none = rq_stats->csum_none + xskrq_stats->csum_none;
 }
 
 static void mlx5e_get_queue_stats_tx(struct net_device *dev, int i,
@@ -5550,6 +5563,17 @@ static void mlx5e_get_queue_stats_tx(struct net_device *dev, int i,
 	sq_stats = priv->txq2sq_stats[i];
 	stats->packets = sq_stats->packets;
 	stats->bytes = sq_stats->bytes;
+
+	stats->hw_gso_packets =
+		sq_stats->tso_packets + sq_stats->tso_inner_packets;
+	stats->hw_gso_bytes = sq_stats->tso_bytes + sq_stats->tso_inner_bytes;
+
+	stats->csum_none = sq_stats->csum_none;
+	stats->needs_csum =
+		sq_stats->csum_partial + sq_stats->csum_partial_inner;
+
+	stats->stop = sq_stats->stopped;
+	stats->wake = sq_stats->wake;
 }
 
 static void mlx5e_get_base_stats(struct net_device *dev,
@@ -5564,6 +5588,12 @@ static void mlx5e_get_base_stats(struct net_device *dev,
 		rx->packets = 0;
 		rx->bytes = 0;
 		rx->alloc_fail = 0;
+		rx->hw_gro_packets = 0;
+		rx->hw_gro_wire_packets = 0;
+		rx->hw_gro_wire_bytes = 0;
+		rx->csum_complete = 0;
+		rx->csum_unnecessary = 0;
+		rx->csum_none = 0;
 
 		for (i = priv->channels.params.num_channels; i < priv->stats_nch; i++) {
 			struct netdev_queue_stats_rx rx_i = {0};
@@ -5573,6 +5603,12 @@ static void mlx5e_get_base_stats(struct net_device *dev,
 			rx->packets += rx_i.packets;
 			rx->bytes += rx_i.bytes;
 			rx->alloc_fail += rx_i.alloc_fail;
+			rx->hw_gro_packets += rx_i.hw_gro_packets;
+			rx->hw_gro_wire_packets += rx_i.hw_gro_wire_packets;
+			rx->hw_gro_wire_bytes += rx_i.hw_gro_wire_bytes;
+			rx->csum_complete += rx_i.csum_complete;
+			rx->csum_unnecessary += rx_i.csum_unnecessary;
+			rx->csum_none += rx_i.csum_none;
 		}
 
 		/* always report PTP RX stats from base as there is no
@@ -5584,11 +5620,25 @@ static void mlx5e_get_base_stats(struct net_device *dev,
 
 			rx->packets += rq_stats->packets;
 			rx->bytes += rq_stats->bytes;
+			rx->hw_gro_packets += rq_stats->gro_skbs;
+			rx->hw_gro_wire_packets += rq_stats->gro_packets;
+			rx->hw_gro_wire_bytes += rq_stats->gro_bytes;
+			rx->csum_complete += rq_stats->csum_complete;
+			rx->csum_unnecessary +=
+				rq_stats->csum_unnecessary +
+				rq_stats->csum_unnecessary_inner;
+			rx->csum_none += rq_stats->csum_none;
 		}
 	}
 
 	tx->packets = 0;
 	tx->bytes = 0;
+	tx->hw_gso_packets = 0;
+	tx->hw_gso_bytes = 0;
+	tx->csum_none = 0;
+	tx->needs_csum = 0;
+	tx->stop = 0;
+	tx->wake = 0;
 
 	for (i = 0; i < priv->stats_nch; i++) {
 		struct mlx5e_channel_stats *channel_stats = priv->channel_stats[i];
@@ -5615,6 +5665,15 @@ static void mlx5e_get_base_stats(struct net_device *dev,
 
 			tx->packets += sq_stats->packets;
 			tx->bytes += sq_stats->bytes;
+			tx->hw_gso_packets += sq_stats->tso_packets +
+					      sq_stats->tso_inner_packets;
+			tx->hw_gso_bytes += sq_stats->tso_bytes +
+					    sq_stats->tso_inner_bytes;
+			tx->csum_none += sq_stats->csum_none;
+			tx->needs_csum += sq_stats->csum_partial +
+					  sq_stats->csum_partial_inner;
+			tx->stop += sq_stats->stopped;
+			tx->wake += sq_stats->wake;
 		}
 	}
 
@@ -5633,6 +5692,15 @@ static void mlx5e_get_base_stats(struct net_device *dev,
 
 			tx->packets += sq_stats->packets;
 			tx->bytes   += sq_stats->bytes;
+			tx->hw_gso_packets += sq_stats->tso_packets +
+					      sq_stats->tso_inner_packets;
+			tx->hw_gso_bytes += sq_stats->tso_bytes +
+					    sq_stats->tso_inner_bytes;
+			tx->csum_none += sq_stats->csum_none;
+			tx->needs_csum += sq_stats->csum_partial +
+					  sq_stats->csum_partial_inner;
+			tx->stop += sq_stats->stopped;
+			tx->wake += sq_stats->wake;
 		}
 	}
 }
