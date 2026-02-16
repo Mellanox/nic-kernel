@@ -53,8 +53,13 @@ int mlx5e_devlink_port_register(struct mlx5e_dev *mlx5e_dev,
 	unsigned int dl_port_index;
 
 	if (mlx5_core_is_pf(mdev)) {
+		int port_num = MLX5_CAP_GEN(mdev, native_port_num);
+
 		attrs.flavour = DEVLINK_PORT_FLAVOUR_PHYSICAL;
-		attrs.phys.port_number = mlx5_get_dev_index(mdev);
+		if (port_num >= 1 && port_num <= MLX5_MAX_PORTS)
+			attrs.phys.port_number = port_num - 1;
+		else
+			attrs.phys.port_number = PCI_FUNC(mdev->pdev->devfn);
 		if (MLX5_ESWITCH_MANAGER(mdev)) {
 			mlx5e_devlink_get_port_parent_id(mdev, &ppid);
 			memcpy(attrs.switch_id.id, ppid.id, ppid.id_len);

@@ -19,6 +19,7 @@ struct mlx5_sd {
 	struct mlx5_devcom_comp_dev *devcom;
 	struct dentry *dfs;
 	bool primary;
+	u8 index;
 	union {
 		struct { /* primary */
 			struct mlx5_core_dev *secondaries[MLX5_SD_MAX_GROUP_SZ - 1];
@@ -107,7 +108,7 @@ static bool mlx5_sd_is_supported(struct mlx5_core_dev *dev, u8 host_buses)
 	/* Disconnect secondaries from the network */
 	if (!MLX5_CAP_GEN(dev, eswitch_manager))
 		return false;
-	if (!MLX5_CAP_GEN(dev, silent_mode))
+	if (!MLX5_CAP_GEN(dev, silent_mode_set))
 		return false;
 
 	/* RX steering from primary to secondaries */
@@ -246,12 +247,14 @@ static int sd_register(struct mlx5_core_dev *dev)
 	primary_sd = mlx5_get_sd(primary);
 	primary_sd->primary = true;
 	i = 0;
+	primary_sd->index = i;
 	/* loop the secondaries */
 	mlx5_devcom_for_each_peer_entry(primary_sd->devcom, peer, pos) {
 		struct mlx5_sd *peer_sd = mlx5_get_sd(peer);
 
 		primary_sd->secondaries[i++] = peer;
 		peer_sd->primary = false;
+		peer_sd->index = i;
 		peer_sd->primary_dev = primary;
 	}
 
@@ -530,3 +533,28 @@ struct auxiliary_device *mlx5_sd_get_adev(struct mlx5_core_dev *dev,
 
 	return &primary->priv.adev[idx]->adev;
 }
+
+static u8 mlx5_sd_index_get(struct mlx5_core_dev *dev)
+{
+	struct mlx5_sd *sd = mlx5_get_sd(dev);
+
+	return sd->index;
+}
+
+/* This function safe to use only after switching to switchdev mode */
+int mlx5_sd_get_dev_index(struct mlx5_core_dev *dev, int reg_idx)
+{
+	struct mlx5_sd *sd = mlx5_get_sd(dev);
+	int idx;
+
+	if (!sd || !mlx5_devcom_comp_is_ready(sd->devcom))
+		return reg_idx;
+
+	idx = (reg_idx * mlx5_sd_get_host_buses(dev)) + mlx5_sd_index_get(dev);
+	if (idx >= MLX5_MAX_PORTS) {
+		WARN_ON_ONCE(1);
+		return 0;
+	}
+	return idx;
+}
+EXPORT_SYMBOL(mlx5_sd_get_dev_index);
