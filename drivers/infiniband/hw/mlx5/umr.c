@@ -337,8 +337,8 @@ err:
 
 static void mlx5r_umr_done(struct ib_cq *cq, struct ib_wc *wc)
 {
-	struct mlx5_ib_umr_context *context =
-		container_of(wc->wr_cqe, struct mlx5_ib_umr_context, cqe);
+	struct mlx5r_umr_context *context =
+		container_of(wc->wr_cqe, struct mlx5r_umr_context, cqe);
 
 	context->status = wc->status;
 	complete(&context->done);
@@ -983,7 +983,7 @@ _mlx5r_dmabuf_umr_update_pas(struct mlx5_ib_mr *mr, unsigned int flags,
 						     nblocks);
 }
 
-/**
+/*
  * This function makes an mkey non-present by zapping the translation entries of
  * the mkey by zapping (zeroing out) the first N entries, where N is determined
  * by the largest page size supported by the device and the MR length.
