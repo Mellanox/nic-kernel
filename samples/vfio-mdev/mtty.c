@@ -837,18 +837,13 @@ static long mtty_precopy_ioctl(struct file *filp, unsigned int cmd,
 	struct mdev_state *mdev_state = migf->mdev_state;
 	loff_t *pos = &filp->f_pos;
 	struct vfio_precopy_info info = {};
-	unsigned long minsz;
+	bool v2_opt_in;
 	int ret;
 
-	if (cmd != VFIO_MIG_GET_PRECOPY_INFO)
-		return -ENOTTY;
-
-	minsz = offsetofend(struct vfio_precopy_info, dirty_bytes);
-
-	if (copy_from_user(&info, (void __user *)arg, minsz))
-		return -EFAULT;
-	if (info.argsz < minsz)
-		return -EINVAL;
+	v2_opt_in = mdev_state->vdev.pre_copy_info_flags_supp;
+	ret = vfio_check_precopy_ioctl(cmd, arg, v2_opt_in, &info);
+	if (ret)
+		return ret;
 
 	mutex_lock(&mdev_state->state_mutex);
 	if (mdev_state->state != VFIO_DEVICE_STATE_PRE_COPY &&
@@ -875,7 +870,8 @@ static long mtty_precopy_ioctl(struct file *filp, unsigned int cmd,
 	info.initial_bytes = migf->filled_size - *pos;
 	mutex_unlock(&migf->lock);
 
-	ret = copy_to_user((void __user *)arg, &info, minsz) ? -EFAULT : 0;
+	ret = copy_to_user((void __user *)arg, &info,
+		offsetofend(struct vfio_precopy_info, dirty_bytes)) ? -EFAULT : 0;
 unlock:
 	mtty_state_mutex_unlock(mdev_state);
 	return ret;

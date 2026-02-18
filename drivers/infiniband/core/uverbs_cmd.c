@@ -790,6 +790,7 @@ static int ib_uverbs_rereg_mr(struct uverbs_attr_bundle *attrs)
 	struct ib_pd *orig_pd;
 	struct ib_pd *new_pd;
 	struct ib_mr *new_mr;
+	u32 lkey, rkey;
 
 	ret = uverbs_request(attrs, &cmd, sizeof(cmd));
 	if (ret)
@@ -858,6 +859,8 @@ static int ib_uverbs_rereg_mr(struct uverbs_attr_bundle *attrs)
 		new_mr->uobject = uobj;
 		atomic_inc(&new_pd->usecnt);
 		new_uobj->object = new_mr;
+		lkey = new_mr->lkey;
+		rkey = new_mr->rkey;
 
 		rdma_restrack_new(&new_mr->res, RDMA_RESTRACK_MR);
 		rdma_restrack_set_name(&new_mr->res, NULL);
@@ -883,11 +886,13 @@ static int ib_uverbs_rereg_mr(struct uverbs_attr_bundle *attrs)
 			mr->iova = cmd.hca_va;
 			mr->length = cmd.length;
 		}
+		lkey = mr->lkey;
+		rkey = mr->rkey;
 	}
 
 	memset(&resp, 0, sizeof(resp));
-	resp.lkey      = mr->lkey;
-	resp.rkey      = mr->rkey;
+	resp.lkey = lkey;
+	resp.rkey = rkey;
 
 	ret = uverbs_response(attrs, &resp, sizeof(resp));
 
@@ -2049,7 +2054,10 @@ static int ib_uverbs_post_send(struct uverbs_attr_bundle *attrs)
 	if (ret)
 		return ret;
 
-	user_wr = kmalloc(cmd.wqe_size, GFP_KERNEL);
+	if (cmd.wqe_size < sizeof(struct ib_uverbs_send_wr))
+		return -EINVAL;
+
+	user_wr = kmalloc(cmd.wqe_size, GFP_KERNEL | __GFP_NOWARN);
 	if (!user_wr)
 		return -ENOMEM;
 
@@ -2239,7 +2247,7 @@ ib_uverbs_unmarshall_recv(struct uverbs_req_iter *iter, u32 wr_count,
 	if (ret)
 		return ERR_PTR(ret);
 
-	user_wr = kmalloc(wqe_size, GFP_KERNEL);
+	user_wr = kmalloc(wqe_size, GFP_KERNEL | __GFP_NOWARN);
 	if (!user_wr)
 		return ERR_PTR(-ENOMEM);
 
