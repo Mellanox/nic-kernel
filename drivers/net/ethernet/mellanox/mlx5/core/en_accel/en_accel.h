@@ -225,6 +225,28 @@ mlx5e_accel_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
 	       mlx5e_ktls_shampo_can_merge(skb, cqe);
 }
 
+static inline int mlx5e_accel_block_tc_offload(struct mlx5_core_dev *mdev)
+{
+	int ret = 0;
+
+	spin_lock_bh(&mdev->offload_block.lock);
+	if (mdev->offload_block.num_block_accel)
+		ret = -EBUSY;
+	else
+		mdev->offload_block.num_block_tc++;
+	spin_unlock_bh(&mdev->offload_block.lock);
+
+	return ret;
+}
+
+static inline void mlx5e_accel_unblock_tc_offload(struct mlx5_core_dev *mdev)
+{
+	spin_lock_bh(&mdev->offload_block.lock);
+	if (!WARN_ON_ONCE(!mdev->offload_block.num_block_tc))
+		mdev->offload_block.num_block_tc--;
+	spin_unlock_bh(&mdev->offload_block.lock);
+}
+
 static inline int mlx5e_accel_init_rx(struct mlx5e_priv *priv)
 {
 	return mlx5e_ktls_init_rx(priv);
