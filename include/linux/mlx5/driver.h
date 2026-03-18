@@ -792,8 +792,10 @@ struct mlx5_core_dev {
 	struct {
 		/* Protects the fields below. */
 		spinlock_t lock;
+		/* Counts accel users/rules which block TC. */
 		u64 num_block_tc;
-		u64 num_block_ipsec;
+		/* Counts TC flows which block accel protocols. */
+		u64 num_block_accel;
 	} offload_block;
 #ifdef CONFIG_MLX5_MACSEC
 	struct mlx5_macsec_fs *macsec_fs;
