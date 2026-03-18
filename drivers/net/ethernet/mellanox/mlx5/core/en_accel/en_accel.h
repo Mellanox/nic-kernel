@@ -224,6 +224,28 @@ mlx5e_accel_shampo_can_merge(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
 	return mlx5e_psp_shampo_can_merge(rq->hw_gro_data->skb, cqe);
 }
 
+static inline int mlx5e_accel_block_tc_offload(struct mlx5_core_dev *mdev)
+{
+	int ret = 0;
+
+	mutex_lock(&mdev->offload_block.lock);
+	if (mdev->offload_block.num_accel)
+		ret = -EBUSY;
+	else
+		mdev->offload_block.num_tc++;
+	mutex_unlock(&mdev->offload_block.lock);
+
+	return ret;
+}
+
+static inline void mlx5e_accel_unblock_tc_offload(struct mlx5_core_dev *mdev)
+{
+	mutex_lock(&mdev->offload_block.lock);
+	if (!WARN_ON_ONCE(!mdev->offload_block.num_tc))
+		mdev->offload_block.num_tc--;
+	mutex_unlock(&mdev->offload_block.lock);
+}
+
 static inline int mlx5e_accel_init_rx(struct mlx5e_priv *priv)
 {
 	return mlx5e_ktls_init_rx(priv);
