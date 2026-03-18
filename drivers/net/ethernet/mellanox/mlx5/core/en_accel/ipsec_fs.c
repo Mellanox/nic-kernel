@@ -4,6 +4,7 @@
 #include <linux/netdevice.h>
 #include "en.h"
 #include "en/fs.h"
+#include "en_accel/en_accel.h"
 #include "eswitch.h"
 #include "ipsec.h"
 #include "fs_core.h"
@@ -2574,34 +2575,12 @@ void mlx5e_accel_ipsec_fs_read_stats(struct mlx5e_priv *priv, void *ipsec_stats)
 	}
 }
 
-static int mlx5e_ipsec_block_tc_offload(struct mlx5_core_dev *mdev)
-{
-	int ret = 0;
-
-	mutex_lock(&mdev->offload_block.lock);
-	if (mdev->offload_block.num_block_ipsec)
-		ret = -EBUSY;
-	else
-		mdev->offload_block.num_block_tc++;
-	mutex_unlock(&mdev->offload_block.lock);
-
-	return ret;
-}
-
-static void mlx5e_ipsec_unblock_tc_offload(struct mlx5_core_dev *mdev)
-{
-	mutex_lock(&mdev->offload_block.lock);
-	if (!WARN_ON_ONCE(!mdev->offload_block.num_block_tc))
-		mdev->offload_block.num_block_tc--;
-	mutex_unlock(&mdev->offload_block.lock);
-}
-
 int mlx5e_accel_ipsec_fs_add_rule(struct mlx5e_ipsec_sa_entry *sa_entry)
 {
 	int err;
 
 	if (sa_entry->attrs.type == XFRM_DEV_OFFLOAD_PACKET) {
-		err = mlx5e_ipsec_block_tc_offload(sa_entry->ipsec->mdev);
+		err = mlx5e_accel_block_tc_offload(sa_entry->ipsec->mdev);
 		if (err)
 			return err;
 	}
@@ -2618,7 +2597,7 @@ int mlx5e_accel_ipsec_fs_add_rule(struct mlx5e_ipsec_sa_entry *sa_entry)
 
 err_out:
 	if (sa_entry->attrs.type == XFRM_DEV_OFFLOAD_PACKET)
-		mlx5e_ipsec_unblock_tc_offload(sa_entry->ipsec->mdev);
+		mlx5e_accel_unblock_tc_offload(sa_entry->ipsec->mdev);
 	return err;
 }
 
@@ -2633,7 +2612,7 @@ void mlx5e_accel_ipsec_fs_del_rule(struct mlx5e_ipsec_sa_entry *sa_entry)
 		mlx5_packet_reformat_dealloc(mdev, ipsec_rule->pkt_reformat);
 
 	if (sa_entry->attrs.type == XFRM_DEV_OFFLOAD_PACKET)
-		mlx5e_ipsec_unblock_tc_offload(mdev);
+		mlx5e_accel_unblock_tc_offload(mdev);
 
 	if (sa_entry->attrs.dir == XFRM_DEV_OFFLOAD_OUT) {
 		tx_ft_put(sa_entry->ipsec, sa_entry->attrs.type);
@@ -2667,7 +2646,7 @@ int mlx5e_accel_ipsec_fs_add_pol(struct mlx5e_ipsec_pol_entry *pol_entry)
 {
 	int err;
 
-	err = mlx5e_ipsec_block_tc_offload(pol_entry->ipsec->mdev);
+	err = mlx5e_accel_block_tc_offload(pol_entry->ipsec->mdev);
 	if (err)
 		return err;
 
@@ -2682,7 +2661,7 @@ int mlx5e_accel_ipsec_fs_add_pol(struct mlx5e_ipsec_pol_entry *pol_entry)
 	return 0;
 
 err_out:
-	mlx5e_ipsec_unblock_tc_offload(pol_entry->ipsec->mdev);
+	mlx5e_accel_unblock_tc_offload(pol_entry->ipsec->mdev);
 	return err;
 }
 
@@ -2693,7 +2672,7 @@ void mlx5e_accel_ipsec_fs_del_pol(struct mlx5e_ipsec_pol_entry *pol_entry)
 
 	mlx5_del_flow_rules(ipsec_rule->rule);
 
-	mlx5e_ipsec_unblock_tc_offload(pol_entry->ipsec->mdev);
+	mlx5e_accel_unblock_tc_offload(pol_entry->ipsec->mdev);
 
 	if (pol_entry->attrs.dir == XFRM_DEV_OFFLOAD_IN) {
 		rx_ft_put_policy(pol_entry->ipsec,
