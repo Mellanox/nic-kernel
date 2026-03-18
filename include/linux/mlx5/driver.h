@@ -790,8 +790,8 @@ struct mlx5_core_dev {
 	struct mlx5_hwmon	*hwmon;
 	struct {
 		struct mutex lock;
-		u64 num_block_tc;
-		u64 num_block_ipsec;
+		u64 num_tc;
+		u64 num_accel;
 	} offload_block;
 #ifdef CONFIG_MLX5_MACSEC
 	struct mlx5_macsec_fs *macsec_fs;

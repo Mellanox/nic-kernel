@@ -603,9 +603,9 @@ struct mlx5e_hairpin_entry {
 
 static void mlx5e_tc_del_flow(struct mlx5e_priv *priv,
 			      struct mlx5e_tc_flow *flow);
-static int mlx5e_tc_block_ipsec_offload(struct net_device *filter,
+static int mlx5e_tc_block_accel_offload(struct net_device *filter,
 					struct mlx5e_priv *priv);
-static void mlx5e_tc_unblock_ipsec_offload(struct net_device *filter,
+static void mlx5e_tc_unblock_accel_offload(struct net_device *filter,
 					   struct mlx5e_priv *priv);
 
 struct mlx5e_tc_flow *mlx5e_flow_get(struct mlx5e_tc_flow *flow)
@@ -2182,7 +2182,7 @@ static void mlx5e_tc_del_flow(struct mlx5e_priv *priv,
 	}
 out:
 	if (!peer) {
-		mlx5e_tc_unblock_ipsec_offload(filter_dev, flow->priv);
+		mlx5e_tc_unblock_accel_offload(filter_dev, flow->priv);
 		mlx5_esw_put(flow->priv->mdev);
 	}
 }
@@ -4514,7 +4514,7 @@ mlx5e_alloc_flow(struct mlx5e_priv *priv, int attr_size,
 	attr->parse_attr = parse_attr;
 	/* Non-peer flows own the reservations until final destruction. */
 	if (!flow_flag_test(flow, PEER)) {
-		err = mlx5e_tc_block_ipsec_offload(filter_dev, priv);
+		err = mlx5e_tc_block_accel_offload(filter_dev, priv);
 		if (err)
 			goto err_free_attr;
 		mlx5_esw_get(priv->mdev);
@@ -4836,14 +4836,14 @@ static bool is_flow_rule_duplicate_allowed(struct net_device *dev,
 	return netif_is_lag_port(dev) && rpriv && rpriv->rep->vport != MLX5_VPORT_UPLINK;
 }
 
-/* As IPsec and TC order is not aligned between software and hardware-offload,
- * either IPsec offload or TC offload, not both, is allowed for a specific interface.
+/* TC offload and accel protocols can overwrite each other's flow_tag with
+ * steering rules and they cannot simultaneously operate on the same interface.
+ * Additionally, as IPsec and TC order is not aligned between software and
+ * hardware-offload, only one is allowed for a specific interface.
  */
-static bool is_tc_ipsec_order_check_needed(struct net_device *filter, struct mlx5e_priv *priv)
+static bool is_tc_accel_check_needed(struct net_device *filter,
+				     struct mlx5e_priv *priv)
 {
-	if (!IS_ENABLED(CONFIG_MLX5_EN_IPSEC))
-		return false;
-
 	if (filter != priv->netdev)
 		return false;
 
@@ -4853,32 +4853,34 @@ static bool is_tc_ipsec_order_check_needed(struct net_device *filter, struct mlx
 	return true;
 }
 
-static int mlx5e_tc_block_ipsec_offload(struct net_device *filter, struct mlx5e_priv *priv)
+static int mlx5e_tc_block_accel_offload(struct net_device *filter,
+					struct mlx5e_priv *priv)
 {
 	struct mlx5_core_dev *mdev = priv->mdev;
 	int ret = 0;
 
-	if (!is_tc_ipsec_order_check_needed(filter, priv))
+	if (!is_tc_accel_check_needed(filter, priv))
 		return 0;
 
 	mutex_lock(&mdev->offload_block.lock);
-	if (mdev->offload_block.num_block_tc)
+	if (mdev->offload_block.num_tc)
 		ret = -EBUSY;
 	else
-		mdev->offload_block.num_block_ipsec++;
+		mdev->offload_block.num_accel++;
 	mutex_unlock(&mdev->offload_block.lock);
 
 	return ret;
 }
 
-static void mlx5e_tc_unblock_ipsec_offload(struct net_device *filter, struct mlx5e_priv *priv)
+static void mlx5e_tc_unblock_accel_offload(struct net_device *filter,
+					   struct mlx5e_priv *priv)
 {
-	if (!is_tc_ipsec_order_check_needed(filter, priv))
+	if (!is_tc_accel_check_needed(filter, priv))
 		return;
 
 	mutex_lock(&priv->mdev->offload_block.lock);
-	if (!WARN_ON_ONCE(!priv->mdev->offload_block.num_block_ipsec))
-		priv->mdev->offload_block.num_block_ipsec--;
+	if (!WARN_ON_ONCE(!priv->mdev->offload_block.num_accel))
+		priv->mdev->offload_block.num_accel--;
 	mutex_unlock(&priv->mdev->offload_block.lock);
 }
 
