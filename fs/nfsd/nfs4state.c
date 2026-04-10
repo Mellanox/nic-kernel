@@ -10380,7 +10380,7 @@ void nfsd_update_cmtime_attr(struct file *f, unsigned int flags)
 	inode_unlock(inode);
 	if (ret)
 		pr_notice_ratelimited("nfsd: Unable to update timestamps on "
-				      "inode %02x:%02x:%llu: %d\n",
+				      "inode %02x:%02x:%lu: %d\n",
 				      MAJOR(inode->i_sb->s_dev),
 				      MINOR(inode->i_sb->s_dev),
 				      inode->i_ino, ret);
