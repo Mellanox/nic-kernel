@@ -861,7 +861,6 @@ int mlx5r_umr_update_xlt(struct mlx5_ib_mr *mr, u64 idx, int npages,
 	size_t orig_sg_length;
 	size_t pages_iter;
 	struct ib_sge sg;
-	u32 pdn = mlx5_mr_pdn(mr);
 	int err = 0;
 	void *xlt;
 
