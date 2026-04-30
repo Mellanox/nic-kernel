@@ -1208,6 +1208,11 @@ static inline struct mlx5_ib_pd *to_mpd(struct ib_pd *ibpd)
 	return container_of(ibpd, struct mlx5_ib_pd, ibpd);
 }
 
+static inline u32 mlx5_mr_pdn(struct mlx5_ib_mr *mr)
+{
+	return to_mpd(mr->ibmr.pd)->pdn;
+}
+
 static inline struct mlx5_ib_srq *to_msrq(struct ib_srq *ibsrq)
 {
 	return container_of(ibsrq, struct mlx5_ib_srq, ibsrq);
