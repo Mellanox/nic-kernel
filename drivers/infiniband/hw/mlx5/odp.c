@@ -840,12 +840,14 @@ static int pagefault_dmabuf_mr(struct mlx5_ib_mr *mr, size_t bcnt,
 			       u32 *bytes_mapped, u32 flags, u32 pdn)
 {
 	struct ib_umem_dmabuf *umem_dmabuf = to_ib_umem_dmabuf(mr->umem);
+	struct mlx5_ib_dev *dev = mr_to_mdev(mr);
 	int access_mode = mr->data_direct ? MLX5_MKC_ACCESS_MODE_KSM :
 					    MLX5_MKC_ACCESS_MODE_MTT;
 	unsigned int old_page_shift = mr->page_shift;
 	unsigned int page_shift;
 	unsigned long page_size;
 	u32 xlt_flags = 0;
+	u32 pdn = 0;
 	int err;
 
 	if (flags & MLX5_PF_FLAGS_ENABLE)
@@ -864,6 +866,10 @@ static int pagefault_dmabuf_mr(struct mlx5_ib_mr *mr, size_t bcnt,
 		err = -EINVAL;
 	} else {
 		page_shift = order_base_2(page_size);
+		if (mr->data_direct)
+			pdn = dev->ddr.pdn;
+		else
+			pdn = mlx5_mr_pdn(mr);
 		if (page_shift != mr->page_shift && mr->dmabuf_faulted) {
 			err = mlx5r_umr_dmabuf_update_pgsz(mr, xlt_flags, pdn,
 							   page_shift);
