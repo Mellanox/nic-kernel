@@ -286,7 +286,7 @@ create_map_eq(struct mlx5_core_dev *dev, struct mlx5_eq *eq,
 	vecidx = mlx5_irq_get_index(eq->irq);
 
 	inlen = MLX5_ST_SZ_BYTES(create_eq_in) +
-		MLX5_FLD_SZ_BYTES(create_eq_in, pas[0]) * eq->frag_buf.npages;
+		MLX5_FLD_SZ_BYTES(create_eq_in, pas[0]) * eq->frag_buf.num_frags;
 
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in) {
@@ -310,7 +310,7 @@ create_map_eq(struct mlx5_core_dev *dev, struct mlx5_eq *eq,
 	MLX5_SET(eqc, eqc, uar_page, priv->bfreg.up->index);
 	MLX5_SET(eqc, eqc, intr, vecidx);
 	MLX5_SET(eqc, eqc, log_page_size,
-		 eq->frag_buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
+		 eq->frag_buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT);
 
 	err = mlx5_cmd_exec(dev, in, inlen, out, sizeof(out));
 	if (err)
