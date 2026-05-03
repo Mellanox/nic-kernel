@@ -445,7 +445,7 @@ static int mlx5_fpga_conn_create_cq(struct mlx5_fpga_conn *conn, int cq_size)
 	}
 
 	inlen = MLX5_ST_SZ_BYTES(create_cq_in) +
-		sizeof(u64) * conn->cq.wq_ctrl.buf.npages;
+		sizeof(u64) * conn->cq.wq_ctrl.buf.num_frags;
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in) {
 		err = -ENOMEM;
@@ -462,7 +462,7 @@ static int mlx5_fpga_conn_create_cq(struct mlx5_fpga_conn *conn, int cq_size)
 	MLX5_SET(cqc, cqc, log_cq_size, ilog2(cq_size));
 	MLX5_SET(cqc, cqc, c_eqn_or_apu_element, eqn);
 	MLX5_SET(cqc, cqc, uar_page, fdev->conn_res.uar->index);
-	MLX5_SET(cqc, cqc, log_page_size, conn->cq.wq_ctrl.buf.page_shift -
+	MLX5_SET(cqc, cqc, log_page_size, conn->cq.wq_ctrl.buf.log_frag_sz -
 			   MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET64(cqc, cqc, dbr_addr, conn->cq.wq_ctrl.db.dma);
 
@@ -545,7 +545,7 @@ static int mlx5_fpga_conn_create_qp(struct mlx5_fpga_conn *conn,
 
 	inlen = MLX5_ST_SZ_BYTES(create_qp_in) +
 		MLX5_FLD_SZ_BYTES(create_qp_in, pas[0]) *
-		conn->qp.wq_ctrl.buf.npages;
+		conn->qp.wq_ctrl.buf.num_frags;
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in) {
 		err = -ENOMEM;
@@ -555,7 +555,7 @@ static int mlx5_fpga_conn_create_qp(struct mlx5_fpga_conn *conn,
 	qpc = MLX5_ADDR_OF(create_qp_in, in, qpc);
 	MLX5_SET(qpc, qpc, uar_page, fdev->conn_res.uar->index);
 	MLX5_SET(qpc, qpc, log_page_size,
-		 conn->qp.wq_ctrl.buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
+		 conn->qp.wq_ctrl.buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET(qpc, qpc, fre, 1);
 	MLX5_SET(qpc, qpc, rlky, 1);
 	MLX5_SET(qpc, qpc, st, MLX5_QP_ST_RC);
