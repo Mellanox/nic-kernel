@@ -395,7 +395,7 @@ static void qp_prepare(struct mlx5_vdpa_net *ndev, bool fw, void *in,
 	MLX5_SET(qpc, qpc, pd, ndev->mvdev.res.pdn);
 	MLX5_SET(qpc, qpc, mtu, MLX5_QPC_MTU_256_BYTES);
 	MLX5_SET(qpc, qpc, uar_page, ndev->mvdev.res.uar->index);
-	MLX5_SET(qpc, qpc, log_page_size, vqp->frag_buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
+	MLX5_SET(qpc, qpc, log_page_size, vqp->frag_buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET(qpc, qpc, no_sq, 1);
 	MLX5_SET(qpc, qpc, cqn_rcv, mvq->cq.mcq.cqn);
 	MLX5_SET(qpc, qpc, log_rq_size, ilog2(num_ent));
@@ -435,7 +435,7 @@ static int qp_create(struct mlx5_vdpa_net *ndev, struct mlx5_vdpa_virtqueue *mvq
 		err = mlx5_db_alloc(ndev->mvdev.mdev, &vqp->db);
 		if (err)
 			goto err_db;
-		inlen += vqp->frag_buf.npages * sizeof(__be64);
+		inlen += vqp->frag_buf.num_frags * sizeof(__be64);
 	}
 
 	in = kzalloc(inlen, GFP_KERNEL);
@@ -583,7 +583,7 @@ static int cq_create(struct mlx5_vdpa_net *ndev, u16 idx, u32 num_ent)
 	cq_frag_buf_init(vcq, &vcq->buf);
 
 	inlen = MLX5_ST_SZ_BYTES(create_cq_in) +
-		MLX5_FLD_SZ_BYTES(create_cq_in, pas[0]) * vcq->buf.frag_buf.npages;
+		MLX5_FLD_SZ_BYTES(create_cq_in, pas[0]) * vcq->buf.frag_buf.num_frags;
 	in = kzalloc(inlen, GFP_KERNEL);
 	if (!in) {
 		err = -ENOMEM;
@@ -595,7 +595,7 @@ static int cq_create(struct mlx5_vdpa_net *ndev, u16 idx, u32 num_ent)
 	mlx5_fill_page_frag_array(&vcq->buf.frag_buf, pas);
 
 	cqc = MLX5_ADDR_OF(create_cq_in, in, cq_context);
-	MLX5_SET(cqc, cqc, log_page_size, vcq->buf.frag_buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
+	MLX5_SET(cqc, cqc, log_page_size, vcq->buf.frag_buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT);
 
 	/* Use vector 0 by default. Consider adding code to choose least used
 	 * vector.
@@ -728,7 +728,7 @@ static int create_umem(struct mlx5_vdpa_net *ndev, struct mlx5_vdpa_virtqueue *m
 	if (err)
 		return err;
 
-	inlen = MLX5_ST_SZ_BYTES(create_umem_in) + MLX5_ST_SZ_BYTES(mtt) * umem->frag_buf.npages;
+	inlen = MLX5_ST_SZ_BYTES(create_umem_in) + MLX5_ST_SZ_BYTES(mtt) * umem->frag_buf.num_frags;
 
 	in = kzalloc(inlen, GFP_KERNEL);
 	if (!in) {
@@ -739,8 +739,8 @@ static int create_umem(struct mlx5_vdpa_net *ndev, struct mlx5_vdpa_virtqueue *m
 	MLX5_SET(create_umem_in, in, opcode, MLX5_CMD_OP_CREATE_UMEM);
 	MLX5_SET(create_umem_in, in, uid, ndev->mvdev.res.uid);
 	um = MLX5_ADDR_OF(create_umem_in, in, umem);
-	MLX5_SET(umem, um, log_page_size, umem->frag_buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
-	MLX5_SET64(umem, um, num_of_mtt, umem->frag_buf.npages);
+	MLX5_SET(umem, um, log_page_size, umem->frag_buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT);
+	MLX5_SET64(umem, um, num_of_mtt, umem->frag_buf.num_frags);
 
 	pas = (__be64 *)MLX5_ADDR_OF(umem, um, mtt[0]);
 	mlx5_fill_page_frag_array_perm(&umem->frag_buf, pas, MLX5_MTT_PERM_RW);
