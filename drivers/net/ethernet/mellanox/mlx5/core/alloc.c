@@ -387,18 +387,18 @@ int mlx5_frag_buf_alloc_node(struct mlx5_core_dev *dev, int size,
 	node = node == NUMA_NO_NODE ? numa_mem_id() : node;
 
 	buf->size = size;
-	buf->npages = DIV_ROUND_UP(size, PAGE_SIZE);
-	buf->page_shift = clamp_t(int, order_base_2(size),
-				  MLX5_FRAG_BUF_POOL_MIN_BLOCK_SHIFT,
-				  PAGE_SHIFT);
-	buf->frags = kcalloc_node(buf->npages, sizeof(*buf->frags),
+	buf->num_frags = DIV_ROUND_UP(size, PAGE_SIZE);
+	buf->log_frag_sz = clamp_t(int, order_base_2(size),
+				   MLX5_FRAG_BUF_POOL_MIN_BLOCK_SHIFT,
+				   PAGE_SHIFT);
+	buf->frags = kcalloc_node(buf->num_frags, sizeof(*buf->frags),
 				  GFP_KERNEL, node);
 	if (!buf->frags)
 		return -ENOMEM;
 
-	pool_idx = buf->page_shift - MLX5_FRAG_BUF_POOL_MIN_BLOCK_SHIFT;
+	pool_idx = buf->log_frag_sz - MLX5_FRAG_BUF_POOL_MIN_BLOCK_SHIFT;
 	pool = dev->priv.frag_buf_node_pools[node]->pools[pool_idx];
-	for (int i = 0; i < buf->npages; i++) {
+	for (int i = 0; i < buf->num_frags; i++) {
 		struct mlx5_buf_list *frag = &buf->frags[i];
 		struct mlx5_dma_pool_page *page;
 		unsigned long idx;
@@ -419,7 +419,7 @@ EXPORT_SYMBOL_GPL(mlx5_frag_buf_alloc_node);
 
 void mlx5_frag_buf_free(struct mlx5_core_dev *dev, struct mlx5_frag_buf *buf)
 {
-	for (int i = 0; i < buf->npages; i++) {
+	for (int i = 0; i < buf->num_frags; i++) {
 		struct mlx5_buf_list *frag = &buf->frags[i];
 		struct mlx5_dma_pool_page *page;
 		struct mlx5_dma_pool *pool;
@@ -539,7 +539,7 @@ void mlx5_fill_page_frag_array_perm(struct mlx5_frag_buf *buf, __be64 *pas, u8 p
 	int i;
 
 	WARN_ON(perm & 0xfc);
-	for (i = 0; i < buf->npages; i++)
+	for (i = 0; i < buf->num_frags; i++)
 		pas[i] = cpu_to_be64(buf->frags[i].map | perm);
 }
 EXPORT_SYMBOL_GPL(mlx5_fill_page_frag_array_perm);

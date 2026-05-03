@@ -906,7 +906,7 @@ static int create_cq_kernel(struct mlx5_ib_dev *dev, struct mlx5_ib_cq *cq,
 
 	*inlen = MLX5_ST_SZ_BYTES(create_cq_in) +
 		 MLX5_FLD_SZ_BYTES(create_cq_in, pas[0]) *
-		 cq->buf.frag_buf.npages;
+		 cq->buf.frag_buf.num_frags;
 	*cqb = kvzalloc(*inlen, GFP_KERNEL);
 	if (!*cqb) {
 		err = -ENOMEM;
@@ -918,7 +918,7 @@ static int create_cq_kernel(struct mlx5_ib_dev *dev, struct mlx5_ib_cq *cq,
 
 	cqc = MLX5_ADDR_OF(create_cq_in, *cqb, cq_context);
 	MLX5_SET(cqc, cqc, log_page_size,
-		 cq->buf.frag_buf.page_shift -
+		 cq->buf.frag_buf.log_frag_sz -
 		 MLX5_ADAPTER_PAGE_SHIFT);
 
 	*index = dev->mdev->priv.bfreg.up->index;
@@ -1393,8 +1393,8 @@ int mlx5_ib_resize_cq(struct ib_cq *ibcq, unsigned int entries,
 		if (err)
 			goto ex;
 		frag_buf = &cq->resize_buf->frag_buf;
-		npas = frag_buf->npages;
-		page_shift = frag_buf->page_shift;
+		npas = frag_buf->num_frags;
+		page_shift = frag_buf->log_frag_sz;
 	}
 
 	inlen = MLX5_ST_SZ_BYTES(modify_cq_in) +
