@@ -352,9 +352,9 @@ struct mlx5_buf_list {
 
 struct mlx5_frag_buf {
 	struct mlx5_buf_list	*frags;
-	int			npages;
+	int			num_frags;
 	int			size;
-	u8			page_shift;
+	u8			log_frag_sz;
 };
 
 struct mlx5_frag_buf_ctrl {
