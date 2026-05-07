@@ -16,6 +16,7 @@ config CRYPTO_DEV_NX_COMPRESS
 	tristate "Compression acceleration support"
 	default y
 	select CRYPTO_ALGAPI
+	select CRYPTO_ACOMP2
 	select 842_DECOMPRESS
 	help
 	  Support for PowerPC Nest (NX) compression acceleration. This
