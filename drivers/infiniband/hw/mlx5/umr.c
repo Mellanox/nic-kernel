@@ -98,9 +98,7 @@ static int umr_check_mkey_mask(struct mlx5_ib_dev *dev, u64 mask)
 	return 0;
 }
 
-enum {
-	MAX_UMR_WR = 128,
-};
+#define MAX_UMR_WR MLX5_UMR_MAX_WR
 
 static int mlx5r_umr_qp_rst2rts(struct mlx5_ib_dev *dev, struct ib_qp *qp)
 {
@@ -181,6 +179,16 @@ int mlx5r_umr_resource_init(struct mlx5_ib_dev *dev)
 	if (ret)
 		goto destroy_qp;
 
+	if (mlx5_ib_adversarial_mode) {
+		dev->umrc.pending = kcalloc(MAX_UMR_WR,
+					    sizeof(*dev->umrc.pending),
+					    GFP_KERNEL);
+		if (!dev->umrc.pending) {
+			ret = -ENOMEM;
+			goto destroy_qp;
+		}
+	}
+
 	dev->umrc.cq = cq;
 
 	sema_init(&dev->umrc.sem, MAX_UMR_WR);
@@ -208,6 +216,7 @@ void mlx5r_umr_resource_cleanup(struct mlx5_ib_dev *dev)
 	/* After device init, UMR cp/qp are not unset during the lifetime. */
 	ib_destroy_qp(dev->umrc.qp);
 	ib_free_cq(dev->umrc.cq);
+	kfree(dev->umrc.pending);
 }
 
 int mlx5r_umr_init(struct mlx5_ib_dev *dev)
@@ -236,7 +245,8 @@ void mlx5r_umr_cleanup(struct mlx5_ib_dev *dev)
 }
 
 
-static int mlx5r_umr_post_send(struct ib_qp *ibqp, u32 mkey, struct ib_cqe *cqe,
+static int mlx5r_umr_post_send(struct ib_qp *ibqp, u32 mkey,
+			       struct mlx5r_umr_context *ctx,
 			       struct mlx5r_umr_wqe *wqe, bool with_data)
 {
 	unsigned int wqe_size =
@@ -245,6 +255,7 @@ static int mlx5r_umr_post_send(struct ib_qp *ibqp, u32 mkey, struct ib_cqe *cqe,
 				    sizeof(struct mlx5_wqe_data_seg);
 	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
 	struct mlx5_core_dev *mdev = dev->mdev;
+	struct umr_common *umrc = &dev->umrc;
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	struct mlx5_wqe_ctrl_seg *ctrl;
 	union {
@@ -267,12 +278,29 @@ static int mlx5r_umr_post_send(struct ib_qp *ibqp, u32 mkey, struct ib_cqe *cqe,
 		goto out;
 
 	qp->sq.wr_data[idx] = MLX5_IB_WR_UMR;
+	if (mlx5_ib_adversarial_mode) {
+		/* mlx5r_finish_wqe() advances cur_post, so record it first */
+		ctx->wqe_ctr = qp->sq.cur_post;
+	}
 
 	mlx5r_memcpy_send_wqe(&qp->sq, &cur_edge, &seg, &size, wqe, wqe_size);
 
-	id.ib_cqe = cqe;
+	id.ib_cqe = &ctx->cqe;
 	mlx5r_finish_wqe(qp, ctrl, seg, size, cur_edge, idx, id.wr_id, 0,
 			 MLX5_FENCE_MODE_INITIATOR_SMALL, MLX5_OPCODE_UMR);
+
+	/*
+	 * Push to the shadow FIFO before the doorbell, so the entry exists
+	 * before a CQE for it can arrive. A hostile NIC can post a CQE before
+	 * the doorbell, so the UMR CQ poller, on another CPU, can't rely on
+	 * the doorbell to see ctx->wqe_ctr and ctx->cqe.done with the entry.
+	 * Publish it with a release, which pairs with the poller's acquire.
+	 */
+	if (mlx5_ib_adversarial_mode) {
+		smp_store_release(&umrc->pending[umrc->pending_tail & (MAX_UMR_WR - 1)],
+				  ctx);
+		umrc->pending_tail++;
+	}
 
 	mlx5r_ring_db(qp, 1, ctrl);
 
@@ -303,7 +331,7 @@ static int mlx5r_umr_recover(struct mlx5_ib_dev *dev, u32 mkey,
 	 * This will ensure that all the previous WRs got a completion before
 	 * we set the QP state to RESET.
 	 */
-	err = mlx5r_umr_post_send(umrc->qp, mkey, &umr_context->cqe, wqe,
+	err = mlx5r_umr_post_send(umrc->qp, mkey, umr_context, wqe,
 				  with_data);
 	if (err) {
 		mlx5_ib_warn(dev, "UMR recovery post send failed, err %d\n", err);
@@ -380,7 +408,7 @@ static int mlx5r_umr_post_send_wait(struct mlx5_ib_dev *dev, u32 mkey,
 			continue;
 		}
 
-		err = mlx5r_umr_post_send(umrc->qp, mkey, &umr_context.cqe, wqe,
+		err = mlx5r_umr_post_send(umrc->qp, mkey, &umr_context, wqe,
 					  with_data);
 		mutex_unlock(&umrc->lock);
 		if (err) {

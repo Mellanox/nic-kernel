@@ -89,6 +89,12 @@ struct mlx5r_umr_context {
 	struct ib_cqe cqe;
 	enum ib_wc_status status;
 	struct completion done;
+	/*
+	 * SQ producer counter the WQE was posted at, matched against the CQE
+	 * wqe_counter in adversarial_mode. Unlike the context address, which
+	 * is reused across posts, or the ring slot, it identifies the WQE.
+	 */
+	u16 wqe_ctr;
 };
 
 struct mlx5r_umr_wqe {

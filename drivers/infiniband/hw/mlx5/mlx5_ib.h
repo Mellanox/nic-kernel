@@ -761,6 +761,12 @@ enum {
 	MLX5_UMR_STATE_ERR,
 };
 
+#define MLX5_UMR_MAX_WR 128
+static_assert((MLX5_UMR_MAX_WR & (MLX5_UMR_MAX_WR - 1)) == 0,
+	      "MLX5_UMR_MAX_WR must be a power of two for FIFO index masking");
+
+struct mlx5r_umr_context;
+
 struct umr_common {
 	struct ib_pd	*pd;
 	struct ib_cq	*cq;
@@ -774,6 +780,10 @@ struct umr_common {
 	unsigned int state;
 	/* Protects from repeat UMR QP creation */
 	struct mutex init_lock;
+	/* Posted UMR contexts in posting order, adversarial_mode only */
+	struct mlx5r_umr_context **pending;
+	u32 pending_head;
+	u32 pending_tail;
 };
 
 struct mlx5_ib_port_resources {
