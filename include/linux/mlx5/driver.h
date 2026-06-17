@@ -1336,6 +1336,7 @@ enum {
 };
 
 bool mlx5_is_roce_on(struct mlx5_core_dev *dev);
+bool mlx5_is_adversarial(void);
 
 static inline bool mlx5_get_roce_state(struct mlx5_core_dev *dev)
 {

@@ -31,6 +31,7 @@
  */
 
 #include <linux/highmem.h>
+#include <linux/cc_platform.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/errno.h>
@@ -487,6 +488,12 @@ bool mlx5_is_roce_on(struct mlx5_core_dev *dev)
 	return MLX5_CAP_GEN(dev, roce);
 }
 EXPORT_SYMBOL(mlx5_is_roce_on);
+
+bool mlx5_is_adversarial(void)
+{
+	return cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT);
+}
+EXPORT_SYMBOL_GPL(mlx5_is_adversarial);
 
 static int handle_hca_cap_2(struct mlx5_core_dev *dev, void *set_ctx)
 {
