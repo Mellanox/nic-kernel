@@ -810,6 +810,7 @@ struct mlx5_core_dev {
 	struct mutex wc_state_lock;
 	struct devlink *shd;
 	struct mlx5_data_direct *data_direct;
+	bool adv_mode;
 };
 
 struct mlx5_db {
@@ -1336,6 +1337,7 @@ enum {
 };
 
 bool mlx5_is_roce_on(struct mlx5_core_dev *dev);
+bool mlx5_is_adversarial(struct mlx5_core_dev *dev);
 
 static inline bool mlx5_get_roce_state(struct mlx5_core_dev *dev)
 {
