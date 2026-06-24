@@ -351,6 +351,12 @@ static int mlx5e_ptp_alloc_txqsq(struct mlx5e_ptp *c, int txq_ix,
 	INIT_WORK(&sq->recover_work, mlx5e_tx_err_cqe_work);
 	sq->stop_room = param->stop_room;
 	sq->ptp_cyc2time = mlx5_sq_ts_translator(mdev);
+	if (MLX5E_GET_PFLAG(params, MLX5E_PFLAG_DATA_DIRECT)) {
+		u32 mkey = mdev->mlx5e_res.hw_objs.data_direct_crossing_mkey;
+
+		sq->crossing_mkey_be = cpu_to_be32(mkey);
+		set_bit(MLX5E_SQ_STATE_DATA_DIRECT, &sq->state);
+	}
 
 	node = dev_to_node(mlx5_core_dma_dev(mdev));
 
