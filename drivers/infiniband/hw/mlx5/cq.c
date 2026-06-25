@@ -464,6 +464,15 @@ static int mlx5_poll_one(struct mlx5_ib_cq *cq,
 	void *cqe;
 	int idx;
 
+	/*
+	 * This path trusts the CQE, so refuse it in adversarial_mode. Only an
+	 * unexpected caller gets here, e.g. the uverbs POLL_CQ command or an
+	 * event on the UMR CQ before its own poll_one is installed. Nothing is
+	 * consumed, so such a CQE is left for that poll_one.
+	 */
+	if (unlikely(mlx5_ib_adversarial_mode))
+		return -EOPNOTSUPP;
+
 repoll:
 	cqe = next_cqe_sw(cq);
 	if (!cqe)
