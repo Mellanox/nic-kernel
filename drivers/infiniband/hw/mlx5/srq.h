@@ -41,7 +41,7 @@ struct mlx5_ib_dev;
 struct mlx5_core_srq {
 	struct mlx5_core_rsc_common common; /* must be first */
 	u32 srqn;
-	int max;
+	u32 max;
 	size_t max_gs;
 	size_t max_avail_gather;
 	int wqe_shift;
