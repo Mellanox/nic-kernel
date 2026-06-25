@@ -1123,6 +1123,15 @@ static void notify_soft_wc_handler(struct work_struct *work)
 	cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
 }
 
+/*
+ * Next power of 2 above entries. It can be 2^32, which doesn't fit the
+ * unsigned long of roundup_pow_of_two() on 32-bit archs.
+ */
+static u64 cq_roundup_entries(u64 entries)
+{
+	return 1ULL << fls64(entries);
+}
+
 int mlx5_ib_create_user_cq(struct ib_cq *ibcq,
 			   const struct ib_cq_init_attr *attr,
 			   struct uverbs_attr_bundle *attrs)
@@ -1130,7 +1139,7 @@ int mlx5_ib_create_user_cq(struct ib_cq *ibcq,
 	struct ib_udata *udata = &attrs->driver_udata;
 	struct ib_device *ibdev = ibcq->device;
 	struct mlx5_ib_create_cq_resp uresp = {};
-	int entries = attr->cqe;
+	u64 entries = attr->cqe;
 	int vector = attr->comp_vector;
 	struct mlx5_ib_dev *dev = to_mdev(ibdev);
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
@@ -1142,15 +1151,17 @@ int mlx5_ib_create_user_cq(struct ib_cq *ibcq,
 	int cqe_size;
 	int eqn;
 	int err;
+	u64 max_cq_entries = MLX5_CAP_GEN_LOGSZ_U64(dev->mdev, log_max_cq_sz);
 
-	if (attr->cqe > (1 << MLX5_CAP_GEN(dev->mdev, log_max_cq_sz)))
+	if (attr->cqe > max_cq_entries)
 		return -EINVAL;
 
 	if (check_cq_create_flags(attr->flags))
 		return -EOPNOTSUPP;
 
-	entries = roundup_pow_of_two(entries + 1);
-	if (entries > (1 << MLX5_CAP_GEN(dev->mdev, log_max_cq_sz)))
+	entries = cq_roundup_entries(entries);
+	/* cq->ibcq.cqe and create_cq_user() take an int */
+	if (entries > max_cq_entries || entries > INT_MAX)
 		return -EINVAL;
 
 	cq->ibcq.cqe = entries - 1;
@@ -1220,7 +1231,7 @@ int mlx5_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		      struct uverbs_attr_bundle *attrs)
 {
 	struct ib_device *ibdev = ibcq->device;
-	int entries = attr->cqe;
+	u64 entries = attr->cqe;
 	int vector = attr->comp_vector;
 	struct mlx5_ib_dev *dev = to_mdev(ibdev);
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
@@ -1232,12 +1243,14 @@ int mlx5_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	int cqe_size;
 	int eqn;
 	int err;
+	u64 max_cq_entries = MLX5_CAP_GEN_LOGSZ_U64(dev->mdev, log_max_cq_sz);
 
-	if (attr->cqe > (1 << MLX5_CAP_GEN(dev->mdev, log_max_cq_sz)))
+	if (attr->cqe > max_cq_entries)
 		return -EINVAL;
 
-	entries = roundup_pow_of_two(entries + 1);
-	if (entries > (1 << MLX5_CAP_GEN(dev->mdev, log_max_cq_sz)))
+	entries = cq_roundup_entries(entries);
+	/* cq->ibcq.cqe and create_cq_kernel() take an int */
+	if (entries > max_cq_entries || entries > INT_MAX)
 		return -EINVAL;
 
 	cq->ibcq.cqe = entries - 1;
@@ -1538,18 +1551,22 @@ int mlx5_ib_resize_cq(struct ib_cq *ibcq, unsigned int entries,
 	int inlen;
 	int cqe_size;
 	unsigned long flags;
+	u64 entries64 = entries;
+	u64 max_cq_entries = MLX5_CAP_GEN_LOGSZ_U64(dev->mdev, log_max_cq_sz);
 
 	if (!MLX5_CAP_GEN(dev->mdev, cq_resize)) {
 		pr_info("Firmware does not support resize CQ\n");
 		return -ENOSYS;
 	}
 
-	if (entries > (1 << MLX5_CAP_GEN(dev->mdev, log_max_cq_sz)))
+	if (entries64 > max_cq_entries)
 		return -EINVAL;
 
-	entries = roundup_pow_of_two(entries + 1);
-	if (entries > (1 << MLX5_CAP_GEN(dev->mdev, log_max_cq_sz)) + 1)
+	entries64 = cq_roundup_entries(entries64);
+	/* resize_user() and resize_kernel() take an int */
+	if (entries64 > max_cq_entries + 1 || entries64 > INT_MAX)
 		return -EINVAL;
+	entries = entries64;
 
 	if (entries == ibcq->cqe + 1)
 		return 0;
