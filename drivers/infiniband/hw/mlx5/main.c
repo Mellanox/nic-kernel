@@ -3069,7 +3069,8 @@ static void handle_general_event(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe
 static int handle_port_change(struct mlx5_ib_dev *ibdev, u32 port, u8 sub_type,
 			      struct ib_event *ibev)
 {
-	if (!rdma_is_port_valid(&ibdev->ib_dev, port)) {
+	if (!rdma_is_port_valid(&ibdev->ib_dev, port) ||
+	    port > ARRAY_SIZE(ibdev->devr.ports)) {
 		mlx5_ib_warn(ibdev, "warning: event on port %d\n", port);
 		return -EINVAL;
 	}

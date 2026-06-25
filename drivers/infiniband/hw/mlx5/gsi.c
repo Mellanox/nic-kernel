@@ -95,6 +95,10 @@ int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 	int num_qps = 0;
 	int ret;
 
+	if (!rdma_is_port_valid(&dev->ib_dev, port_num) ||
+	    port_num > ARRAY_SIZE(dev->devr.ports))
+		return -EINVAL;
+
 	if (mlx5_ib_deth_sqpn_cap(dev)) {
 		if (MLX5_CAP_GEN(dev->mdev,
 				 port_type) == MLX5_CAP_PORT_TYPE_IB)
