@@ -516,6 +516,21 @@ int mlx5_lag_get_dev_seq(struct mlx5_core_dev *dev)
 }
 EXPORT_SYMBOL(mlx5_lag_get_dev_seq);
 
+int mlx5_lag_get_member_idx(struct mlx5_core_dev *dev)
+{
+	struct mlx5_lag *ldev = mlx5_lag_dev(dev);
+	struct lag_fn *fn;
+
+	if (!ldev)
+		return -ENOENT;
+
+	fn = mlx5_lag_fn_by_dev(ldev, dev);
+	if (!fn)
+		return -ENOENT;
+
+	return fn->idx;
+}
+
 /* seq 0 = master, then all remaining devices */
 static int mlx5_lag_get_dev_index_by_seq_all(struct mlx5_lag *ldev, int seq)
 {
