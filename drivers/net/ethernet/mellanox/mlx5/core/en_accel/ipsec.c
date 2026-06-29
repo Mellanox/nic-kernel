@@ -1257,6 +1257,7 @@ mlx5e_ipsec_build_accel_pol_attrs(struct mlx5e_ipsec_pol_entry *pol_entry,
 	attrs->upspec.sport_mask = ntohs(sel->sport_mask);
 	attrs->upspec.proto = sel->proto;
 	attrs->prio = x->priority;
+	attrs->mode = x->xfrm_vec[0].mode;
 }
 
 static int mlx5e_xfrm_add_policy(struct xfrm_policy *x,
