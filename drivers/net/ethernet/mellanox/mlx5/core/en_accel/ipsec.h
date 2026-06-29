@@ -296,6 +296,7 @@ struct mlx5_accel_pol_xfrm_attrs {
 	u8 action;
 	u8 type : 2;
 	u8 dir : 2;
+	u8 mode;
 	u32 reqid;
 	u32 prio;
 };
