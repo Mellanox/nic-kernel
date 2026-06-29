@@ -2182,7 +2182,9 @@ static int tx_add_rule(struct mlx5e_ipsec_sa_entry *sa_entry)
 		goto err_alloc;
 	}
 
-	setup_fte_no_frags(spec);
+	if (attrs->type != XFRM_DEV_OFFLOAD_PACKET ||
+	    attrs->mode != XFRM_MODE_TUNNEL)
+		setup_fte_no_frags(spec);
 	setup_fte_upper_proto_match(spec, &attrs->upspec);
 
 	switch (attrs->type) {
@@ -2279,7 +2281,8 @@ static int tx_add_policy(struct mlx5e_ipsec_pol_entry *pol_entry)
 	else
 		setup_fte_addr6(spec, &attrs->addrs);
 
-	setup_fte_no_frags(spec);
+	if (attrs->mode != XFRM_MODE_TUNNEL)
+		setup_fte_no_frags(spec);
 	setup_fte_upper_proto_match(spec, &attrs->upspec);
 
 	switch (attrs->action) {
@@ -2365,7 +2368,8 @@ static int rx_add_policy(struct mlx5e_ipsec_pol_entry *pol_entry)
 	else
 		setup_fte_addr6(spec, &attrs->addrs);
 
-	setup_fte_no_frags(spec);
+	if (attrs->mode != XFRM_MODE_TUNNEL)
+		setup_fte_no_frags(spec);
 	setup_fte_upper_proto_match(spec, &attrs->upspec);
 
 	switch (attrs->action) {
