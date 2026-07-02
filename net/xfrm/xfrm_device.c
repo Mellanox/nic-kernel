@@ -429,6 +429,9 @@ bool xfrm_dev_offload_ok(struct sk_buff *skb, struct xfrm_state *x)
 	    (x->xso.type == XFRM_DEV_OFFLOAD_UNSPECIFIED && x->encap))
 		return false;
 
+	check_tunnel_size = x->xso.type == XFRM_DEV_OFFLOAD_PACKET &&
+			    x->props.mode == XFRM_MODE_TUNNEL;
+
 	if ((!dev || dev == xfrm_dst_path(dst)->dev) &&
 	    !xdst->child->xfrm) {
 		mtu = xfrm_state_mtu(x, xdst->child_mtu_cached);
@@ -437,6 +440,17 @@ bool xfrm_dev_offload_ok(struct sk_buff *skb, struct xfrm_state *x)
 
 		if (skb_is_gso(skb) && skb_gso_validate_network_len(skb, mtu))
 			goto ok;
+
+		if (check_tunnel_size &&
+		    !skb_is_gso(skb) &&
+		    skb_dst(skb)->ops->family == AF_INET &&
+		    ip_hdr(skb)->ihl == 5 &&
+		    (skb->ignore_df ||
+		     !(ip_hdr(skb)->frag_off & htons(IP_DF))) &&
+		    mtu >= ip_hdrlen(skb) + 8) {
+			IPCB(skb)->frag_max_size = mtu;
+			goto ok;
+		}
 	}
 
 	return false;
@@ -445,8 +459,6 @@ ok:
 	if (!dev)
 		return true;
 
-	check_tunnel_size = x->xso.type == XFRM_DEV_OFFLOAD_PACKET &&
-			    x->props.mode == XFRM_MODE_TUNNEL;
 	switch (skb_dst(skb)->ops->family) {
 	case AF_INET:
 		/* Check for IPv4 options */
