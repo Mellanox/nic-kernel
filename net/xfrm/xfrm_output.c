@@ -16,6 +16,7 @@
 #include <net/gso.h>
 #include <net/icmp.h>
 #include <net/inet_ecn.h>
+#include <net/ip.h>
 #include <net/xfrm.h>
 
 #if IS_ENABLED(CONFIG_IPV6)
@@ -619,6 +620,31 @@ out:
 }
 EXPORT_SYMBOL_GPL(xfrm_output_resume);
 
+/* Fragments built by ip_do_fragment() carry no MAC header: their data starts
+ * at the network header and the reserved link layer headroom is uninitialized.
+ * HW mangles the hard header for packet offload, so the pushed header is only
+ * a placeholder that the device rewrites. Zero-fill it instead of exposing
+ * uninitialized bytes.
+ */
+static int xfrm_dev_direct_xmit(struct net *net, struct sock *sk,
+				struct sk_buff *skb)
+{
+	unsigned int hlen = skb->dev->hard_header_len;
+	int err;
+
+	err = skb_cow_head(skb, hlen);
+	if (err) {
+		kfree_skb(skb);
+		return err;
+	}
+
+	memset(__skb_push(skb, hlen), 0, hlen);
+	skb_reset_mac_header(skb);
+	skb_reset_mac_len(skb);
+
+	return dev_queue_xmit(skb);
+}
+
 static int xfrm_dev_direct_output(struct sock *sk, struct xfrm_state *x,
 				  struct sk_buff *skb)
 {
@@ -647,6 +673,11 @@ static int xfrm_dev_direct_output(struct sock *sk, struct xfrm_state *x,
 	 * to netdevice.
 	 */
 	skb->dev = x->xso.dev;
+	if (skb_dst(skb)->ops->family == AF_INET &&
+	    IPCB(skb)->frag_max_size &&
+	    skb->len > IPCB(skb)->frag_max_size)
+		return ip_do_fragment(net, sk, skb, xfrm_dev_direct_xmit);
+
 	__skb_push(skb, skb->dev->hard_header_len);
 	return dev_queue_xmit(skb);
 }
