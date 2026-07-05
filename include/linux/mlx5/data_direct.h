@@ -15,6 +15,7 @@ struct notifier_block;
 struct pci_dev;
 
 enum mlx5_data_direct_event {
+	/* data points to the departing struct mlx5_data_direct_dev. */
 	MLX5_DATA_DIRECT_UNBIND,
 };
 
