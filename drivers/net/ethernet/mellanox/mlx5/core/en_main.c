@@ -6169,9 +6169,57 @@ static int mlx5e_data_direct_event(struct notifier_block *nb,
 {
 	struct mlx5e_priv *priv = container_of(nb, struct mlx5e_priv,
 					       data_direct_nb);
+	struct mlx5_data_direct_dev *dd_dev = data;
+	struct net_device *netdev = priv->netdev;
+	struct mlx5e_params new_params;
+	bool enabled, reopen;
+	int err;
 
-	if (action == MLX5_DATA_DIRECT_UNBIND)
-		mlx5_core_dbg(priv->mdev, "data direct device unbound\n");
+	if (action != MLX5_DATA_DIRECT_UNBIND)
+		return NOTIFY_DONE;
+
+	rtnl_lock();
+	netdev_lock(netdev);
+
+	mutex_lock(&priv->state_lock);
+	enabled = MLX5E_GET_PFLAG(&priv->channels.params,
+				  MLX5E_PFLAG_DATA_DIRECT);
+	mutex_unlock(&priv->state_lock);
+	if (!enabled)
+		goto out_rtnl;
+
+	/* Closing the netdev stops all DMA using the data direct device
+	 * before the memory providers mapped against it get unmapped. A
+	 * closed netdev reports no DMA device for its queues, so all their
+	 * providers get dropped. state_lock can't be held here as it is
+	 * taken by the ndo callbacks.
+	 */
+	reopen = netif_running(netdev);
+	netif_close(netdev);
+
+	err = netdev_unbind_dma_dev(netdev, dd_dev->device);
+	if (WARN_ON_ONCE(err))
+		goto out;
+
+	mutex_lock(&priv->state_lock);
+	new_params = priv->channels.params;
+	MLX5E_SET_PFLAG(&new_params, MLX5E_PFLAG_DATA_DIRECT, false);
+	mlx5e_safe_switch_params(priv, &new_params, NULL, NULL, false);
+	mutex_unlock(&priv->state_lock);
+
+	netdev_info(netdev, "data_direct device unbound, disabled data_direct\n");
+
+	if (reopen) {
+		err = netif_open(netdev, NULL);
+		if (err)
+			netdev_err(netdev, "Failed to reopen after data_direct unbind, err=%d\n",
+				   err);
+	}
+
+out:
+	netdev_unlock(netdev);
+out_rtnl:
+	rtnl_unlock();
 
 	return NOTIFY_OK;
 }
