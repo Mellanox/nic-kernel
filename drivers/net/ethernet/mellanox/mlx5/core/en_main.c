@@ -6050,27 +6050,38 @@ static int mlx5e_queue_start(struct net_device *dev,
 	return 0;
 }
 
-static struct device *mlx5e_queue_get_dma_dev(struct net_device *dev,
+static struct device *mlx5e_queue_get_dma_dev(struct net_device *netdev,
 					      int queue_index)
 {
-	struct mlx5e_priv *priv = netdev_priv(dev);
-	struct mlx5e_channels *channels;
-	struct device *pdev = NULL;
-	struct mlx5e_channel *ch;
-
-	channels = &priv->channels;
+	struct mlx5e_priv *priv = netdev_priv(netdev);
+	struct mlx5e_params *params = &priv->channels.params;
+	struct device *dma_dev = NULL;
+	struct mlx5_core_dev *mdev;
 
 	mutex_lock(&priv->state_lock);
 
-	if (queue_index >= channels->num)
+	/* Don't depend on open channels: the DMA device is queried before a
+	 * memory provider is installed, and by netdev_unbind_dma_dev() on a
+	 * closed netdev.
+	 */
+	if (queue_index >= params->num_channels)
 		goto out;
 
-	ch = channels->c[queue_index];
-	pdev = ch->pdev;
+	mdev = mlx5_sd_ch_ix_get_dev(priv->mdev, queue_index);
+	if (MLX5E_GET_PFLAG(params, MLX5E_PFLAG_DATA_DIRECT)) {
+		struct mlx5_data_direct_dev *dd_dev;
+
+		/* NULL while the data direct device is going away. */
+		dd_dev = mlx5_data_direct_get_dev(mdev->data_direct);
+		if (dd_dev)
+			dma_dev = dd_dev->device;
+	} else {
+		dma_dev = mlx5_core_dma_dev(mdev);
+	}
 out:
 	mutex_unlock(&priv->state_lock);
 
-	return pdev;
+	return dma_dev;
 }
 
 static const struct netdev_queue_mgmt_ops mlx5e_queue_mgmt_ops = {
