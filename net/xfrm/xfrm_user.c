@@ -1050,6 +1050,7 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 
 error:
 	x->km.state = XFRM_STATE_DEAD;
+	xfrm_dev_state_delete(x);
 	xfrm_state_put(x);
 error_no_put:
 	*errp = err;
