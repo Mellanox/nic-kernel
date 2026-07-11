@@ -1731,6 +1731,9 @@ struct xfrm_state *xfrm_state_lookup_byspi(struct net *net, __be32 spi,
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 	list_for_each_entry(w, &net->xfrm.state_all, all) {
+		/* Racy read of km.state: a stale value is harmless. */
+		if (data_race(READ_ONCE(w->state)) != XFRM_STATE_VALID)
+			continue;
 		x = container_of(w, struct xfrm_state, km);
 		if (x->props.family != family ||
 			x->id.spi != spi)
