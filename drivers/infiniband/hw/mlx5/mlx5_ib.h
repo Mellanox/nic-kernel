@@ -593,6 +593,8 @@ struct mlx5_ib_cq {
 	enum ib_cq_notify_flags notify_flags;
 	struct work_struct	notify_work;
 	u16			private_flags; /* Use mlx5_ib_cq_pr_flags */
+	int (*poll_one)(struct mlx5_ib_cq *cq, struct mlx5_ib_qp **cur_qp,
+			struct ib_wc *wc);
 };
 
 struct mlx5_ib_wc {

@@ -633,7 +633,7 @@ int mlx5_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc)
 		soft_polled = poll_soft_wc(cq, num_entries, wc, false);
 
 	for (npolled = 0; npolled < num_entries - soft_polled; npolled++) {
-		if (mlx5_poll_one(cq, &cur_qp, wc + soft_polled + npolled))
+		if (cq->poll_one(cq, &cur_qp, wc + soft_polled + npolled))
 			break;
 	}
 
@@ -1021,6 +1021,8 @@ int mlx5_ib_create_user_cq(struct ib_cq *ibcq,
 
 	cq->mcq.comp = mlx5_add_cq_to_tasklet;
 	cq->mcq.tasklet_ctx.comp = mlx5_ib_cq_comp;
+	/* Set before the CQ is created, see mlx5_ib_create_cq() */
+	cq->poll_one = mlx5_poll_one;
 
 	err = mlx5_core_create_cq(dev->mdev, &cq->mcq, cqb, inlen, out, sizeof(out));
 	if (err)
@@ -1105,6 +1107,11 @@ int mlx5_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	MLX5_SET64(cqc, cqc, dbr_addr, cq->db.dma);
 
 	cq->mcq.comp = mlx5_ib_cq_comp;
+	/*
+	 * Set before mlx5_core_create_cq(). No real CQE can arrive before a
+	 * QP uses the CQ, but a forged one can make mlx5_ib_poll_cq() call it.
+	 */
+	cq->poll_one = mlx5_poll_one;
 
 	err = mlx5_core_create_cq(dev->mdev, &cq->mcq, cqb, inlen, out,
 				  sizeof(out));
