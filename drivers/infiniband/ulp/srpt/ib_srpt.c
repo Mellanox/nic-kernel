@@ -1017,9 +1017,10 @@ unwind:
 				ctx->sg, ctx->nents, dir);
 		target_free_sgl(ctx->sg, ctx->nents);
 	}
-	if (ioctx->rw_ctxs != &ioctx->s_rw_ctx)
+	if (ioctx->rw_ctxs != &ioctx->s_rw_ctx) {
 		kfree(ioctx->rw_ctxs);
-	ioctx->rw_ctxs = NULL;
+		ioctx->rw_ctxs = NULL;
+	}
 	ioctx->n_rw_ctx = n_rw_ctx;
 	ioctx->n_rdma = n_rdma;
 	return ret;
