@@ -36,6 +36,9 @@
 #include <linux/inetdevice.h>
 #include <linux/netdevice.h>
 #include <net/netevent.h>
+#if IS_ENABLED(CONFIG_IPV6)
+#include <net/ndisc.h>
+#endif
 
 #include "en.h"
 #include "eswitch.h"
@@ -264,6 +267,7 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	struct dst_entry *rt_dst_entry;
 	struct flowi4 fl4 = {};
 	struct flowi6 fl6 = {};
+	struct neigh_table *tbl;
 	struct neighbour *n;
 	u8 addr[ETH_ALEN];
 	struct rtable *rt;
@@ -329,6 +333,7 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	 */
 	switch (addrs->family) {
 	case AF_INET:
+		tbl = &arp_tbl;
 		rt = ip_route_output_key(dev_net(netdev), &fl4);
 		if (IS_ERR(rt))
 			goto neigh;
@@ -339,11 +344,13 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 		}
 		rt_dst_entry = &rt->dst;
 		break;
+#if IS_ENABLED(CONFIG_IPV6)
 	case AF_INET6:
-		if (!IS_ENABLED(CONFIG_IPV6) ||
-		    ip6_dst_lookup(dev_net(netdev), NULL, &rt_dst_entry, &fl6))
+		tbl = &nd_tbl;
+		if (ip6_dst_lookup(dev_net(netdev), NULL, &rt_dst_entry, &fl6))
 			goto neigh;
 		break;
+#endif
 	default:
 		return;
 	}
@@ -364,9 +371,9 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	return;
 
 neigh:
-	n = neigh_lookup(&arp_tbl, pkey, netdev);
+	n = neigh_lookup(tbl, pkey, netdev);
 	if (!n) {
-		n = neigh_create(&arp_tbl, pkey, netdev);
+		n = neigh_create(tbl, pkey, netdev);
 		if (IS_ERR(n))
 			return;
 		neigh_event_send(n, NULL);
@@ -592,6 +599,12 @@ static int mlx5e_xfrm_validate_state(struct mlx5_core_dev *mdev,
 		    !(mlx5_ipsec_device_caps(mdev) & MLX5_IPSEC_CAP_TUNNEL)) {
 			NL_SET_ERR_MSG_MOD(extack, "Packet offload is not supported for tunnel mode");
 			return -EINVAL;
+		}
+		if (x->props.family == AF_INET6 &&
+		    x->props.mode == XFRM_MODE_TUNNEL &&
+		    !IS_ENABLED(CONFIG_IPV6)) {
+			NL_SET_ERR_MSG_MOD(extack, "IPv6 is not enabled");
+			return -EOPNOTSUPP;
 		}
 
 		if (x->replay_esn && x->xso.dir == XFRM_DEV_OFFLOAD_IN &&
