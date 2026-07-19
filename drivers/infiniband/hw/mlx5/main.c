@@ -76,6 +76,7 @@ enum {
 	MLX5_ATOMIC_SIZE_QP_8BYTES = 1 << 3,
 };
 
+bool mlx5_ib_adversarial_mode;
 static struct workqueue_struct *mlx5_ib_event_wq;
 static LIST_HEAD(mlx5_ib_unaffiliated_port_list);
 static LIST_HEAD(mlx5_ib_dev_list);
@@ -5635,6 +5636,8 @@ static int __init mlx5_ib_init(void)
 		kfree(xlt_emergency_page);
 		return -ENOMEM;
 	}
+
+	mlx5_ib_adversarial_mode = mlx5_is_adversarial();
 
 	ret = mlx5_ib_qp_event_init();
 	if (ret)
