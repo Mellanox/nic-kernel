@@ -1594,6 +1594,7 @@ static inline int get_uars_per_sys_page(struct mlx5_ib_dev *dev, bool lib_suppor
 }
 
 extern void *xlt_emergency_page;
+extern bool mlx5_ib_adversarial_mode;
 
 int bfregn_to_uar_index(struct mlx5_ib_dev *dev,
 			struct mlx5_bfreg_info *bfregi, u32 bfregn,
