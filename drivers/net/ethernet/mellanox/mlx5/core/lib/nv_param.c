@@ -900,7 +900,9 @@ static const struct devlink_param mlx5_nv_param_devlink_params[] = {
 
 int mlx5_nv_param_register_dl_params(struct devlink *devlink)
 {
-	if (!mlx5_core_is_pf(devlink_priv(devlink)))
+	struct mlx5_core_dev *dev = devlink_priv(devlink);
+
+	if (!mlx5_core_is_pf(dev) || !MLX5_CAP_MCAM_REG(dev, mnvda))
 		return 0;
 
 	return devl_params_register(devlink, mlx5_nv_param_devlink_params,
@@ -909,7 +911,9 @@ int mlx5_nv_param_register_dl_params(struct devlink *devlink)
 
 void mlx5_nv_param_unregister_dl_params(struct devlink *devlink)
 {
-	if (!mlx5_core_is_pf(devlink_priv(devlink)))
+	struct mlx5_core_dev *dev = devlink_priv(devlink);
+
+	if (!mlx5_core_is_pf(dev) || !MLX5_CAP_MCAM_REG(dev, mnvda))
 		return;
 
 	devl_params_unregister(devlink, mlx5_nv_param_devlink_params,
