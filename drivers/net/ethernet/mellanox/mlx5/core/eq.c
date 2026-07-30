@@ -1195,9 +1195,13 @@ static int get_num_eqs(struct mlx5_core_dev *dev)
 int mlx5_eq_table_create(struct mlx5_core_dev *dev)
 {
 	struct mlx5_eq_table *eq_table = dev->priv.eq_table;
-	int err;
+	int err, num_eqs;
 
-	eq_table->max_comp_eqs = get_num_eqs(dev);
+	num_eqs = get_num_eqs(dev);
+	if (num_eqs <= 0)
+		return -EINVAL;
+
+	eq_table->max_comp_eqs = num_eqs;
 	err = create_async_eqs(dev);
 	if (err) {
 		mlx5_core_err(dev, "Failed to create async EQs\n");
