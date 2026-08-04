@@ -103,6 +103,8 @@ bool mlx5_eswitch_vport_match_metadata_enabled(const struct mlx5_eswitch *esw);
 #define ESW_REG_C0_USER_DATA_METADATA_BITS (32 - ESW_SOURCE_PORT_METADATA_BITS)
 #define ESW_REG_C0_USER_DATA_METADATA_MASK GENMASK(ESW_REG_C0_USER_DATA_METADATA_BITS - 1, 0)
 
+#define MLX5_ESW_MAX_VPORT_ID ((1 << ESW_VPORT_BITS) - 1)
+
 static inline u32 mlx5_eswitch_get_vport_metadata_mask(void)
 {
 	return GENMASK(31, 32 - ESW_SOURCE_PORT_METADATA_BITS);
