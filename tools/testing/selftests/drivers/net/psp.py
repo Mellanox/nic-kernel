@@ -11,7 +11,7 @@ import struct
 import termios
 import time
 
-from contextlib import contextmanager
+from psp_lib import init_psp_dev, make_lo_conn, require_version
 
 from lib.py import defer
 from lib.py import ksft_run, ksft_exit, ksft_pr
@@ -58,17 +58,6 @@ def _make_psp_conn(cfg, version=0, ipver=None):
     remote_addr = cfg.remote_addr_v[ipver] if ipver else cfg.remote_addr
     s = socket.create_connection((remote_addr, cfg.comm_port), )
     return s
-
-
-@contextmanager
-def _make_lo_conn():
-    # After tx-assoc, the client's egress is dropped, since lo has no
-    # psp_dev, so its FIN never reaches the server. Closing the server
-    # resets the unaccepted child, and the client accepts the cleartext
-    # RST because it hasn't received any PSP traffic yet.
-    with socket.create_server(("localhost", 0)) as srv, \
-         socket.create_connection(srv.getsockname()[:2]) as s:
-        yield s
 
 
 def _close_conn(cfg, s):
@@ -157,34 +146,13 @@ def _get_stat(cfg, key):
 # Test case boiler plate
 #
 
-def _init_psp_dev(cfg, use_psp_ifindex=False):
-    if not hasattr(cfg, 'psp_dev_id'):
-        # Figure out which local device we are testing against
-        # For NetDrvContEnv: use psp_ifindex instead of ifindex
-        target_ifindex = cfg.psp_ifindex if use_psp_ifindex else cfg.ifindex
-        for dev in cfg.pspnl.dev_get({}, dump=True):
-            if dev['ifindex'] == target_ifindex:
-                cfg.psp_info = dev
-                cfg.psp_dev_id = cfg.psp_info['id']
-                break
-        else:
-            raise KsftSkipEx("No PSP devices found")
-
-    # Enable PSP if necessary
-    cap = cfg.psp_info['psp-versions-cap']
-    ena = cfg.psp_info['psp-versions-ena']
-    if cap != ena:
-        cfg.pspnl.dev_set({'id': cfg.psp_dev_id, 'psp-versions-ena': cap})
-        defer(cfg.pspnl.dev_set, {'id': cfg.psp_dev_id,
-                                  'psp-versions-ena': ena })
-
 #
 # Test cases
 #
 
 def dev_list_devices(cfg):
     """ Dump all devices """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     devices = cfg.pspnl.dev_get({}, dump=True)
 
@@ -196,7 +164,7 @@ def dev_list_devices(cfg):
 
 def dev_get_device(cfg):
     """ Get the device we intend to use """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     dev = cfg.pspnl.dev_get({'id': cfg.psp_dev_id})
     ksft_eq(dev['id'], cfg.psp_dev_id)
@@ -215,7 +183,7 @@ def dev_get_device_bad(cfg):
 
 def dev_rotate(cfg):
     """ Test key rotation """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     prev_rotations = _get_stat(cfg, 'key-rotations')
 
@@ -230,16 +198,16 @@ def dev_rotate(cfg):
 
 def dev_rotate_spi(cfg):
     """ Test key rotation and SPI check """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     top_a = top_b = 0
-    with _make_lo_conn() as s:
+    with make_lo_conn() as s:
         assoc_a = cfg.pspnl.rx_assoc({"version": 0,
                                      "dev-id": cfg.psp_dev_id,
                                      "sock-fd": s.fileno()})
         top_a = assoc_a['rx-key']['spi'] >> 31
     rot = cfg.pspnl.key_rotate({"id": cfg.psp_dev_id})
-    with _make_lo_conn() as s:
+    with make_lo_conn() as s:
         ksft_eq(rot['id'], cfg.psp_dev_id)
         assoc_b = cfg.pspnl.rx_assoc({"version": 0,
                                     "dev-id": cfg.psp_dev_id,
@@ -250,9 +218,9 @@ def dev_rotate_spi(cfg):
 
 def assoc_basic(cfg):
     """ Test creating associations """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
-    with _make_lo_conn() as s:
+    with make_lo_conn() as s:
         assoc = cfg.pspnl.rx_assoc({"version": 0,
                                   "dev-id": cfg.psp_dev_id,
                                   "sock-fd": s.fileno()})
@@ -269,7 +237,7 @@ def assoc_basic(cfg):
 
 def assoc_bad_dev(cfg):
     """ Test creating associations with bad device ID """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
         with ksft_raises(NlError) as cm:
@@ -281,7 +249,7 @@ def assoc_bad_dev(cfg):
 
 def assoc_sk_only_conn(cfg):
     """ Test creating associations based on socket """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with _make_clr_conn(cfg) as s:
         assoc = cfg.pspnl.rx_assoc({"version": 0,
@@ -295,7 +263,7 @@ def assoc_sk_only_conn(cfg):
 
 def assoc_sk_only_mismatch(cfg):
     """ Test creating associations based on socket (dev mismatch) """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with _make_clr_conn(cfg) as s:
         with ksft_raises(NlError) as cm:
@@ -310,7 +278,7 @@ def assoc_sk_only_mismatch(cfg):
 
 def assoc_sk_only_mismatch_tx(cfg):
     """ Test creating associations based on socket (dev mismatch) """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with _make_clr_conn(cfg) as s:
         with ksft_raises(NlError) as cm:
@@ -328,7 +296,7 @@ def assoc_sk_only_mismatch_tx(cfg):
 
 def assoc_sk_only_unconn(cfg):
     """ Test creating associations based on socket (unconnected, should fail) """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
         with ksft_raises(NlError) as cm:
@@ -341,7 +309,7 @@ def assoc_sk_only_unconn(cfg):
 
 def assoc_rx_unconnected(cfg):
     """ Test that an Rx assoc is rejected on an unconnected socket """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
         with ksft_raises(NlError) as cm:
@@ -354,7 +322,7 @@ def assoc_rx_unconnected(cfg):
 
 def assoc_rx_listener(cfg):
     """ Test that an Rx assoc is rejected on a listening socket """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with socket.create_server(("localhost", 0)) as s:
         with ksft_raises(NlError) as cm:
@@ -367,7 +335,7 @@ def assoc_rx_listener(cfg):
 
 def assoc_version_mismatch(cfg):
     """ Test creating associations where Rx and Tx PSP versions do not match """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     versions = list(cfg.psp_info['psp-versions-cap'])
     if len(versions) < 2:
@@ -376,7 +344,7 @@ def assoc_version_mismatch(cfg):
     # Translate versions to integers
     versions = [cfg.pspnl.consts["version"].entries[v].value for v in versions]
 
-    with _make_lo_conn() as s:
+    with make_lo_conn() as s:
         rx = cfg.pspnl.rx_assoc({"version": versions[0],
                                  "dev-id": cfg.psp_dev_id,
                                  "sock-fd": s.fileno()})
@@ -402,7 +370,7 @@ def _require_tls_ulp():
 
 def assoc_psp_ulp_exclusive(cfg):
     """ Test that a TCP ULP cannot be attached to a PSP socket """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
     _require_tls_ulp()
 
     with _make_clr_conn(cfg) as s:
@@ -419,7 +387,7 @@ def assoc_psp_ulp_exclusive(cfg):
 
 def assoc_ulp_psp_exclusive(cfg):
     """ Test that a PSP assoc cannot be added to a socket with a TCP ULP """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
     _require_tls_ulp()
 
     with _make_clr_conn(cfg) as s:
@@ -437,7 +405,7 @@ def assoc_ulp_psp_exclusive(cfg):
 
 def assoc_twice(cfg):
     """ Test reusing Tx assoc for two sockets """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     def rx_assoc_check(s):
         assoc = cfg.pspnl.rx_assoc({"version": 0,
@@ -449,7 +417,7 @@ def assoc_twice(cfg):
 
         return assoc
 
-    with _make_lo_conn() as s:
+    with make_lo_conn() as s:
         assoc = rx_assoc_check(s)
         tx = cfg.pspnl.tx_assoc({"dev-id": cfg.psp_dev_id,
                                "version": 0,
@@ -458,7 +426,7 @@ def assoc_twice(cfg):
         ksft_eq(len(tx), 0)
 
         # Use the same Tx assoc second time
-        with _make_lo_conn() as s2:
+        with make_lo_conn() as s2:
             rx_assoc_check(s2)
             tx = cfg.pspnl.tx_assoc({"dev-id": cfg.psp_dev_id,
                                    "version": 0,
@@ -469,19 +437,9 @@ def assoc_twice(cfg):
 
 def _data_basic_send(cfg, version, ipver):
     """ Test basic data send """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
-    # Version 0 is required by spec, don't let it skip
-    if version:
-        name = cfg.pspnl.consts["version"].entries_by_val[version].name
-        if name not in cfg.psp_info['psp-versions-cap']:
-            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
-                with ksft_raises(NlError) as cm:
-                    cfg.pspnl.rx_assoc({"version": version,
-                                        "dev-id": cfg.psp_dev_id,
-                                        "sock-fd": s.fileno()})
-                ksft_eq(cm.exception.nl_msg.error, -errno.EOPNOTSUPP)
-            raise KsftSkipEx("PSP version not supported", name)
+    require_version(cfg, version)
 
     s = _make_psp_conn(cfg, version, ipver)
 
@@ -519,7 +477,7 @@ def __bad_xfer_do(cfg, s, tx, version='hdr0-aes-gcm-128'):
 
 def data_send_bad_key(cfg):
     """ Test send data with bad key """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     s = _make_psp_conn(cfg)
 
@@ -534,7 +492,7 @@ def data_send_bad_key(cfg):
 
 def data_send_disconnect(cfg):
     """ Test socket close after sending data """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     with _make_psp_conn(cfg) as s:
         assoc = cfg.pspnl.rx_assoc({"version": 0,
@@ -552,7 +510,7 @@ def data_send_disconnect(cfg):
 
 
 def _data_mss_adjust(cfg, ipver):
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     # First figure out what the MSS would be without any adjustments
     s = _make_clr_conn(cfg, ipver)
@@ -592,7 +550,7 @@ def _data_mss_adjust(cfg, ipver):
 
 def data_stale_key(cfg):
     """ Test send on a double-rotated key """
-    _init_psp_dev(cfg)
+    init_psp_dev(cfg)
 
     prev_stale = _get_stat(cfg, 'stale-events')
     s = _make_psp_conn(cfg)
@@ -871,7 +829,7 @@ def _check_disassoc_ntf(cfg, main_pspnl, peer_pspnl, ifindex):
 
 def _dev_disassoc_notify_multi_ns_netkit(cfg):
     """ Test the notifications dev-disassoc generates in both namespaces """
-    _init_psp_dev(cfg, True)
+    init_psp_dev(cfg, True)
     defer(delattr, cfg, 'psp_dev_id')
     defer(delattr, cfg, 'psp_info')
 
@@ -898,7 +856,7 @@ def _dev_disassoc_notify_one_of_two_netkit(cfg):
     Disassociating the second one takes the device out of its view,
     generates 'dev-del-ntf'.
     """
-    _init_psp_dev(cfg, True)
+    init_psp_dev(cfg, True)
     defer(delattr, cfg, 'psp_dev_id')
     defer(delattr, cfg, 'psp_info')
 
@@ -983,7 +941,7 @@ def _psp_dev_get_check_netkit_psp_assoc(cfg):
 
 def _dev_assoc_no_nsid(cfg):
     """ Test dev-assoc and dev-disassoc without nsid attribute """
-    _init_psp_dev(cfg, True)
+    init_psp_dev(cfg, True)
 
     # Associate without nsid - should look up ifindex in caller's netns
     cfg.pspnl.dev_assoc({'id': cfg.psp_dev_id,
@@ -1059,7 +1017,7 @@ def _psp_dev_assoc_cleanup_on_netkit_del(cfg):
     Creates a disposable netkit pair for this test to avoid destroying
     the shared environment.
     """
-    _init_psp_dev(cfg, True)
+    init_psp_dev(cfg, True)
     defer(delattr, cfg, 'psp_dev_id')
     defer(delattr, cfg, 'psp_info')
 
@@ -1105,7 +1063,7 @@ def _try_disassoc(cfg, psp_dev_id, ifindex, nsid=None):
 
 def _assoc_nk_guest(cfg):
     """Associate nk_guest with PSP device and register cleanup via defer()."""
-    _init_psp_dev(cfg, True)
+    init_psp_dev(cfg, True)
 
     cfg.pspnl.dev_assoc({'id': cfg.psp_dev_id,
                          'ifindex': cfg.nk_guest_ifindex,
