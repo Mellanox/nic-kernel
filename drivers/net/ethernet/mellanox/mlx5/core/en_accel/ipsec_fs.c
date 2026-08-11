@@ -29,6 +29,7 @@ enum {
 struct mlx5e_ipsec_fc {
 	struct mlx5_fc *cnt;
 	struct mlx5_fc *drop;
+	struct mlx5_fc *tnl_drop;
 };
 
 struct mlx5e_ipsec_tx {
@@ -36,6 +37,7 @@ struct mlx5e_ipsec_tx {
 	struct mlx5e_ipsec_miss pol;
 	struct mlx5e_ipsec_miss sa;
 	struct mlx5e_ipsec_rule status;
+	struct mlx5_flow_handle *tnl_packet_offload_drop_rule;
 	struct mlx5_flow_namespace *ns;
 	struct mlx5e_ipsec_fc *fc;
 	struct mlx5_fs_chains *chains;
@@ -1251,6 +1253,60 @@ err_rule:
 	return err;
 }
 
+static int ipsec_tnl_packet_offload_drop_rule_tx(struct mlx5_core_dev *mdev,
+						 struct mlx5e_ipsec_tx *tx)
+{
+	struct mlx5_flow_destination dest = {};
+	struct mlx5_flow_act flow_act = {};
+	struct mlx5_flow_handle *fte;
+	int err;
+
+	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_DROP |
+			  MLX5_FLOW_CONTEXT_ACTION_COUNT;
+	dest.type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
+	dest.counter = tx->fc->tnl_drop;
+	fte = mlx5_add_flow_rules(tx->ft.tnl_packet_offload_drop, NULL,
+				  &flow_act, &dest, 1);
+	if (IS_ERR(fte)) {
+		err = PTR_ERR(fte);
+		mlx5_core_err(mdev, "Fail to add ipsec tx sa drop rule for tunnel packet offload err=%d\n",
+			      err);
+		return err;
+	}
+
+	tx->tnl_packet_offload_drop_rule = fte;
+	return 0;
+}
+
+static int ipsec_tx_sa_drop_create(struct mlx5_core_dev *mdev,
+				   struct mlx5e_ipsec_tx *tx,
+				   struct mlx5e_ipsec_tx_create_attr *attr)
+{
+	struct mlx5_flow_table *ft;
+	int err;
+
+	ft = ipsec_ft_create(tx->ns, attr->cnt_level, attr->prio, 1, 1, 0);
+	if (IS_ERR(ft)) {
+		err = PTR_ERR(ft);
+		mlx5_core_err(mdev, "Failed to create ipsec tx tunnel packet offload drop table, err=%d\n",
+			      err);
+		return err;
+	}
+	tx->ft.tnl_packet_offload_drop = ft;
+
+	err = ipsec_tnl_packet_offload_drop_rule_tx(mdev, tx);
+	if (err)
+		mlx5_destroy_flow_table(ft);
+
+	return err;
+}
+
+static void ipsec_tx_sa_drop_destroy(struct mlx5e_ipsec_tx *tx)
+{
+	mlx5_del_flow_rules(tx->tnl_packet_offload_drop_rule);
+	mlx5_destroy_flow_table(tx->ft.tnl_packet_offload_drop);
+}
+
 /* IPsec TX flow steering */
 static void tx_destroy(struct mlx5e_ipsec *ipsec, struct mlx5e_ipsec_tx *tx,
 		       struct mlx5_ipsec_fs *roce)
@@ -1271,6 +1327,7 @@ static void tx_destroy(struct mlx5e_ipsec *ipsec, struct mlx5e_ipsec_tx *tx,
 	mlx5_destroy_flow_table(tx->ft.sa);
 	if (tx->allow_tunnel_mode)
 		mlx5_eswitch_unblock_encap(ipsec->mdev);
+	ipsec_tx_sa_drop_destroy(tx);
 	mlx5_del_flow_rules(tx->status.rule);
 	mlx5_destroy_flow_table(tx->ft.status);
 }
@@ -1310,6 +1367,10 @@ static int tx_create(struct mlx5e_ipsec *ipsec, struct mlx5e_ipsec_tx *tx,
 	err = ipsec_counter_rule_tx(mdev, tx);
 	if (err)
 		goto err_status_rule;
+
+	err = ipsec_tx_sa_drop_create(mdev, tx, &attr);
+	if (err)
+		goto err_sa_drop;
 
 	if (mlx5_ipsec_device_caps(mdev) & MLX5_IPSEC_CAP_TUNNEL)
 		tx->allow_tunnel_mode =
@@ -1383,6 +1444,8 @@ err_sa_miss:
 err_sa_ft:
 	if (tx->allow_tunnel_mode)
 		mlx5_eswitch_unblock_encap(mdev);
+	ipsec_tx_sa_drop_destroy(tx);
+err_sa_drop:
 	mlx5_del_flow_rules(tx->status.rule);
 err_status_rule:
 	mlx5_destroy_flow_table(tx->ft.status);
@@ -2170,11 +2233,16 @@ static int tx_add_rule(struct mlx5e_ipsec_sa_entry *sa_entry)
 	struct mlx5_flow_spec *spec;
 	struct mlx5e_ipsec_tx *tx;
 	struct mlx5_fc *counter;
-	int err;
+	bool fwd_to_drop_ft;
+	int err, ndest = 0;
 
 	tx = tx_ft_get(mdev, ipsec, attrs->type);
 	if (IS_ERR(tx))
 		return PTR_ERR(tx);
+
+	fwd_to_drop_ft = attrs->drop &&
+			 attrs->type == XFRM_DEV_OFFLOAD_PACKET &&
+			 attrs->mode == XFRM_MODE_TUNNEL;
 
 	spec = kvzalloc_obj(*spec);
 	if (!spec) {
@@ -2199,6 +2267,8 @@ static int tx_add_rule(struct mlx5e_ipsec_sa_entry *sa_entry)
 		break;
 	case XFRM_DEV_OFFLOAD_PACKET:
 		setup_fte_reg_c4(spec, attrs->reqid);
+		if (fwd_to_drop_ft)
+			break;
 		err = setup_pkt_reformat(ipsec, attrs, &flow_act);
 		if (err)
 			goto err_pkt_reformat;
@@ -2213,21 +2283,37 @@ static int tx_add_rule(struct mlx5e_ipsec_sa_entry *sa_entry)
 		goto err_add_cnt;
 	}
 
-	flow_act.crypto.type = MLX5_FLOW_CONTEXT_ENCRYPT_DECRYPT_TYPE_IPSEC;
-	flow_act.crypto.obj_id = sa_entry->ipsec_obj_id;
 	flow_act.flags |= FLOW_ACT_NO_APPEND;
-	flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_CRYPTO_ENCRYPT |
-			   MLX5_FLOW_CONTEXT_ACTION_COUNT;
-	if (attrs->drop)
-		flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_DROP;
-	else
+	flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_COUNT;
+	if (fwd_to_drop_ft) {
 		flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_FWD_DEST;
+		dest[ndest].type = MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE;
+		dest[ndest].ft = tx->ft.tnl_packet_offload_drop;
+		ndest++;
+	} else {
+		flow_act.crypto.type =
+			MLX5_FLOW_CONTEXT_ENCRYPT_DECRYPT_TYPE_IPSEC;
+		flow_act.crypto.obj_id = sa_entry->ipsec_obj_id;
+		flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_CRYPTO_ENCRYPT;
 
-	dest[0].ft = tx->ft.status;
-	dest[0].type = MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE;
-	dest[1].type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
-	dest[1].counter = counter;
-	rule = mlx5_add_flow_rules(tx->ft.sa, spec, &flow_act, dest, 2);
+		if (attrs->drop) {
+			flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_DROP;
+		} else if (attrs->mode == XFRM_MODE_TUNNEL &&
+			   attrs->type == XFRM_DEV_OFFLOAD_PACKET) {
+			flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_ALLOW;
+		} else {
+			flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_FWD_DEST;
+			dest[ndest].ft = tx->ft.status;
+			dest[ndest].type =
+				MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE;
+			ndest++;
+		}
+	}
+	dest[ndest].type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
+	dest[ndest].counter = counter;
+	ndest++;
+	rule = mlx5_add_flow_rules(tx->ft.sa, spec, &flow_act, dest, ndest);
+
 	if (IS_ERR(rule)) {
 		err = PTR_ERR(rule);
 		mlx5_core_err(mdev, "fail to add TX ipsec rule err=%d\n", err);
@@ -2288,6 +2374,12 @@ static int tx_add_policy(struct mlx5e_ipsec_pol_entry *pol_entry)
 	switch (attrs->action) {
 	case XFRM_POLICY_ALLOW:
 		flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_FWD_DEST;
+		if (attrs->mode == XFRM_MODE_TUNNEL) {
+			flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_COUNT;
+			dest[dstn].type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
+			dest[dstn].counter = tx->fc->cnt;
+			dstn++;
+		}
 		if (!attrs->reqid)
 			break;
 
@@ -2415,6 +2507,7 @@ err_alloc:
 static void ipsec_fs_destroy_single_counter(struct mlx5_core_dev *mdev,
 					    struct mlx5e_ipsec_fc *fc)
 {
+	mlx5_fc_destroy(mdev, fc->tnl_drop);
 	mlx5_fc_destroy(mdev, fc->drop);
 	mlx5_fc_destroy(mdev, fc->cnt);
 	kfree(fc);
@@ -2469,6 +2562,7 @@ static int ipsec_fs_init_counters(struct mlx5e_ipsec *ipsec)
 {
 	struct mlx5_core_dev *mdev = ipsec->mdev;
 	struct mlx5e_ipsec_fc *fc;
+	struct mlx5_fc *counter;
 	int err;
 
 	fc = ipsec_fs_init_single_counter(mdev);
@@ -2485,6 +2579,13 @@ static int ipsec_fs_init_counters(struct mlx5e_ipsec *ipsec)
 	}
 	ipsec->tx->fc = fc;
 
+	counter = mlx5_fc_create(mdev, false);
+	if (IS_ERR(counter)) {
+		err = PTR_ERR(counter);
+		goto err_rx_esw_cnt;
+	}
+	ipsec->tx->fc->tnl_drop = counter;
+
 	if (ipsec->is_uplink_rep) {
 		fc = ipsec_fs_init_single_counter(mdev);
 		if (IS_ERR(fc)) {
@@ -2499,12 +2600,21 @@ static int ipsec_fs_init_counters(struct mlx5e_ipsec *ipsec)
 			goto err_tx_esw_cnt;
 		}
 		ipsec->tx_esw->fc = fc;
+
+		counter = mlx5_fc_create(mdev, false);
+		if (IS_ERR(counter)) {
+			err = PTR_ERR(counter);
+			goto err_tx_esw_sa_drop;
+		}
+		ipsec->tx_esw->fc->tnl_drop = counter;
 	}
 
 	/* Both IPv4 and IPv6 point to same flow counters struct. */
 	ipsec->rx_ipv6->fc = ipsec->rx_ipv4->fc;
 	return 0;
 
+err_tx_esw_sa_drop:
+	ipsec_fs_destroy_single_counter(mdev, ipsec->tx_esw->fc);
 err_tx_esw_cnt:
 	ipsec_fs_destroy_single_counter(mdev, ipsec->rx_esw->fc);
 err_rx_esw_cnt:
@@ -2521,6 +2631,8 @@ void mlx5e_accel_ipsec_fs_read_stats(struct mlx5e_priv *priv, void *ipsec_stats)
 	struct mlx5e_ipsec *ipsec = priv->ipsec;
 	struct mlx5e_ipsec_hw_stats *stats;
 	struct mlx5e_ipsec_fc *fc;
+	u64 tnl_drop_packets = 0;
+	u64 tnl_drop_bytes = 0;
 	u64 packets, bytes;
 
 	stats = (struct mlx5e_ipsec_hw_stats *)ipsec_stats;
@@ -2544,6 +2656,10 @@ void mlx5e_accel_ipsec_fs_read_stats(struct mlx5e_priv *priv, void *ipsec_stats)
 			      &stats->ipsec_rx_drop_mismatch_sa_sel, &bytes);
 
 	fc = ipsec->tx->fc;
+	if (!mlx5_fc_query(mdev, fc->tnl_drop, &packets, &bytes)) {
+		tnl_drop_packets += packets;
+		tnl_drop_bytes += bytes;
+	}
 	mlx5_fc_query(mdev, fc->cnt, &stats->ipsec_tx_pkts, &stats->ipsec_tx_bytes);
 	mlx5_fc_query(mdev, fc->drop, &stats->ipsec_tx_drop_pkts,
 		      &stats->ipsec_tx_drop_bytes);
@@ -2561,6 +2677,10 @@ void mlx5e_accel_ipsec_fs_read_stats(struct mlx5e_priv *priv, void *ipsec_stats)
 		}
 
 		fc = ipsec->tx_esw->fc;
+		if (!mlx5_fc_query(mdev, fc->tnl_drop, &packets, &bytes)) {
+			tnl_drop_packets += packets;
+			tnl_drop_bytes += bytes;
+		}
 		if (!mlx5_fc_query(mdev, fc->cnt, &packets, &bytes)) {
 			stats->ipsec_tx_pkts += packets;
 			stats->ipsec_tx_bytes += bytes;
@@ -2576,6 +2696,9 @@ void mlx5e_accel_ipsec_fs_read_stats(struct mlx5e_priv *priv, void *ipsec_stats)
 				   &packets, &bytes))
 			stats->ipsec_rx_drop_mismatch_sa_sel += packets;
 	}
+
+	stats->ipsec_tx_pkts -= tnl_drop_packets;
+	stats->ipsec_tx_bytes -= tnl_drop_bytes;
 }
 
 #ifdef CONFIG_MLX5_ESWITCH
