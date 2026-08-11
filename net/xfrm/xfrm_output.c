@@ -791,6 +791,7 @@ int xfrm_output(struct sock *sk, struct sk_buff *skb)
 	secpath_reset(skb);
 
 	if (xfrm_dev_offload_ok(skb, x)) {
+		struct net_device *dev;
 		struct sec_path *sp;
 
 		sp = secpath_set(skb);
@@ -815,7 +816,8 @@ int xfrm_output(struct sock *sk, struct sk_buff *skb)
 			goto out;
 		}
 
-		if (x->xso.dev && x->xso.dev->features & NETIF_F_HW_ESP_TX_CSUM)
+		dev = READ_ONCE(x->xso.dev);
+		if (dev && dev->features & NETIF_F_HW_ESP_TX_CSUM)
 			goto out;
 	} else {
 		if (skb_is_gso(skb))
