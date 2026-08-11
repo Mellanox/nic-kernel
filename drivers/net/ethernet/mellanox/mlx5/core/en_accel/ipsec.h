@@ -197,6 +197,7 @@ struct mlx5e_ipsec_ft {
 	struct mlx5_flow_table *sa;
 	struct mlx5_flow_table *sa_sel;
 	struct mlx5_flow_table *status;
+	struct mlx5_flow_table *tnl_packet_offload_drop;
 	u32 refcnt;
 };
 
