@@ -745,6 +745,7 @@ struct xfrm_state *xfrm_state_alloc(struct net *net)
 		INIT_HLIST_NODE(&x->state_cache);
 		INIT_HLIST_NODE(&x->bydst);
 		INIT_HLIST_NODE(&x->bysrc);
+		INIT_HLIST_NODE(&x->gclist);
 		INIT_HLIST_NODE(&x->byspi);
 		INIT_HLIST_NODE(&x->byseq);
 		hrtimer_setup(&x->mtimer, xfrm_timer_handler, CLOCK_BOOTTIME,

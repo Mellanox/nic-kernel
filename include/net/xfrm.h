@@ -189,16 +189,14 @@ enum xfrm_replay_mode {
 /* Full description of state of transformer. */
 struct xfrm_state {
 	possible_net_t		xs_net;
-	union {
-		struct hlist_node	gclist;
-		struct hlist_node	bydst;
-	};
+	struct hlist_node	bydst;
+	struct hlist_node	bysrc;
+	struct hlist_node	gclist;
 	union {
 		struct hlist_node	dev_gclist;
-		struct hlist_node	bysrc;
+		struct hlist_node	byseq;
 	};
 	struct hlist_node	byspi;
-	struct hlist_node	byseq;
 	struct hlist_node	state_cache;
 	struct hlist_node	state_cache_input;
 
