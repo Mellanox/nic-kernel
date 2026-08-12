@@ -1241,7 +1241,7 @@ static void xso_to_xuo_ifindex(const struct xfrm_dev_offload *xso, int ifindex,
 static void xso_to_xuo(const struct xfrm_dev_offload *xso,
 		       struct xfrm_user_offload *xuo)
 {
-	xso_to_xuo_ifindex(xso, xso->dev->ifindex, xuo);
+	xso_to_xuo_ifindex(xso, xso->ifindex, xuo);
 }
 #endif
 
