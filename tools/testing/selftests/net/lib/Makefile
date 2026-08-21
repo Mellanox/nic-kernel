@@ -32,7 +32,14 @@ TEST_INCLUDES := $(wildcard py/*.py sh/*.sh)
 
 include ../../lib.mk
 
+# gro needs OpenSSL for PSP.
+PKG_CONFIG ?= pkg-config
+$(OUTPUT)/gro: CFLAGS += $(shell $(PKG_CONFIG) --cflags libcrypto 2>/dev/null)
+$(OUTPUT)/gro: LDLIBS += $(shell $(PKG_CONFIG) --libs libcrypto 2>/dev/null || \
+				  echo -lcrypto)
+
 BPF_PROG_DIRS := xsk
+
 include ../bpf.mk
 
 # AF_XDP test engine used by net/test_xsk.sh.
