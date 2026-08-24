@@ -1135,6 +1135,7 @@ static void get_link_properties(struct net_device *netdev,
 				struct ethtool_link_ksettings *link_ksettings)
 {
 	struct mlx5e_priv *priv = netdev_priv(netdev);
+	struct mlx5_core_dev *mdev = priv->mdev;
 	const struct mlx5_link_info *info;
 	u8 duplex = DUPLEX_UNKNOWN;
 	u32 speed = SPEED_UNKNOWN;
@@ -1143,13 +1144,27 @@ static void get_link_properties(struct net_device *netdev,
 	if (!netif_carrier_ok(netdev))
 		goto out;
 
-	info = mlx5_port_ptys2info(priv->mdev, eth_proto_oper, force_legacy);
+	info = mlx5_port_ptys2info(mdev, eth_proto_oper, force_legacy);
 	if (info) {
 		speed = info->speed;
 		lanes = info->lanes;
 		duplex = DUPLEX_FULL;
 	} else if (data_rate_oper)
 		speed = 100 * data_rate_oper;
+
+	if (mlx5_core_is_vf(mdev)) {
+		u8 op_mod = MLX5_VPORT_STATE_OP_MOD_VNIC_VPORT;
+		struct mlx5_vport_tx_speed tx_speed;
+		int err;
+
+		err = mlx5_query_vport_state_ctx(mdev, op_mod, 0, false,
+						 &tx_speed, NULL);
+		if (err || !tx_speed.effective_tx_speed)
+			goto out;
+
+		speed = tx_speed.effective_tx_speed * MLX5_TX_SPEED_UNIT;
+		lanes = LANES_UNKNOWN;
+	}
 
 out:
 	link_ksettings->base.duplex = duplex;
