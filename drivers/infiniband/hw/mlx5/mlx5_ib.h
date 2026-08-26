@@ -1197,22 +1197,23 @@ static inline struct mlx5_ib_xrcd *to_mxrcd(struct ib_xrcd *ibxrcd)
 	return container_of(ibxrcd, struct mlx5_ib_xrcd, ibxrcd);
 }
 
-static inline struct mlx5_ib_dev *to_mdev(struct ib_device *ibdev)
+static inline struct mlx5_ib_dev *to_dev(struct ib_device *ibdev)
 {
 	return container_of(ibdev, struct mlx5_ib_dev, ib_dev);
 }
 
-static inline struct mlx5_ib_dev *mr_to_mdev(struct mlx5_ib_mr *mr)
+static inline struct mlx5_ib_dev *mr_to_dev(struct mlx5_ib_mr *mr)
 {
-	return to_mdev(mr->ibmr.device);
+	return to_dev(mr->ibmr.device);
 }
 
-static inline struct mlx5_ib_dev *mlx5_udata_to_mdev(struct ib_udata *udata)
+static inline struct mlx5_ib_dev *udata_to_dev(struct ib_udata *udata)
 {
-	struct mlx5_ib_ucontext *context = rdma_udata_to_drv_context(
-		udata, struct mlx5_ib_ucontext, ibucontext);
+	struct mlx5_ib_ucontext *context =
+		rdma_udata_to_drv_context(udata, struct mlx5_ib_ucontext,
+					  ibucontext);
 
-	return to_mdev(context->ibucontext.device);
+	return to_dev(context->ibucontext.device);
 }
 
 static inline struct mlx5_ib_cq *to_mcq(struct ib_cq *ibcq)
@@ -1781,7 +1782,7 @@ static inline unsigned long
 mlx5_umem_dmabuf_find_best_pgsz(struct ib_umem_dmabuf *umem_dmabuf,
 				int access_mode)
 {
-	return mlx5_umem_mkc_find_best_pgsz(to_mdev(umem_dmabuf->umem.ibdev),
+	return mlx5_umem_mkc_find_best_pgsz(to_dev(umem_dmabuf->umem.ibdev),
 					    &umem_dmabuf->umem,
 					    umem_dmabuf->umem.iova,
 					    access_mode);

@@ -166,7 +166,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_QUERY_PORT)(
 	c = to_mucontext(ib_uverbs_get_ucontext(attrs));
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
 
 	if (!rdma_is_port_valid(&dev->ib_dev, port_num))
 		return -EINVAL;
@@ -200,7 +200,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_GET_DATA_DIRECT_SYSFS_PATH)(
 	c = to_mucontext(ib_uverbs_get_ucontext(attrs));
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
 	mutex_lock(&dev->data_direct_lock);
 	data_direct_dev = mlx5_data_direct_get_dev(dev->mdev->data_direct);
 	if (!data_direct_dev) {

@@ -13,7 +13,7 @@
 static int mlx5_ib_alloc_dmah(struct ib_dmah *ibdmah,
 			      struct uverbs_attr_bundle *attrs)
 {
-	struct mlx5_core_dev *mdev = to_mdev(ibdmah->device)->mdev;
+	struct mlx5_core_dev *mdev = to_dev(ibdmah->device)->mdev;
 	struct mlx5_ib_dmah *dmah = to_mdmah(ibdmah);
 	u16 st_bits = BIT(IB_DMAH_CPU_ID_EXISTS) |
 		      BIT(IB_DMAH_MEM_TYPE_EXISTS);
@@ -40,7 +40,7 @@ static int mlx5_ib_dealloc_dmah(struct ib_dmah *ibdmah,
 				struct uverbs_attr_bundle *attrs)
 {
 	struct mlx5_ib_dmah *dmah = to_mdmah(ibdmah);
-	struct mlx5_core_dev *mdev = to_mdev(ibdmah->device)->mdev;
+	struct mlx5_core_dev *mdev = to_dev(ibdmah->device)->mdev;
 
 	if (ibdmah->valid_fields & BIT(IB_DMAH_CPU_ID_EXISTS))
 		return mlx5_st_dealloc_index(mdev, dmah->st_index);

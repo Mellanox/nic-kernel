@@ -47,7 +47,7 @@ static int create_srq_user(struct ib_pd *pd, struct mlx5_ib_srq *srq,
 			   struct mlx5_srq_attr *in,
 			   struct ib_udata *udata, int buf_size)
 {
-	struct mlx5_ib_dev *dev = to_mdev(pd->device);
+	struct mlx5_ib_dev *dev = to_dev(pd->device);
 	struct mlx5_ib_create_srq ucmd;
 	struct mlx5_ib_ucontext *ucontext = rdma_udata_to_drv_context(
 		udata, struct mlx5_ib_ucontext, ibucontext);
@@ -192,7 +192,7 @@ int mlx5_ib_create_srq(struct ib_srq *ib_srq,
 		       struct ib_srq_init_attr *init_attr,
 		       struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ib_srq->device);
+	struct mlx5_ib_dev *dev = to_dev(ib_srq->device);
 	struct mlx5_ib_srq *srq = to_msrq(ib_srq);
 	size_t desc_size;
 	size_t buf_size;
@@ -325,7 +325,7 @@ err_usr_kern_srq:
 int mlx5_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 		       enum ib_srq_attr_mask attr_mask, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibsrq->device);
+	struct mlx5_ib_dev *dev = to_dev(ibsrq->device);
 	struct mlx5_ib_srq *srq = to_msrq(ibsrq);
 	int ret;
 
@@ -350,7 +350,7 @@ int mlx5_ib_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
 
 int mlx5_ib_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *srq_attr)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibsrq->device);
+	struct mlx5_ib_dev *dev = to_dev(ibsrq->device);
 	struct mlx5_ib_srq *srq = to_msrq(ibsrq);
 	int ret;
 	struct mlx5_srq_attr *out;
@@ -374,7 +374,7 @@ out_box:
 
 int mlx5_ib_destroy_srq(struct ib_srq *srq, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(srq->device);
+	struct mlx5_ib_dev *dev = to_dev(srq->device);
 	struct mlx5_ib_srq *msrq = to_msrq(srq);
 	int ret;
 
@@ -409,7 +409,7 @@ int mlx5_ib_post_srq_recv(struct ib_srq *ibsrq, const struct ib_recv_wr *wr,
 	struct mlx5_ib_srq *srq = to_msrq(ibsrq);
 	struct mlx5_wqe_srq_next_seg *next;
 	struct mlx5_wqe_data_seg *scat;
-	struct mlx5_ib_dev *dev = to_mdev(ibsrq->device);
+	struct mlx5_ib_dev *dev = to_dev(ibsrq->device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	unsigned long flags;
 	int err = 0;

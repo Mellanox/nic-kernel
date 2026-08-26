@@ -326,7 +326,7 @@ int mlx5_ib_read_wqe_srq(struct mlx5_ib_srq *srq, int wqe_index, void *buffer,
 
 static void mlx5_ib_qp_err_syndrome(struct ib_qp *ibqp)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
 	int outlen = MLX5_ST_SZ_BYTES(query_qp_out);
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	void *pas_ext_union, *err_syn;
@@ -3260,7 +3260,7 @@ static int get_qp_uidx(struct mlx5_ib_qp *qp,
 
 static int mlx5_ib_destroy_dct(struct mlx5_ib_qp *mqp)
 {
-	struct mlx5_ib_dev *dev = to_mdev(mqp->ibqp.device);
+	struct mlx5_ib_dev *dev = to_dev(mqp->ibqp.device);
 
 	if (mqp->state == IB_QPS_RTR) {
 		int err;
@@ -3314,7 +3314,7 @@ int mlx5_ib_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *attr,
 		      struct ib_udata *udata)
 {
 	struct mlx5_create_qp_params params = {};
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	struct ib_pd *pd = ibqp->pd;
 	enum ib_qp_type type;
@@ -3413,7 +3413,7 @@ free_ucmd:
 
 int mlx5_ib_destroy_qp(struct ib_qp *qp, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	struct mlx5_ib_qp *mqp = to_mqp(qp);
 
 	if (mqp->type == IB_QPT_GSI)
@@ -3430,7 +3430,7 @@ static int set_qpc_atomic_flags(struct mlx5_ib_qp *qp,
 				const struct ib_qp_attr *attr, int attr_mask,
 				void *qpc)
 {
-	struct mlx5_ib_dev *dev = to_mdev(qp->ibqp.device);
+	struct mlx5_ib_dev *dev = to_dev(qp->ibqp.device);
 	u8 dest_rd_atomic;
 	u32 access_flags;
 
@@ -4179,7 +4179,7 @@ static unsigned int get_tx_affinity(struct ib_qp *qp,
 {
 	struct mlx5_ib_ucontext *ucontext = rdma_udata_to_drv_context(
 		udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	struct mlx5_ib_qp *mqp = to_mqp(qp);
 	struct mlx5_ib_qp_base *qp_base;
 	unsigned int tx_affinity;
@@ -4235,7 +4235,7 @@ static int __mlx5_ib_qp_set_raw_qp_counter(struct mlx5_ib_qp *qp, u32 set_id,
 static int __mlx5_ib_qp_set_counter(struct ib_qp *qp,
 				    struct rdma_counter *counter)
 {
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	u32 in[MLX5_ST_SZ_DW(rts2rts_qp_in)] = {};
 	struct mlx5_ib_qp *mqp = to_mqp(qp);
 	struct mlx5_ib_qp_base *base;
@@ -4308,7 +4308,7 @@ static int __mlx5_ib_modify_qp(struct ib_qp *ibqp,
 		}
 	};
 
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	struct mlx5_ib_qp_base *base = &qp->trans_qp.base;
 	struct mlx5_ib_cq *send_cq, *recv_cq;
@@ -4676,7 +4676,7 @@ static int mlx5_ib_modify_dct(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 			      struct ib_udata *udata)
 {
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
 	enum ib_qp_state cur_state, new_state;
 	int required = IB_QP_STATE;
 	void *dctc;
@@ -4835,7 +4835,7 @@ static int validate_rd_atomic(struct mlx5_ib_dev *dev, struct ib_qp_attr *attr,
 int mlx5_ib_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		      int attr_mask, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
 	struct mlx5_ib_modify_qp_resp resp = {};
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	struct mlx5_ib_modify_qp ucmd = {};
@@ -5250,7 +5250,7 @@ out:
 int mlx5_ib_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 		     int qp_attr_mask, struct ib_qp_init_attr *qp_init_attr)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	int err = 0;
 	u8 raw_packet_qp_state;
@@ -5319,7 +5319,7 @@ out:
 
 int mlx5_ib_alloc_xrcd(struct ib_xrcd *ibxrcd, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibxrcd->device);
+	struct mlx5_ib_dev *dev = to_dev(ibxrcd->device);
 	struct mlx5_ib_xrcd *xrcd = to_mxrcd(ibxrcd);
 
 	if (!MLX5_CAP_GEN(dev->mdev, xrc))
@@ -5330,7 +5330,7 @@ int mlx5_ib_alloc_xrcd(struct ib_xrcd *ibxrcd, struct ib_udata *udata)
 
 int mlx5_ib_dealloc_xrcd(struct ib_xrcd *xrcd, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(xrcd->device);
+	struct mlx5_ib_dev *dev = to_dev(xrcd->device);
 	u32 xrcdn = to_mxrcd(xrcd)->xrcdn;
 
 	return mlx5_cmd_xrcd_dealloc(dev->mdev, xrcdn, 0);
@@ -5339,7 +5339,7 @@ int mlx5_ib_dealloc_xrcd(struct ib_xrcd *xrcd, struct ib_udata *udata)
 static void mlx5_ib_wq_event(struct mlx5_core_qp *core_qp, int type)
 {
 	struct mlx5_ib_rwq *rwq = to_mibrwq(core_qp);
-	struct mlx5_ib_dev *dev = to_mdev(rwq->ibwq.device);
+	struct mlx5_ib_dev *dev = to_dev(rwq->ibwq.device);
 	struct ib_event event;
 
 	if (rwq->ibwq.event_handler) {
@@ -5395,7 +5395,7 @@ static int  create_rq(struct mlx5_ib_rwq *rwq, struct ib_pd *pd,
 	int inlen;
 	int err;
 
-	dev = to_mdev(pd->device);
+	dev = to_dev(pd->device);
 
 	ts_format = get_rq_ts_format(dev, to_mcq(init_attr->cq));
 	if (ts_format < 0)
@@ -5537,7 +5537,7 @@ static int prepare_user_rq(struct ib_pd *pd,
 			   struct ib_udata *udata,
 			   struct mlx5_ib_rwq *rwq)
 {
-	struct mlx5_ib_dev *dev = to_mdev(pd->device);
+	struct mlx5_ib_dev *dev = to_dev(pd->device);
 	struct mlx5_ib_create_wq ucmd;
 	int err;
 
@@ -5620,7 +5620,7 @@ struct ib_wq *mlx5_ib_create_wq(struct ib_pd *pd,
 	    init_attr->create_flags & IB_WQ_FLAGS_DELAY_DROP)
 		return ERR_PTR(-EPERM);
 
-	dev = to_mdev(pd->device);
+	dev = to_dev(pd->device);
 	switch (init_attr->wq_type) {
 	case IB_WQT_RQ:
 		rwq = kzalloc_obj(*rwq);
@@ -5664,7 +5664,7 @@ err:
 
 int mlx5_ib_destroy_wq(struct ib_wq *wq, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(wq->device);
+	struct mlx5_ib_dev *dev = to_dev(wq->device);
 	struct mlx5_ib_rwq *rwq = to_mrwq(wq);
 	int ret;
 
@@ -5682,7 +5682,7 @@ int mlx5_ib_create_rwq_ind_table(struct ib_rwq_ind_table *ib_rwq_ind_table,
 {
 	struct mlx5_ib_rwq_ind_table *rwq_ind_tbl =
 		to_mrwq_ind_table(ib_rwq_ind_table);
-	struct mlx5_ib_dev *dev = to_mdev(ib_rwq_ind_table->device);
+	struct mlx5_ib_dev *dev = to_dev(ib_rwq_ind_table->device);
 	int sz = 1 << init_attr->log_ind_tbl_size;
 	struct mlx5_ib_create_rwq_ind_tbl_resp resp = {};
 	size_t min_resp_len;
@@ -5750,7 +5750,7 @@ err_copy:
 int mlx5_ib_destroy_rwq_ind_table(struct ib_rwq_ind_table *ib_rwq_ind_tbl)
 {
 	struct mlx5_ib_rwq_ind_table *rwq_ind_tbl = to_mrwq_ind_table(ib_rwq_ind_tbl);
-	struct mlx5_ib_dev *dev = to_mdev(ib_rwq_ind_tbl->device);
+	struct mlx5_ib_dev *dev = to_dev(ib_rwq_ind_tbl->device);
 
 	return mlx5_cmd_destroy_rqt(dev->mdev, rwq_ind_tbl->rqtn, rwq_ind_tbl->uid);
 }
@@ -5758,7 +5758,7 @@ int mlx5_ib_destroy_rwq_ind_table(struct ib_rwq_ind_table *ib_rwq_ind_tbl)
 int mlx5_ib_modify_wq(struct ib_wq *wq, struct ib_wq_attr *wq_attr,
 		      u32 wq_attr_mask, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(wq->device);
+	struct mlx5_ib_dev *dev = to_dev(wq->device);
 	struct mlx5_ib_rwq *rwq = to_mrwq(wq);
 	struct mlx5_ib_modify_wq ucmd = {};
 	int curr_wq_state;
@@ -5914,7 +5914,7 @@ void mlx5_ib_drain_sq(struct ib_qp *qp)
 		},
 	};
 	int ret;
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 
 	ret = ib_modify_qp(qp, &attr, IB_QP_STATE);
@@ -5943,7 +5943,7 @@ void mlx5_ib_drain_rq(struct ib_qp *qp)
 	struct ib_recv_wr rwr = {};
 	const struct ib_recv_wr *bad_rwr;
 	int ret;
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 
 	ret = ib_modify_qp(qp, &attr, IB_QP_STATE);
@@ -5971,7 +5971,7 @@ void mlx5_ib_drain_rq(struct ib_qp *qp)
  */
 int mlx5_ib_qp_set_counter(struct ib_qp *qp, struct rdma_counter *counter)
 {
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	struct mlx5_ib_qp *mqp = to_mqp(qp);
 	int err = 0;
 
