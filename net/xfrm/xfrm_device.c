@@ -422,11 +422,11 @@ bool xfrm_dev_offload_ok(struct sk_buff *skb, struct xfrm_state *x)
 	int mtu;
 	struct dst_entry *dst = skb_dst(skb);
 	struct xfrm_dst *xdst = (struct xfrm_dst *)dst;
-	struct net_device *dev = x->xso.dev;
+	struct net_device *dev = READ_ONCE(x->xso.dev);
 	bool check_tunnel_size;
 
 	if (!x->type_offload ||
-	    (x->xso.type == XFRM_DEV_OFFLOAD_UNSPECIFIED && x->encap))
+	    (x->xso.type == XFRM_DEV_OFFLOAD_UNSPECIFIED ? !!x->encap : !dev))
 		return false;
 
 	if ((!dev || dev == xfrm_dst_path(dst)->dev) &&

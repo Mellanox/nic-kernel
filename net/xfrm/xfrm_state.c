@@ -784,20 +784,28 @@ EXPORT_SYMBOL_GPL(xfrm_dev_state_delete);
 void xfrm_dev_state_free(struct xfrm_state *x)
 {
 	struct xfrm_dev_offload *xso = &x->xso;
-	struct net_device *dev = READ_ONCE(xso->dev);
+	struct net_device *dev;
 
-	if (dev && dev->xfrmdev_ops) {
-		spin_lock_bh(&xfrm_state_dev_gc_lock);
-		if (!hlist_unhashed(&x->dev_gclist))
-			hlist_del(&x->dev_gclist);
-		spin_unlock_bh(&xfrm_state_dev_gc_lock);
+	if (!READ_ONCE(xso->dev))
+		return;
 
-		if (dev->xfrmdev_ops->xdo_dev_state_free)
-			dev->xfrmdev_ops->xdo_dev_state_free(dev, x);
-		WRITE_ONCE(xso->dev, NULL);
-		xso->type = XFRM_DEV_OFFLOAD_UNSPECIFIED;
-		netdev_put(dev, &xso->dev_tracker);
+	spin_lock_bh(&x->lock);
+	spin_lock(&xfrm_state_dev_gc_lock);
+	dev = xso->dev;
+	if (!dev || !dev->xfrmdev_ops) {
+		spin_unlock(&xfrm_state_dev_gc_lock);
+		spin_unlock_bh(&x->lock);
+		return;
 	}
+	if (!hlist_unhashed(&x->dev_gclist))
+		hlist_del(&x->dev_gclist);
+	WRITE_ONCE(xso->dev, NULL);
+	spin_unlock(&xfrm_state_dev_gc_lock);
+	spin_unlock_bh(&x->lock);
+
+	if (dev->xfrmdev_ops->xdo_dev_state_free)
+		dev->xfrmdev_ops->xdo_dev_state_free(dev, x);
+	netdev_put(dev, &xso->dev_tracker);
 }
 #endif
 
@@ -968,6 +976,7 @@ int xfrm_dev_state_flush(struct net *net, struct net_device *dev, bool task_vali
 	struct hlist_node *tmp;
 	struct xfrm_dev_offload *xso;
 	int i, err = 0, cnt = 0;
+	HLIST_HEAD(flush_list);
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 	err = xfrm_dev_state_flush_secctx_check(net, dev, task_valid);
@@ -1006,20 +1015,28 @@ out:
 
 	mutex_lock(&xfrm_state_gc_mutex);
 	spin_lock_bh(&xfrm_state_dev_gc_lock);
-restart_gc:
 	hlist_for_each_entry_safe(x, tmp, &xfrm_state_dev_gc_list, dev_gclist) {
 		xso = &x->xso;
 
 		if (xso->dev == dev) {
-			spin_unlock_bh(&xfrm_state_dev_gc_lock);
-			xfrm_dev_state_free(x);
-			spin_lock_bh(&xfrm_state_dev_gc_lock);
-			goto restart_gc;
+			if (!refcount_inc_not_zero(&x->refcnt))
+				continue;
+			hlist_del_init(&x->dev_gclist);
+			/* xfrm_dev_state_free() may consume dev_gclist. The
+			 * reference prevents state GC from using gclist until
+			 * this flush removes it and drops the reference.
+			 */
+			hlist_add_head(&x->gclist, &flush_list);
 		}
-
 	}
 	spin_unlock_bh(&xfrm_state_dev_gc_lock);
 	mutex_unlock(&xfrm_state_gc_mutex);
+
+	hlist_for_each_entry_safe(x, tmp, &flush_list, gclist) {
+		hlist_del_init(&x->gclist);
+		xfrm_dev_state_free(x);
+		xfrm_state_put(x);
+	}
 
 	xfrm_flush_gc();
 
