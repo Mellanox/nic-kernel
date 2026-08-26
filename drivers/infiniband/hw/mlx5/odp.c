@@ -107,14 +107,14 @@ static u8 mlx5_imr_ksm_page_shift;
 static void populate_ksm(struct mlx5_ksm *pksm, size_t idx, size_t nentries,
 			struct mlx5_ib_mr *imr, int flags)
 {
-	struct mlx5_core_dev *dev = mr_to_mdev(imr)->mdev;
+	struct mlx5_core_dev *mdev = mr_to_mdev(imr)->mdev;
 	struct mlx5_ksm *end = pksm + nentries;
-	u64 step = MLX5_CAP_ODP(dev, mem_page_fault) ? mlx5_imr_mtt_size : 0;
-	__be32 key = MLX5_CAP_ODP(dev, mem_page_fault) ?
+	u64 step = MLX5_CAP_ODP(mdev, mem_page_fault) ? mlx5_imr_mtt_size : 0;
+	__be32 key = MLX5_CAP_ODP(mdev, mem_page_fault) ?
 			     cpu_to_be32(imr->null_mmkey.key) :
 			     mr_to_mdev(imr)->mkeys.null_mkey;
-	u64 va =
-		MLX5_CAP_ODP(dev, mem_page_fault) ? idx * mlx5_imr_mtt_size : 0;
+	u64 va = MLX5_CAP_ODP(mdev, mem_page_fault) ?
+			     idx * mlx5_imr_mtt_size : 0;
 
 	if (flags & MLX5_IB_UPD_XLT_ZAP) {
 		for (; pksm != end; pksm++, idx++, va += step) {

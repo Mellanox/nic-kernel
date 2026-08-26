@@ -1001,7 +1001,7 @@ struct mlx5_ib_flow_action {
 };
 
 struct mlx5_dm {
-	struct mlx5_core_dev *dev;
+	struct mlx5_core_dev *mdev;
 	/* This lock is used to protect the access to the shared
 	 * allocation map when concurrent requests by different
 	 * processes are handled.

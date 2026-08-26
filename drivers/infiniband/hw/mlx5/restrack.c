@@ -12,10 +12,9 @@
 
 #define MAX_DUMP_SIZE 1024
 
-static int dump_rsc(struct mlx5_core_dev *dev, enum mlx5_sgmt_type type,
+static int dump_rsc(struct mlx5_core_dev *mdev, enum mlx5_sgmt_type type,
 		    int index, void *data, int *data_len)
 {
-	struct mlx5_core_dev *mdev = dev;
 	struct mlx5_rsc_dump_cmd *cmd;
 	struct mlx5_rsc_key key = {};
 	struct page *page;

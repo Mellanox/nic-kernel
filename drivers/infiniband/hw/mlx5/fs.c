@@ -3147,14 +3147,14 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_FLOW_ACTION_CREATE_MODIFY_HEADER)(
 {
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(
 		attrs, MLX5_IB_ATTR_CREATE_MODIFY_HEADER_HANDLE);
-	struct mlx5_ib_dev *mdev = mlx5_udata_to_mdev(&attrs->driver_udata);
+	struct mlx5_ib_dev *dev = mlx5_udata_to_mdev(&attrs->driver_udata);
 	enum mlx5_ib_uapi_flow_table_type ft_type;
 	struct ib_flow_action *action;
 	int num_actions;
 	void *in;
 	int ret;
 
-	if (!mlx5_ib_modify_header_supported(mdev))
+	if (!mlx5_ib_modify_header_supported(dev))
 		return -EOPNOTSUPP;
 
 	in = uverbs_attr_get_alloced_ptr(attrs,
@@ -3170,11 +3170,11 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_FLOW_ACTION_CREATE_MODIFY_HEADER)(
 			       MLX5_IB_ATTR_CREATE_MODIFY_HEADER_FT_TYPE);
 	if (ret)
 		return ret;
-	action = mlx5_ib_create_modify_header(mdev, ft_type, num_actions, in);
+	action = mlx5_ib_create_modify_header(dev, ft_type, num_actions, in);
 	if (IS_ERR(action))
 		return PTR_ERR(action);
 
-	uverbs_flow_action_fill_action(action, uobj, &mdev->ib_dev,
+	uverbs_flow_action_fill_action(action, uobj, &dev->ib_dev,
 				       IB_FLOW_ACTION_UNSPECIFIED);
 
 	return 0;
@@ -3273,7 +3273,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_FLOW_ACTION_CREATE_PACKET_REFORMAT)(
 {
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(attrs,
 		MLX5_IB_ATTR_CREATE_PACKET_REFORMAT_HANDLE);
-	struct mlx5_ib_dev *mdev = mlx5_udata_to_mdev(&attrs->driver_udata);
+	struct mlx5_ib_dev *dev = mlx5_udata_to_mdev(&attrs->driver_udata);
 	enum mlx5_ib_uapi_flow_action_packet_reformat_type dv_prt;
 	enum mlx5_ib_uapi_flow_table_type ft_type;
 	struct mlx5_ib_flow_action *maction;
@@ -3289,7 +3289,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_FLOW_ACTION_CREATE_PACKET_REFORMAT)(
 	if (ret)
 		return ret;
 
-	if (!mlx5_ib_flow_action_packet_reformat_valid(mdev, dv_prt, ft_type))
+	if (!mlx5_ib_flow_action_packet_reformat_valid(dev, dv_prt, ft_type))
 		return -EOPNOTSUPP;
 
 	maction = kzalloc_obj(*maction);
@@ -3300,7 +3300,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_FLOW_ACTION_CREATE_PACKET_REFORMAT)(
 	    MLX5_IB_UAPI_FLOW_ACTION_PACKET_REFORMAT_TYPE_L2_TUNNEL_TO_L2) {
 		maction->flow_action_raw.sub_type =
 			MLX5_IB_FLOW_ACTION_DECAP;
-		maction->flow_action_raw.dev = mdev;
+		maction->flow_action_raw.dev = dev;
 	} else {
 		void *in;
 		int len;
@@ -3315,13 +3315,13 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_FLOW_ACTION_CREATE_PACKET_REFORMAT)(
 		len = uverbs_attr_get_len(attrs,
 			MLX5_IB_ATTR_CREATE_PACKET_REFORMAT_DATA_BUF);
 
-		ret = mlx5_ib_flow_action_create_packet_reformat_ctx(mdev,
+		ret = mlx5_ib_flow_action_create_packet_reformat_ctx(dev,
 			maction, ft_type, dv_prt, in, len);
 		if (ret)
 			goto free_maction;
 	}
 
-	uverbs_flow_action_fill_action(&maction->ib_action, uobj, &mdev->ib_dev,
+	uverbs_flow_action_fill_action(&maction->ib_action, uobj, &dev->ib_dev,
 				       IB_FLOW_ACTION_UNSPECIFIED);
 	return 0;
 

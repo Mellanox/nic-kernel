@@ -9,7 +9,7 @@
 #include "srq.h"
 
 static int
-mlx5_ib_set_vport_rep(struct mlx5_core_dev *dev,
+mlx5_ib_set_vport_rep(struct mlx5_core_dev *mdev,
 		      struct mlx5_core_dev *rep_dev,
 		      struct mlx5_eswitch_rep *rep,
 		      int vport_index)
@@ -18,14 +18,14 @@ mlx5_ib_set_vport_rep(struct mlx5_core_dev *dev,
 	struct net_device *ndev;
 	int ret;
 
-	ibdev = mlx5_eswitch_uplink_get_proto_dev(dev->priv.eswitch, REP_IB);
+	ibdev = mlx5_eswitch_uplink_get_proto_dev(mdev->priv.eswitch, REP_IB);
 	if (!ibdev)
 		return -EINVAL;
 
 	/* Only Vports that are not native to the LAG master eswitch need to add
 	 * demux rule.
 	 */
-	if (mlx5_eswitch_get_total_vports(dev) <= vport_index) {
+	if (mlx5_eswitch_get_total_vports(mdev) <= vport_index) {
 		ret = mlx5_lag_demux_rule_add(rep_dev, rep->vport, vport_index);
 		if (ret)
 			return ret;
@@ -50,12 +50,12 @@ err_set_netdev:
 
 static void mlx5_ib_register_peer_vport_reps(struct mlx5_core_dev *mdev);
 
-static void mlx5_ib_num_ports_update(struct mlx5_core_dev *dev, u32 *num_ports)
+static void mlx5_ib_num_ports_update(struct mlx5_core_dev *mdev, u32 *num_ports)
 {
 	struct mlx5_core_dev *peer_dev;
 	int i;
 
-	mlx5_lag_for_each_peer_mdev(dev, peer_dev, i) {
+	mlx5_lag_for_each_peer_mdev(mdev, peer_dev, i) {
 		u32 peer_num_ports = mlx5_eswitch_get_total_vports(peer_dev);
 
 		if (mlx5_lag_is_mpesw(peer_dev))
@@ -106,27 +106,27 @@ err_rx:
 	return ret;
 }
 
-static void mlx5_ib_release_transport(struct mlx5_core_dev *dev)
+static void mlx5_ib_release_transport(struct mlx5_core_dev *mdev)
 {
 	struct mlx5_core_dev *peer_dev;
 	int i, ret;
 
-	mlx5_lag_for_each_peer_mdev(dev, peer_dev, i) {
+	mlx5_lag_for_each_peer_mdev(mdev, peer_dev, i) {
 		ret = mlx5_ib_set_owner_transport(peer_dev, peer_dev);
 		WARN_ON_ONCE(ret);
 	}
 }
 
-static int mlx5_ib_take_transport(struct mlx5_core_dev *dev)
+static int mlx5_ib_take_transport(struct mlx5_core_dev *mdev)
 {
 	struct mlx5_core_dev *peer_dev;
 	int ret;
 	int i;
 
-	mlx5_lag_for_each_peer_mdev(dev, peer_dev, i) {
-		ret = mlx5_ib_set_owner_transport(peer_dev, dev);
+	mlx5_lag_for_each_peer_mdev(mdev, peer_dev, i) {
+		ret = mlx5_ib_set_owner_transport(peer_dev, mdev);
 		if (ret) {
-			mlx5_ib_release_transport(dev);
+			mlx5_ib_release_transport(mdev);
 			return ret;
 		}
 	}
@@ -135,10 +135,10 @@ static int mlx5_ib_take_transport(struct mlx5_core_dev *dev)
 }
 
 static int
-mlx5_ib_vport_rep_load(struct mlx5_core_dev *dev, struct mlx5_eswitch_rep *rep)
+mlx5_ib_vport_rep_load(struct mlx5_core_dev *mdev, struct mlx5_eswitch_rep *rep)
 {
-	u32 num_ports = mlx5_eswitch_get_total_vports(dev);
-	struct mlx5_core_dev *lag_master = dev;
+	u32 num_ports = mlx5_eswitch_get_total_vports(mdev);
+	struct mlx5_core_dev *lag_master = mdev;
 	const struct mlx5_ib_profile *profile;
 	struct mlx5_core_dev *peer_dev;
 	struct mlx5_ib_dev *ibdev;
@@ -149,16 +149,16 @@ mlx5_ib_vport_rep_load(struct mlx5_core_dev *dev, struct mlx5_eswitch_rep *rep)
 
 	vport_index = rep->vport_index;
 
-	if (mlx5_lag_is_shared_fdb(dev)) {
-		if (mlx5_lag_is_master(dev)) {
-			mlx5_ib_num_ports_update(dev, &num_ports);
+	if (mlx5_lag_is_shared_fdb(mdev)) {
+		if (mlx5_lag_is_master(mdev)) {
+			mlx5_ib_num_ports_update(mdev, &num_ports);
 		} else {
 			if (rep->vport == MLX5_VPORT_UPLINK) {
-				if (!mlx5_lag_is_mpesw(dev))
+				if (!mlx5_lag_is_mpesw(mdev))
 					return 0;
 				new_uplink = true;
 			}
-			mlx5_lag_for_each_peer_mdev(dev, peer_dev, i) {
+			mlx5_lag_for_each_peer_mdev(mdev, peer_dev, i) {
 				u32 peer_n_ports = mlx5_eswitch_get_total_vports(peer_dev);
 
 				if (mlx5_lag_is_master(peer_dev))
@@ -168,7 +168,7 @@ mlx5_ib_vport_rep_load(struct mlx5_core_dev *dev, struct mlx5_eswitch_rep *rep)
 					peer_n_ports--;
 
 				if (mlx5_lag_get_dev_seq(peer_dev) <
-				    mlx5_lag_get_dev_seq(dev))
+				    mlx5_lag_get_dev_seq(mdev))
 					vport_index += peer_n_ports;
 			}
 		}
@@ -177,9 +177,10 @@ mlx5_ib_vport_rep_load(struct mlx5_core_dev *dev, struct mlx5_eswitch_rep *rep)
 	if (rep->vport == MLX5_VPORT_UPLINK && !new_uplink)
 		profile = &raw_eth_profile;
 	else
-		return mlx5_ib_set_vport_rep(lag_master, dev, rep, vport_index);
+		return mlx5_ib_set_vport_rep(lag_master, mdev, rep,
+					     vport_index);
 
-	if (mlx5_lag_is_shared_fdb(dev)) {
+	if (mlx5_lag_is_shared_fdb(mdev)) {
 		ret = mlx5_ib_take_transport(lag_master);
 		if (ret)
 			return ret;

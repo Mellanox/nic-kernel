@@ -178,7 +178,7 @@ static void pma_cnt_ext_assign_ppcnt(struct ib_pma_portcounters_ext *cnt_ext,
 		cpu_to_be64(MLX5_GET_EXT_CNTR(port_multicast_rcv_pkts));
 }
 
-static int query_ib_ppcnt(struct mlx5_core_dev *dev, u8 port_num, u8 plane_num,
+static int query_ib_ppcnt(struct mlx5_core_dev *mdev, u8 port_num, u8 plane_num,
 			  void *out, size_t sz, bool ext)
 {
 	u32 *in;
@@ -199,7 +199,7 @@ static int query_ib_ppcnt(struct mlx5_core_dev *dev, u8 port_num, u8 plane_num,
 	else
 		MLX5_SET(ppcnt_reg, in, grp,
 			 MLX5_INFINIBAND_PORT_COUNTERS_GROUP);
-	err = mlx5_core_access_reg(dev, in, sz, out,
+	err = mlx5_core_access_reg(mdev, in, sz, out,
 				   sz, MLX5_REG_PPCNT, 0, 0);
 
 	kvfree(in);
