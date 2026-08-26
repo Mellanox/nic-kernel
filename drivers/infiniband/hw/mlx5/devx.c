@@ -634,7 +634,7 @@ static u64 devx_get_obj_id(const void *in)
 static bool devx_is_valid_obj_id(struct uverbs_attr_bundle *attrs,
 				 struct ib_uobject *uobj, const void *in)
 {
-	struct mlx5_ib_dev *dev = mlx5_udata_to_mdev(&attrs->driver_udata);
+	struct mlx5_ib_dev *dev = udata_to_dev(&attrs->driver_udata);
 	u64 obj_id = devx_get_obj_id(in);
 
 	if (!obj_id)
@@ -979,7 +979,7 @@ static int devx_get_uid(struct mlx5_ib_ucontext *c, void *cmd_in)
 		if (c->devx_uid)
 			return c->devx_uid;
 
-		dev = to_mdev(c->ibucontext.device);
+		dev = to_dev(c->ibucontext.device);
 		if (dev->devx_whitelist_uid)
 			return dev->devx_whitelist_uid;
 
@@ -1043,7 +1043,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_QUERY_EQN)(
 	c = devx_ufile2uctx(attrs);
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
 
 	err = mlx5_comp_eqn_get(dev->mdev, user_vector, &dev_eqn);
 	if (err < 0)
@@ -1087,7 +1087,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_QUERY_UAR)(
 	c = devx_ufile2uctx(attrs);
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
 
 	if (uverbs_copy_from(&user_idx, attrs,
 			     MLX5_IB_ATTR_DEVX_QUERY_UAR_USER_IDX))
@@ -1120,7 +1120,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OTHER)(
 	c = devx_ufile2uctx(attrs);
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
 
 	uid = devx_get_uid(c, cmd_in);
 	if (uid < 0)
@@ -1455,7 +1455,7 @@ static int devx_obj_cleanup(struct ib_uobject *uobject,
 	struct mlx5_ib_dev *dev;
 	int ret;
 
-	dev = mlx5_udata_to_mdev(&attrs->driver_udata);
+	dev = udata_to_dev(&attrs->driver_udata);
 	if (obj->flags & DEVX_OBJ_FLAGS_INDIRECT_MKEY &&
 	    xa_erase(&obj->ib_dev->odp_mkeys,
 		     mlx5_base_mkey(obj->mkey.key)))
@@ -1534,7 +1534,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_CREATE)(
 		attrs, MLX5_IB_ATTR_DEVX_OBJ_CREATE_HANDLE);
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
 	u32 out[MLX5_ST_SZ_DW(general_obj_out_cmd_hdr)];
 	struct devx_obj *obj;
 	u16 obj_type = 0;
@@ -1652,7 +1652,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_MODIFY)(
 							  MLX5_IB_ATTR_DEVX_OBJ_MODIFY_HANDLE);
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
 	void *cmd_out;
 	int err, err2;
 	int uid;
@@ -1702,7 +1702,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_QUERY)(
 	void *cmd_out;
 	int err, err2;
 	int uid;
-	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
 
 	if (MLX5_GET(general_obj_in_cmd_hdr, cmd_in, vhca_tunnel_id))
 		return -EINVAL;
@@ -1764,7 +1764,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_ASYNC_CMD_FD_ALLOC)(
 
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(
 		attrs, MLX5_IB_ATTR_DEVX_ASYNC_CMD_FD_ALLOC_HANDLE);
-	struct mlx5_ib_dev *dev = mlx5_udata_to_mdev(&attrs->driver_udata);
+	struct mlx5_ib_dev *dev = udata_to_dev(&attrs->driver_udata);
 
 	ev_file = container_of(uobj, struct devx_async_cmd_event_file,
 			       uobj);
@@ -1781,7 +1781,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_ASYNC_EVENT_FD_ALLOC)(
 	struct devx_async_event_file *ev_file;
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
 	u32 flags;
 	int err;
 
@@ -1841,7 +1841,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_ASYNC_QUERY)(
 	struct ib_uobject *fd_uobj;
 	int err;
 	int uid;
-	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
 	struct devx_async_cmd_event_file *ev_file;
 	struct devx_async_data *async_data;
 
@@ -2077,7 +2077,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_SUBSCRIBE_EVENT)(
 				MLX5_IB_ATTR_DEVX_SUBSCRIBE_EVENT_OBJ_HANDLE);
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
 	struct ib_uobject *fd_uobj;
 	struct devx_obj *obj = NULL;
 	struct devx_async_event_file *ev_file;
@@ -2407,7 +2407,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_UMEM_REG)(
 	u32 obj_id;
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
 	int access_flags;
 	int err;
 
@@ -2721,7 +2721,7 @@ void mlx5_ib_ufile_hw_cleanup(struct ib_uverbs_file *ufile)
 	struct mlx5_async_cmd *async_cmd;
 	struct ib_ucontext *ucontext = ufile->ucontext;
 	struct ib_device *device = ucontext->device;
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	struct ib_uobject *uobject;
 	struct devx_obj *obj;
 	int head = 0;
@@ -3254,7 +3254,7 @@ DECLARE_UVERBS_NAMED_OBJECT(
 
 static bool devx_is_supported(struct ib_device *device)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 
 	return MLX5_CAP_GEN(dev->mdev, log_max_uctx);
 }

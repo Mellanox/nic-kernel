@@ -70,7 +70,7 @@ static void mlx5_ib_kernel_cq_comp(struct mlx5_core_cq *cq,
 static void mlx5_ib_cq_event(struct mlx5_core_cq *mcq, enum mlx5_event type)
 {
 	struct mlx5_ib_cq *cq = container_of(mcq, struct mlx5_ib_cq, mcq);
-	struct mlx5_ib_dev *dev = to_mdev(cq->ibcq.device);
+	struct mlx5_ib_dev *dev = to_dev(cq->ibcq.device);
 	struct ib_cq *ibcq = &cq->ibcq;
 	struct ib_event event;
 
@@ -190,7 +190,7 @@ static void handle_responder(struct ib_wc *wc, struct mlx5_cqe64 *cqe,
 {
 	enum rdma_link_layer ll =
 		rdma_port_get_link_layer(qp->ibqp.device, qp->port);
-	struct mlx5_ib_dev *dev = to_mdev(qp->ibqp.device);
+	struct mlx5_ib_dev *dev = to_dev(qp->ibqp.device);
 	struct mlx5_ib_srq *srq = NULL;
 	struct mlx5_ib_wq *wq;
 	u16 wqe_ctr;
@@ -471,7 +471,7 @@ static int mlx5_poll_one(struct mlx5_ib_cq *cq,
 			 struct mlx5_ib_qp **cur_qp,
 			 struct ib_wc *wc)
 {
-	struct mlx5_ib_dev *dev = to_mdev(cq->ibcq.device);
+	struct mlx5_ib_dev *dev = to_dev(cq->ibcq.device);
 	struct mlx5_err_cqe *err_cqe;
 	struct mlx5_cqe64 *cqe64;
 	struct mlx5_core_qp *mqp;
@@ -604,7 +604,7 @@ repoll:
 static int poll_soft_wc(struct mlx5_ib_cq *cq, int num_entries,
 			struct ib_wc *wc, bool is_fatal_err)
 {
-	struct mlx5_ib_dev *dev = to_mdev(cq->ibcq.device);
+	struct mlx5_ib_dev *dev = to_dev(cq->ibcq.device);
 	struct mlx5_ib_wc *soft_wc, *next;
 	int npolled = 0;
 
@@ -652,7 +652,7 @@ void mlx5_ib_cq_stop_polling(struct ib_cq *ibcq)
 static int mlx5_ib_poll_one_umr(struct mlx5_ib_cq *cq, struct mlx5_ib_qp **cur_qp,
 				struct ib_wc *wc)
 {
-	struct mlx5_ib_dev *dev = to_mdev(cq->ibcq.device);
+	struct mlx5_ib_dev *dev = to_dev(cq->ibcq.device);
 	struct mlx5r_umr_context *expected;
 	struct umr_common *umrc = &dev->umrc;
 	struct mlx5_err_cqe err_cqe;
@@ -815,7 +815,7 @@ int mlx5_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc)
 {
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
 	struct mlx5_ib_qp *cur_qp = NULL;
-	struct mlx5_ib_dev *dev = to_mdev(cq->ibcq.device);
+	struct mlx5_ib_dev *dev = to_dev(cq->ibcq.device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	unsigned long flags;
 	int soft_polled = 0;
@@ -857,7 +857,7 @@ out:
 
 int mlx5_ib_arm_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
 {
-	struct mlx5_core_dev *mdev = to_mdev(ibcq->device)->mdev;
+	struct mlx5_core_dev *mdev = to_dev(ibcq->device)->mdev;
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
 	void __iomem *uar_page = mdev->priv.bfreg.up->map;
 	unsigned long irq_flags;
@@ -1205,7 +1205,7 @@ int mlx5_ib_create_user_cq(struct ib_cq *ibcq,
 	struct mlx5_ib_create_cq_resp uresp = {};
 	u64 entries = attr->cqe;
 	int vector = attr->comp_vector;
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
 	u32 out[MLX5_ST_SZ_DW(create_cq_out)];
 	int index;
@@ -1295,7 +1295,7 @@ int mlx5_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	struct ib_device *ibdev = ibcq->device;
 	u64 entries = attr->cqe;
 	int vector = attr->comp_vector;
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
 	u32 out[MLX5_ST_SZ_DW(create_cq_out)];
 	int index;
@@ -1368,7 +1368,7 @@ err_cqb:
 
 int mlx5_ib_pre_destroy_cq(struct ib_cq *cq)
 {
-	struct mlx5_ib_dev *dev = to_mdev(cq->device);
+	struct mlx5_ib_dev *dev = to_dev(cq->device);
 	struct mlx5_ib_cq *mcq = to_mcq(cq);
 
 	if (!cq->uobject)
@@ -1380,7 +1380,7 @@ int mlx5_ib_pre_destroy_cq(struct ib_cq *cq)
 void mlx5_ib_post_destroy_cq(struct ib_cq *cq)
 {
 	WARN_ON(!list_empty(&to_mcq(cq)->wc_list));
-	destroy_cq_kernel(to_mdev(cq->device), to_mcq(cq));
+	destroy_cq_kernel(to_dev(cq->device), to_mcq(cq));
 }
 
 int mlx5_ib_destroy_cq(struct ib_cq *cq, struct ib_udata *udata)
@@ -1467,7 +1467,7 @@ void mlx5_ib_cq_clean(struct mlx5_ib_cq *cq, u32 qpn, struct mlx5_ib_srq *srq)
 
 int mlx5_ib_modify_cq(struct ib_cq *cq, u16 cq_count, u16 cq_period)
 {
-	struct mlx5_ib_dev *dev = to_mdev(cq->device);
+	struct mlx5_ib_dev *dev = to_dev(cq->device);
 	struct mlx5_ib_cq *mcq = to_mcq(cq);
 	int err;
 
@@ -1542,7 +1542,7 @@ ex:
 
 static int copy_resize_cqes(struct mlx5_ib_cq *cq)
 {
-	struct mlx5_ib_dev *dev = to_mdev(cq->ibcq.device);
+	struct mlx5_ib_dev *dev = to_dev(cq->ibcq.device);
 	struct mlx5_cqe64 *scqe64;
 	struct mlx5_cqe64 *dcqe64;
 	void *start_cqe;
@@ -1598,7 +1598,7 @@ static int copy_resize_cqes(struct mlx5_ib_cq *cq)
 int mlx5_ib_resize_cq(struct ib_cq *ibcq, unsigned int entries,
 		      struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibcq->device);
+	struct mlx5_ib_dev *dev = to_dev(ibcq->device);
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
 	void *cqc;
 	u32 *in;

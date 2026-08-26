@@ -14,7 +14,7 @@
 
 static bool pp_is_supported(struct ib_device *device)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 
 	return (MLX5_CAP_GEN(dev->mdev, qos) &&
 		MLX5_CAP_QOS(dev->mdev, packet_pacing) &&
@@ -44,7 +44,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_PP_OBJ_ALLOC)(
 	if (!c->devx_uid)
 		return -EINVAL;
 
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
 	pp_entry = kzalloc_obj(*pp_entry);
 	if (!pp_entry)
 		return -ENOMEM;

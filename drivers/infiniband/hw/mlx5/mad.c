@@ -302,7 +302,7 @@ int mlx5_ib_process_mad(struct ib_device *ibdev, int mad_flags, u32 port_num,
 			const struct ib_mad *in, struct ib_mad *out,
 			size_t *out_mad_size, u16 *out_mad_pkey_index)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	u8 mgmt_class = in->mad_hdr.mgmt_class;
 	u8 method = in->mad_hdr.method;
 	u16 slid;
@@ -343,7 +343,7 @@ int mlx5_ib_process_mad(struct ib_device *ibdev, int mad_flags, u32 port_num,
 		return IB_MAD_RESULT_SUCCESS;
 	}
 
-	err = mlx5_MAD_IFC(to_mdev(ibdev), mad_flags & IB_MAD_IGNORE_MKEY,
+	err = mlx5_MAD_IFC(to_dev(ibdev), mad_flags & IB_MAD_IGNORE_MKEY,
 			   mad_flags & IB_MAD_IGNORE_BKEY, port_num, in_wc,
 			   in_grh, in, out);
 	if (err)
@@ -402,7 +402,7 @@ static int mlx5_query_mad_ifc_smp_attr_node_info(struct ib_device *ibdev,
 	ib_init_query_mad(in_mad);
 	in_mad->attr_id = IB_SMP_ATTR_NODE_INFO;
 
-	err = mlx5_MAD_IFC(to_mdev(ibdev), 1, 1, 1, NULL, NULL, in_mad,
+	err = mlx5_MAD_IFC(to_dev(ibdev), 1, 1, 1, NULL, NULL, in_mad,
 			   out_mad);
 
 	kfree(in_mad);
@@ -541,7 +541,7 @@ int mlx5_query_mad_ifc_pkey(struct ib_device *ibdev, u32 port, u16 index,
 	in_mad->attr_id  = IB_SMP_ATTR_PKEY_TABLE;
 	in_mad->attr_mod = cpu_to_be32(index / 32);
 
-	err = mlx5_MAD_IFC(to_mdev(ibdev), 1, 1, port, NULL, NULL, in_mad,
+	err = mlx5_MAD_IFC(to_dev(ibdev), 1, 1, port, NULL, NULL, in_mad,
 			   out_mad);
 	if (err)
 		goto out;
@@ -570,7 +570,7 @@ int mlx5_query_mad_ifc_gids(struct ib_device *ibdev, u32 port, int index,
 	in_mad->attr_id  = IB_SMP_ATTR_PORT_INFO;
 	in_mad->attr_mod = cpu_to_be32(port);
 
-	err = mlx5_MAD_IFC(to_mdev(ibdev), 1, 1, port, NULL, NULL, in_mad,
+	err = mlx5_MAD_IFC(to_dev(ibdev), 1, 1, port, NULL, NULL, in_mad,
 			   out_mad);
 	if (err)
 		goto out;
@@ -581,7 +581,7 @@ int mlx5_query_mad_ifc_gids(struct ib_device *ibdev, u32 port, int index,
 	in_mad->attr_id  = IB_SMP_ATTR_GUID_INFO;
 	in_mad->attr_mod = cpu_to_be32(index / 8);
 
-	err = mlx5_MAD_IFC(to_mdev(ibdev), 1, 1, port, NULL, NULL, in_mad,
+	err = mlx5_MAD_IFC(to_dev(ibdev), 1, 1, port, NULL, NULL, in_mad,
 			   out_mad);
 	if (err)
 		goto out;
@@ -597,7 +597,7 @@ out:
 int mlx5_query_mad_ifc_port(struct ib_device *ibdev, u32 port,
 			    struct ib_port_attr *props)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	struct ib_smp *in_mad;
 	struct ib_smp *out_mad;
