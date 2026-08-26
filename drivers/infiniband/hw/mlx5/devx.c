@@ -44,7 +44,7 @@ struct mlx5_async_cmd {
 };
 
 struct devx_async_data {
-	struct mlx5_ib_dev *mdev;
+	struct mlx5_ib_dev *dev;
 	struct list_head list;
 	struct devx_async_cmd_event_file *ev_file;
 	struct mlx5_async_work cb_work;
@@ -1652,7 +1652,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_MODIFY)(
 							  MLX5_IB_ATTR_DEVX_OBJ_MODIFY_HANDLE);
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *mdev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
 	void *cmd_out;
 	int err, err2;
 	int uid;
@@ -1677,7 +1677,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_MODIFY)(
 	MLX5_SET(general_obj_in_cmd_hdr, cmd_in, uid, uid);
 	devx_set_umem_valid(cmd_in);
 
-	err = mlx5_cmd_do(mdev->mdev, cmd_in,
+	err = mlx5_cmd_do(dev->mdev, cmd_in,
 			  uverbs_attr_get_len(attrs, MLX5_IB_ATTR_DEVX_OBJ_MODIFY_CMD_IN),
 			  cmd_out, cmd_out_len);
 	if (err && err != -EREMOTEIO)
@@ -1702,7 +1702,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_QUERY)(
 	void *cmd_out;
 	int err, err2;
 	int uid;
-	struct mlx5_ib_dev *mdev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
 
 	if (MLX5_GET(general_obj_in_cmd_hdr, cmd_in, vhca_tunnel_id))
 		return -EINVAL;
@@ -1722,7 +1722,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_QUERY)(
 		return PTR_ERR(cmd_out);
 
 	MLX5_SET(general_obj_in_cmd_hdr, cmd_in, uid, uid);
-	err = mlx5_cmd_do(mdev->mdev, cmd_in,
+	err = mlx5_cmd_do(dev->mdev, cmd_in,
 			  uverbs_attr_get_len(attrs, MLX5_IB_ATTR_DEVX_OBJ_QUERY_CMD_IN),
 			  cmd_out, cmd_out_len);
 	if (err && err != -EREMOTEIO)
@@ -1764,12 +1764,12 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_ASYNC_CMD_FD_ALLOC)(
 
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(
 		attrs, MLX5_IB_ATTR_DEVX_ASYNC_CMD_FD_ALLOC_HANDLE);
-	struct mlx5_ib_dev *mdev = mlx5_udata_to_mdev(&attrs->driver_udata);
+	struct mlx5_ib_dev *dev = mlx5_udata_to_mdev(&attrs->driver_udata);
 
 	ev_file = container_of(uobj, struct devx_async_cmd_event_file,
 			       uobj);
 	devx_init_event_queue(&ev_file->ev_queue);
-	mlx5_cmd_init_async_ctx(mdev->mdev, &ev_file->async_ctx);
+	mlx5_cmd_init_async_ctx(dev->mdev, &ev_file->async_ctx);
 	return 0;
 }
 
@@ -1841,7 +1841,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_ASYNC_QUERY)(
 	struct ib_uobject *fd_uobj;
 	int err;
 	int uid;
-	struct mlx5_ib_dev *mdev = to_mdev(c->ibucontext.device);
+	struct mlx5_ib_dev *dev = to_mdev(c->ibucontext.device);
 	struct devx_async_cmd_event_file *ev_file;
 	struct devx_async_data *async_data;
 
@@ -1890,7 +1890,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_ASYNC_QUERY)(
 		goto free_async;
 
 	async_data->cmd_out_len = cmd_out_len;
-	async_data->mdev = mdev;
+	async_data->dev = dev;
 	async_data->ev_file = ev_file;
 
 	MLX5_SET(general_obj_in_cmd_hdr, cmd_in, uid, uid);
@@ -2021,7 +2021,7 @@ static bool is_valid_events_legacy(int num_events, u16 *event_type_num_list,
 }
 
 #define MAX_SUPP_EVENT_NUM 255
-static bool is_valid_events(struct mlx5_core_dev *dev,
+static bool is_valid_events(struct mlx5_core_dev *mdev,
 			    int num_events, u16 *event_type_num_list,
 			    struct devx_obj *obj)
 {
@@ -2031,10 +2031,10 @@ static bool is_valid_events(struct mlx5_core_dev *dev,
 	int mask_bit;
 	int i;
 
-	if (MLX5_CAP_GEN(dev, event_cap)) {
-		aff_events = MLX5_CAP_DEV_EVENT(dev,
+	if (MLX5_CAP_GEN(mdev, event_cap)) {
+		aff_events = MLX5_CAP_DEV_EVENT(mdev,
 						user_affiliated_events);
-		unaff_events = MLX5_CAP_DEV_EVENT(dev,
+		unaff_events = MLX5_CAP_DEV_EVENT(mdev,
 						  user_unaffiliated_events);
 	} else {
 		return is_valid_events_legacy(num_events, event_type_num_list,
@@ -2474,17 +2474,17 @@ static int devx_umem_cleanup(struct ib_uobject *uobject,
 	return 0;
 }
 
-static bool is_unaffiliated_event(struct mlx5_core_dev *dev,
+static bool is_unaffiliated_event(struct mlx5_core_dev *mdev,
 				  unsigned long event_type)
 {
 	__be64 *unaff_events;
 	int mask_entry;
 	int mask_bit;
 
-	if (!MLX5_CAP_GEN(dev, event_cap))
+	if (!MLX5_CAP_GEN(mdev, event_cap))
 		return is_legacy_unaffiliated_event_num(event_type);
 
-	unaff_events = MLX5_CAP_DEV_EVENT(dev,
+	unaff_events = MLX5_CAP_DEV_EVENT(mdev,
 					  user_unaffiliated_events);
 	WARN_ON(event_type > MAX_SUPP_EVENT_NUM);
 

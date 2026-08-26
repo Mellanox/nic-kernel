@@ -2831,10 +2831,10 @@ static int mlx5_ib_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 
 static int mlx5_ib_dealloc_pd(struct ib_pd *pd, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *mdev = to_mdev(pd->device);
+	struct mlx5_ib_dev *dev = to_mdev(pd->device);
 	struct mlx5_ib_pd *mpd = to_mpd(pd);
 
-	return mlx5_cmd_dealloc_pd(mdev->mdev, mpd->pdn, mpd->uid);
+	return mlx5_cmd_dealloc_pd(dev->mdev, mpd->pdn, mpd->uid);
 }
 
 static int mlx5_ib_mcg_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
@@ -4599,7 +4599,7 @@ static int mlx5_ib_stage_init_init(struct mlx5_ib_dev *dev)
 	atomic_set(&dev->mkey_var, 0);
 
 	spin_lock_init(&dev->dm.lock);
-	dev->dm.dev = mdev;
+	dev->dm.mdev = mdev;
 	err = mlx5_ib_data_direct_init(dev);
 	if (err)
 		goto err_mp;
@@ -5439,10 +5439,10 @@ fail_kcalloc:
 
 static void mlx5_ib_del_sub_dev(struct ib_device *sub_dev)
 {
-	struct mlx5_ib_dev *mdev = to_mdev(sub_dev);
+	struct mlx5_ib_dev *dev = to_mdev(sub_dev);
 
 	to_mdev(sub_dev->parent)->smi_dev = NULL;
-	__mlx5_ib_remove(mdev, mdev->profile, MLX5_IB_STAGE_MAX);
+	__mlx5_ib_remove(dev, dev->profile, MLX5_IB_STAGE_MAX);
 }
 
 static int mlx5r_mp_probe(struct auxiliary_device *adev,

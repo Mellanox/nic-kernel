@@ -12,11 +12,12 @@
 static int mlx5_cmd_alloc_memic(struct mlx5_dm *dm, phys_addr_t *addr,
 				u64 length, u32 alignment)
 {
-	struct mlx5_core_dev *dev = dm->dev;
-	u64 num_memic_hw_pages = MLX5_CAP_DEV_MEM(dev, memic_bar_size)
+	struct mlx5_core_dev *mdev = dm->mdev;
+	u64 num_memic_hw_pages = MLX5_CAP_DEV_MEM(mdev, memic_bar_size)
 					>> PAGE_SHIFT;
-	u64 hw_start_addr = MLX5_CAP64_DEV_MEM(dev, memic_bar_start_addr);
-	u32 max_alignment = MLX5_CAP_DEV_MEM(dev, log_max_memic_addr_alignment);
+	u64 hw_start_addr = MLX5_CAP64_DEV_MEM(mdev, memic_bar_start_addr);
+	u32 max_alignment =
+		MLX5_CAP_DEV_MEM(mdev, log_max_memic_addr_alignment);
 	u32 num_pages = DIV_ROUND_UP(length, PAGE_SIZE);
 	u32 out[MLX5_ST_SZ_DW(alloc_memic_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(alloc_memic_in)] = {};
@@ -60,7 +61,7 @@ static int mlx5_cmd_alloc_memic(struct mlx5_dm *dm, phys_addr_t *addr,
 		MLX5_SET64(alloc_memic_in, in, range_start_addr,
 			   hw_start_addr + (page_idx * PAGE_SIZE));
 
-		ret = mlx5_cmd_exec_inout(dev, alloc_memic, in, out);
+		ret = mlx5_cmd_exec_inout(mdev, alloc_memic, in, out);
 		if (ret) {
 			spin_lock(&dm->lock);
 			bitmap_clear(dm->memic_alloc_pages,
@@ -75,7 +76,7 @@ static int mlx5_cmd_alloc_memic(struct mlx5_dm *dm, phys_addr_t *addr,
 			return ret;
 		}
 
-		*addr = dev->bar_addr +
+		*addr = mdev->bar_addr +
 			MLX5_GET64(alloc_memic_out, out, memic_start_addr);
 
 		return 0;
@@ -87,21 +88,21 @@ static int mlx5_cmd_alloc_memic(struct mlx5_dm *dm, phys_addr_t *addr,
 void mlx5_cmd_dealloc_memic(struct mlx5_dm *dm, phys_addr_t addr,
 			    u64 length)
 {
-	struct mlx5_core_dev *dev = dm->dev;
-	u64 hw_start_addr = MLX5_CAP64_DEV_MEM(dev, memic_bar_start_addr);
+	struct mlx5_core_dev *mdev = dm->mdev;
+	u64 hw_start_addr = MLX5_CAP64_DEV_MEM(mdev, memic_bar_start_addr);
 	u32 num_pages = DIV_ROUND_UP(length, PAGE_SIZE);
 	u32 in[MLX5_ST_SZ_DW(dealloc_memic_in)] = {};
 	u64 start_page_idx;
 	int err;
 
-	addr -= dev->bar_addr;
+	addr -= mdev->bar_addr;
 	start_page_idx = (addr - hw_start_addr) >> PAGE_SHIFT;
 
 	MLX5_SET(dealloc_memic_in, in, opcode, MLX5_CMD_OP_DEALLOC_MEMIC);
 	MLX5_SET64(dealloc_memic_in, in, memic_start_addr, addr);
 	MLX5_SET(dealloc_memic_in, in, memic_size, length);
 
-	err =  mlx5_cmd_exec_in(dev, dealloc_memic, in);
+	err =  mlx5_cmd_exec_in(mdev, dealloc_memic, in);
 	if (err)
 		return;
 
@@ -115,14 +116,15 @@ void mlx5_cmd_dealloc_memic_op(struct mlx5_dm *dm, phys_addr_t addr,
 			       u8 operation)
 {
 	u32 in[MLX5_ST_SZ_DW(modify_memic_in)] = {};
-	struct mlx5_core_dev *dev = dm->dev;
+	struct mlx5_core_dev *mdev = dm->mdev;
 
 	MLX5_SET(modify_memic_in, in, opcode, MLX5_CMD_OP_MODIFY_MEMIC);
 	MLX5_SET(modify_memic_in, in, op_mod, MLX5_MODIFY_MEMIC_OP_MOD_DEALLOC);
 	MLX5_SET(modify_memic_in, in, memic_operation_type, operation);
-	MLX5_SET64(modify_memic_in, in, memic_start_addr, addr - dev->bar_addr);
+	MLX5_SET64(modify_memic_in, in, memic_start_addr,
+		   addr - mdev->bar_addr);
 
-	mlx5_cmd_exec_in(dev, modify_memic, in);
+	mlx5_cmd_exec_in(mdev, modify_memic, in);
 }
 
 static int mlx5_cmd_alloc_memic_op(struct mlx5_dm *dm, phys_addr_t addr,
@@ -130,19 +132,20 @@ static int mlx5_cmd_alloc_memic_op(struct mlx5_dm *dm, phys_addr_t addr,
 {
 	u32 out[MLX5_ST_SZ_DW(modify_memic_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(modify_memic_in)] = {};
-	struct mlx5_core_dev *dev = dm->dev;
+	struct mlx5_core_dev *mdev = dm->mdev;
 	int err;
 
 	MLX5_SET(modify_memic_in, in, opcode, MLX5_CMD_OP_MODIFY_MEMIC);
 	MLX5_SET(modify_memic_in, in, op_mod, MLX5_MODIFY_MEMIC_OP_MOD_ALLOC);
 	MLX5_SET(modify_memic_in, in, memic_operation_type, operation);
-	MLX5_SET64(modify_memic_in, in, memic_start_addr, addr - dev->bar_addr);
+	MLX5_SET64(modify_memic_in, in, memic_start_addr,
+		   addr - mdev->bar_addr);
 
-	err = mlx5_cmd_exec_inout(dev, modify_memic, in, out);
+	err = mlx5_cmd_exec_inout(mdev, modify_memic, in, out);
 	if (err)
 		return err;
 
-	*op_addr = dev->bar_addr +
+	*op_addr = mdev->bar_addr +
 		   MLX5_GET64(modify_memic_out, out, memic_operation_addr);
 	return 0;
 }
@@ -288,7 +291,7 @@ static struct ib_dm *handle_alloc_dm_memic(struct ib_ucontext *ctx,
 	int err;
 	u64 address;
 
-	if (!dm_db || !MLX5_CAP_DEV_MEM(dm_db->dev, memic))
+	if (!dm_db || !MLX5_CAP_DEV_MEM(dm_db->mdev, memic))
 		return ERR_PTR(-EOPNOTSUPP);
 
 	dm = kzalloc_obj(*dm);
@@ -360,7 +363,7 @@ static struct ib_dm *handle_alloc_dm_sw_icm(struct ib_ucontext *ctx,
 					    struct uverbs_attr_bundle *attrs,
 					    int type)
 {
-	struct mlx5_core_dev *dev = to_mdev(ctx->device)->mdev;
+	struct mlx5_core_dev *mdev = to_mdev(ctx->device)->mdev;
 	enum mlx5_sw_icm_type icm_type;
 	struct mlx5_ib_dm_icm *dm;
 	u64 act_size;
@@ -373,15 +376,15 @@ static struct ib_dm *handle_alloc_dm_sw_icm(struct ib_ucontext *ctx,
 	case MLX5_IB_UAPI_DM_TYPE_STEERING_SW_ICM:
 	case MLX5_IB_UAPI_DM_TYPE_HEADER_MODIFY_SW_ICM:
 	case MLX5_IB_UAPI_DM_TYPE_ENCAP_SW_ICM:
-		if (!(MLX5_CAP_FLOWTABLE_NIC_RX(dev, sw_owner) ||
-		      MLX5_CAP_FLOWTABLE_NIC_TX(dev, sw_owner) ||
-		      MLX5_CAP_FLOWTABLE_NIC_RX(dev, sw_owner_v2) ||
-		      MLX5_CAP_FLOWTABLE_NIC_TX(dev, sw_owner_v2)))
+		if (!(MLX5_CAP_FLOWTABLE_NIC_RX(mdev, sw_owner) ||
+		      MLX5_CAP_FLOWTABLE_NIC_TX(mdev, sw_owner) ||
+		      MLX5_CAP_FLOWTABLE_NIC_RX(mdev, sw_owner_v2) ||
+		      MLX5_CAP_FLOWTABLE_NIC_TX(mdev, sw_owner_v2)))
 			return ERR_PTR(-EOPNOTSUPP);
 		break;
 	case MLX5_IB_UAPI_DM_TYPE_HEADER_MODIFY_PATTERN_SW_ICM:
-		if (!MLX5_CAP_FLOWTABLE_NIC_RX(dev, sw_owner_v2) ||
-		    !MLX5_CAP_FLOWTABLE_NIC_TX(dev, sw_owner_v2))
+		if (!MLX5_CAP_FLOWTABLE_NIC_RX(mdev, sw_owner_v2) ||
+		    !MLX5_CAP_FLOWTABLE_NIC_TX(mdev, sw_owner_v2))
 			return ERR_PTR(-EOPNOTSUPP);
 		break;
 	default:
@@ -398,13 +401,13 @@ static struct ib_dm *handle_alloc_dm_sw_icm(struct ib_ucontext *ctx,
 	/* Allocation size must a multiple of the basic block size
 	 * and a power of 2.
 	 */
-	act_size = round_up(attr->length, MLX5_SW_ICM_BLOCK_SIZE(dev));
+	act_size = round_up(attr->length, MLX5_SW_ICM_BLOCK_SIZE(mdev));
 	act_size = roundup_pow_of_two(act_size);
 
 	dm->base.size = act_size;
 	icm_type = get_icm_type(type);
 
-	err = mlx5_dm_sw_icm_alloc(dev, icm_type, act_size, attr->alignment,
+	err = mlx5_dm_sw_icm_alloc(mdev, icm_type, act_size, attr->alignment,
 				   to_mucontext(ctx)->devx_uid,
 				   &dm->base.dev_addr, &dm->obj_id);
 	if (err)
@@ -413,7 +416,7 @@ static struct ib_dm *handle_alloc_dm_sw_icm(struct ib_ucontext *ctx,
 	err = uverbs_copy_to(attrs, MLX5_IB_ATTR_ALLOC_DM_RESP_START_OFFSET,
 			     &dm->base.dev_addr, sizeof(dm->base.dev_addr));
 	if (err) {
-		mlx5_dm_sw_icm_dealloc(dev, icm_type, dm->base.size,
+		mlx5_dm_sw_icm_dealloc(mdev, icm_type, dm->base.size,
 				       to_mucontext(ctx)->devx_uid,
 				       dm->base.dev_addr, dm->obj_id);
 		goto free;
@@ -477,10 +480,10 @@ static int mlx5_dm_icm_dealloc(struct mlx5_ib_ucontext *ctx,
 			       struct mlx5_ib_dm_icm *dm)
 {
 	enum mlx5_sw_icm_type type = get_icm_type(dm->base.type);
-	struct mlx5_core_dev *dev = to_mdev(dm->base.ibdm.device)->mdev;
+	struct mlx5_core_dev *mdev = to_mdev(dm->base.ibdm.device)->mdev;
 	int err;
 
-	err = mlx5_dm_sw_icm_dealloc(dev, type, dm->base.size, ctx->devx_uid,
+	err = mlx5_dm_sw_icm_dealloc(mdev, type, dm->base.size, ctx->devx_uid,
 				     dm->base.dev_addr, dm->obj_id);
 	if (!err)
 		kfree(dm);

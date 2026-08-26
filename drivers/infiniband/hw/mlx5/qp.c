@@ -3526,7 +3526,7 @@ int mlx5r_ib_rate(struct mlx5_ib_dev *dev, u8 rate)
 	return ib_to_mlx5_rate_map(rate);
 }
 
-static int modify_raw_packet_eth_prio(struct mlx5_core_dev *dev,
+static int modify_raw_packet_eth_prio(struct mlx5_core_dev *mdev,
 				      struct mlx5_ib_sq *sq, u8 sl,
 				      struct ib_pd *pd)
 {
@@ -3546,14 +3546,14 @@ static int modify_raw_packet_eth_prio(struct mlx5_core_dev *dev,
 	tisc = MLX5_ADDR_OF(modify_tis_in, in, ctx);
 	MLX5_SET(tisc, tisc, prio, ((sl & 0x7) << 1));
 
-	err = mlx5_core_modify_tis(dev, sq->tisn, in);
+	err = mlx5_core_modify_tis(mdev, sq->tisn, in);
 
 	kvfree(in);
 
 	return err;
 }
 
-static int modify_raw_packet_tx_affinity(struct mlx5_core_dev *dev,
+static int modify_raw_packet_tx_affinity(struct mlx5_core_dev *mdev,
 					 struct mlx5_ib_sq *sq, u8 tx_affinity,
 					 struct ib_pd *pd)
 {
@@ -3573,7 +3573,7 @@ static int modify_raw_packet_tx_affinity(struct mlx5_core_dev *dev,
 	tisc = MLX5_ADDR_OF(modify_tis_in, in, ctx);
 	MLX5_SET(tisc, tisc, lag_tx_port_affinity, tx_affinity);
 
-	err = mlx5_core_modify_tis(dev, sq->tisn, in);
+	err = mlx5_core_modify_tis(mdev, sq->tisn, in);
 
 	kvfree(in);
 
@@ -3978,27 +3978,27 @@ static int qp_rl_prepare(struct mlx5_ib_dev *dev,
 	return 0;
 }
 
-static void qp_rl_rollback(struct mlx5_core_dev *dev,
+static void qp_rl_rollback(struct mlx5_core_dev *mdev,
 			   struct mlx5_rate_limit_ctx *ctx)
 {
 	if (ctx->rl_desired_index)
-		mlx5_rl_remove_rate(dev, &ctx->rl_desired);
+		mlx5_rl_remove_rate(mdev, &ctx->rl_desired);
 }
 
-static void qp_rl_commit(struct mlx5_core_dev *dev,
+static void qp_rl_commit(struct mlx5_core_dev *mdev,
 			 struct mlx5_ib_qp *qp,
 			 struct mlx5_rate_limit_ctx *ctx,
 			 enum ib_qp_state new_state)
 {
 	if (ctx->rl_changed) {
 		if (ctx->rl_old.rate)
-			mlx5_rl_remove_rate(dev, &ctx->rl_old);
+			mlx5_rl_remove_rate(mdev, &ctx->rl_old);
 		qp->rl = ctx->rl_desired;
 	}
 
 	if (new_state == IB_QPS_RESET || new_state == IB_QPS_ERR) {
 		if (qp->rl.rate)
-			mlx5_rl_remove_rate(dev, &qp->rl);
+			mlx5_rl_remove_rate(mdev, &qp->rl);
 		memset(&qp->rl, 0, sizeof(qp->rl));
 		memset(&qp->rl_desired, 0, sizeof(qp->rl_desired));
 		return;
@@ -4008,7 +4008,7 @@ static void qp_rl_commit(struct mlx5_core_dev *dev,
 }
 
 static int modify_raw_packet_qp_sq(
-	struct mlx5_core_dev *dev, struct mlx5_ib_sq *sq, int new_state,
+	struct mlx5_core_dev *mdev, struct mlx5_ib_sq *sq, int new_state,
 	const struct mlx5_modify_raw_qp_param *raw_qp_param, struct ib_pd *pd)
 {
 	const struct mlx5_rate_limit_ctx *rl_ctx = &raw_qp_param->rl_ctx;
@@ -4041,12 +4041,12 @@ static int modify_raw_packet_qp_sq(
 		}
 	}
 
-	err = mlx5_core_modify_sq(dev, sq->base.mqp.qpn, in);
+	err = mlx5_core_modify_sq(mdev, sq->base.mqp.qpn, in);
 	if (err)
 		goto out;
 
 	if (new_state != MLX5_SQC_STATE_RDY) {
-		mlx5_rl_remove_rate(dev, &ibqp->rl);
+		mlx5_rl_remove_rate(mdev, &ibqp->rl);
 		memset(&ibqp->rl, 0, sizeof(ibqp->rl));
 		memset(&ibqp->rl_desired, 0, sizeof(ibqp->rl_desired));
 	}
