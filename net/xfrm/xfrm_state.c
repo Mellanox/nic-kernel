@@ -994,7 +994,6 @@ restart:
 				spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 
 				err = xfrm_state_delete(x);
-				xfrm_dev_state_free(x);
 
 				xfrm_audit_state_delete(x, err ? 0 : 1,
 							task_valid);
@@ -1031,6 +1030,9 @@ out:
 	}
 	spin_unlock_bh(&xfrm_state_dev_gc_lock);
 	mutex_unlock(&xfrm_state_gc_mutex);
+
+	if (!hlist_empty(&flush_list))
+		synchronize_rcu();
 
 	hlist_for_each_entry_safe(x, tmp, &flush_list, gclist) {
 		hlist_del_init(&x->gclist);
