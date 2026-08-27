@@ -658,7 +658,8 @@ static int mlx5_devlink_eth_params_register(struct devlink *devlink)
 
 	mlx5_devlink_hairpin_params_init_values(devlink);
 
-	value.vu32 = MLX5_DEFAULT_NUM_DOORBELLS;
+	value.vu32 = min_t(u32, MLX5_DEFAULT_NUM_DOORBELLS,
+			   mlx5e_get_max_num_channels(dev));
 	devl_param_driverinit_value_set(devlink,
 					DEVLINK_PARAM_GENERIC_ID_NUM_DOORBELLS,
 					&value);
