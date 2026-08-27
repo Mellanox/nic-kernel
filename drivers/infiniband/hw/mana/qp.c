@@ -340,7 +340,8 @@ static int mana_ib_create_qp_raw(struct ib_qp *ibqp, struct ib_pd *ibpd,
 	ibdev_dbg(&mdev->ib_dev, "ucmd sq_buf_addr 0x%llx port %u\n",
 		  ucmd.sq_buf_addr, ucmd.port);
 
-	err = mana_ib_create_queue(mdev, ucmd.sq_buf_addr, ucmd.sq_buf_size, &qp->raw_sq);
+	err = mana_ib_create_queue(mdev, ucmd.sq_buf_addr, ucmd.sq_buf_size, &qp->raw_sq,
+				   false);
 	if (err) {
 		ibdev_dbg(&mdev->ib_dev,
 			  "Failed to create queue for create qp-raw, err %d\n", err);
@@ -589,7 +590,7 @@ static int mana_ib_create_rc_qp(struct ib_qp *ibqp, struct ib_pd *ibpd,
 			continue;
 		}
 		err = mana_ib_create_queue(mdev, ucmd.queue_buf[j], ucmd.queue_size[j],
-					   &qp->rc_qp.queues[i]);
+					   &qp->rc_qp.queues[i], false);
 		if (err)
 			goto destroy_queues;
 		j++;
@@ -663,7 +664,7 @@ static int mana_ib_create_uc_qp(struct ib_qp *ibqp, struct ib_pd *ibpd,
 
 	for (i = 0; i < MANA_UC_QUEUE_TYPE_MAX; ++i) {
 		err = mana_ib_create_queue(mdev, ucmd.queue_buf[i], ucmd.queue_size[i],
-					   &qp->uc_qp.queues[i]);
+					   &qp->uc_qp.queues[i], false);
 		if (err)
 			goto destroy_queues;
 	}
