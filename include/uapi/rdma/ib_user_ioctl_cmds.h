@@ -93,6 +93,7 @@ enum uverbs_attrs_query_port_cmd_attr_ids {
 enum uverbs_attrs_query_port_speed_cmd_attr_ids {
 	UVERBS_ATTR_QUERY_PORT_SPEED_PORT_NUM,
 	UVERBS_ATTR_QUERY_PORT_SPEED_RESP,
+	UVERBS_ATTR_QUERY_PORT_SPEED_MAX_RESP,
 };
 
 enum uverbs_attrs_query_comp_cntr_caps_attr_ids {

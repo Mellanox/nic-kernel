@@ -214,8 +214,9 @@ static int UVERBS_HANDLER(UVERBS_METHOD_QUERY_PORT_SPEED)(
 {
 	struct ib_ucontext *ucontext;
 	struct ib_device *ib_dev;
+	u64 oper_speed = 0;
+	u64 cap_speed = 0;
 	u32 port_num;
-	u64 speed;
 	int ret;
 
 	ucontext = ib_uverbs_get_ucontext(attrs);
@@ -223,7 +224,7 @@ static int UVERBS_HANDLER(UVERBS_METHOD_QUERY_PORT_SPEED)(
 		return PTR_ERR(ucontext);
 	ib_dev = ucontext->device;
 
-	if (!ib_dev->ops.query_port_speed)
+	if (!ib_dev->ops.query_port_speed_ex && !ib_dev->ops.query_port_speed)
 		return -EOPNOTSUPP;
 
 	ret = uverbs_get_const(&port_num, attrs,
@@ -234,12 +235,31 @@ static int UVERBS_HANDLER(UVERBS_METHOD_QUERY_PORT_SPEED)(
 	if (!rdma_is_port_valid(ib_dev, port_num))
 		return -EINVAL;
 
-	ret = ib_dev->ops.query_port_speed(ib_dev, port_num, &speed);
+	if (ib_dev->ops.query_port_speed_ex) {
+		ret = ib_dev->ops.query_port_speed_ex(ib_dev, port_num,
+						      &oper_speed,
+						      &cap_speed);
+	} else {
+		ret = ib_dev->ops.query_port_speed(ib_dev, port_num,
+						   &oper_speed);
+	}
 	if (ret)
 		return ret;
 
-	return uverbs_copy_to(attrs, UVERBS_ATTR_QUERY_PORT_SPEED_RESP,
-			      &speed, sizeof(speed));
+	ret = uverbs_copy_to(attrs, UVERBS_ATTR_QUERY_PORT_SPEED_RESP,
+			     &oper_speed, sizeof(oper_speed));
+	if (ret)
+		return ret;
+
+	if (ib_dev->ops.query_port_speed_ex &&
+	    uverbs_attr_is_valid(attrs,
+				 UVERBS_ATTR_QUERY_PORT_SPEED_MAX_RESP)) {
+		return uverbs_copy_to(attrs,
+				      UVERBS_ATTR_QUERY_PORT_SPEED_MAX_RESP,
+				      &cap_speed, sizeof(cap_speed));
+	} else {
+		return 0;
+	}
 }
 
 static int UVERBS_HANDLER(UVERBS_METHOD_GET_CONTEXT)(
@@ -552,7 +572,10 @@ DECLARE_UVERBS_NAMED_METHOD(
 			     UA_MANDATORY),
 	UVERBS_ATTR_PTR_OUT(UVERBS_ATTR_QUERY_PORT_SPEED_RESP,
 			    UVERBS_ATTR_TYPE(u64),
-			    UA_MANDATORY));
+			    UA_MANDATORY),
+	UVERBS_ATTR_PTR_OUT(UVERBS_ATTR_QUERY_PORT_SPEED_MAX_RESP,
+			    UVERBS_ATTR_TYPE(u64),
+			    UA_OPTIONAL));
 
 DECLARE_UVERBS_NAMED_METHOD(
 	UVERBS_METHOD_QUERY_GID_TABLE,
