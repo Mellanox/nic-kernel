@@ -1634,7 +1634,13 @@ mlx5_lag_modify_device_vports_speed(struct mlx5_core_dev *mdev,
 			continue;
 
 		if (speed->flags & MLX5_VPORT_TX_SPEED_MAX)
-			vport->agg_max_tx_speed = speed->max_tx_speed;
+			vport->agg_speed.max_tx_speed = speed->max_tx_speed;
+		if (speed->flags & MLX5_VPORT_TX_SPEED_CAP)
+			vport->agg_speed.cap_tx_speed = speed->cap_tx_speed;
+		if (speed->flags & MLX5_VPORT_TX_SPEED_EFFECTIVE)
+			vport->agg_speed.effective_tx_speed =
+				speed->effective_tx_speed;
+		vport->agg_speed.flags |= speed->flags;
 
 		if (!vport->enabled)
 			continue;

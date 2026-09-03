@@ -260,7 +260,7 @@ struct mlx5_vport {
 	enum mlx5_eswitch_vport_event enabled_events;
 	int index;
 	struct mlx5_devlink_port *dl_port;
-	u32 agg_max_tx_speed;
+	struct mlx5_vport_tx_speed agg_speed;
 };
 
 struct mlx5_esw_indir_table;
@@ -815,6 +815,10 @@ struct mlx5_eswitch *mlx5_devlink_eswitch_nocheck_get(struct devlink *devlink);
 
 struct mlx5_vport *__must_check
 mlx5_eswitch_get_vport(struct mlx5_eswitch *esw, u16 vport_num);
+
+void mlx5_esw_vport_speed_fallback(struct mlx5_eswitch *esw, u16 vport,
+				   int query_err,
+				   struct mlx5_vport_tx_speed *tx_speed);
 
 bool mlx5_eswitch_is_vf_vport(struct mlx5_eswitch *esw, u16 vport_num);
 int mlx5_esw_spf_vport_to_idx(struct mlx5_eswitch *esw, u16 vport_num);

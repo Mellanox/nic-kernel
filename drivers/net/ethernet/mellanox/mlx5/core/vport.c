@@ -81,16 +81,9 @@ int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 						 other_vport, &tx_speed, NULL);
 		if (err) {
 #ifdef CONFIG_MLX5_ESWITCH
-			struct mlx5_vport *esw_vport;
-
-			esw_vport = mlx5_eswitch_get_vport(mdev->priv.eswitch,
-							   vport);
-			tx_speed.max_tx_speed = IS_ERR(esw_vport) ? 0 :
-				esw_vport->agg_max_tx_speed;
+			mlx5_esw_vport_speed_fallback(mdev->priv.eswitch,
+						      vport, err, &tx_speed);
 #endif
-			mlx5_core_dbg(mdev,
-				      "Failed to query vport %d max tx speed, err=%d, using cached %u\n",
-				      vport, err, tx_speed.max_tx_speed);
 		}
 		MLX5_SET(modify_vport_state_in, in, max_tx_speed,
 			 tx_speed.max_tx_speed);
