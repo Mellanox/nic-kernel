@@ -11,6 +11,27 @@ int mlx5_esw_adj_vport_modify(struct mlx5_core_dev *dev, u16 vport,
 
 	lockdep_assert_held(&dev->priv.eswitch->state_lock);
 
+	if (MLX5_CAP_ESW(dev, esw_vport_state_cap_tx_speed) ||
+	    MLX5_CAP_ESW(dev, esw_vport_state_effective_tx_speed)) {
+		u8 op_mod = MLX5_VPORT_STATE_OP_MOD_ESW_VPORT;
+		struct mlx5_vport_tx_speed tx_speed = {};
+		int err;
+
+		err = mlx5_query_vport_state_ctx(dev, op_mod, vport,
+						 true, &tx_speed, NULL);
+		if (err)
+			mlx5_core_dbg(dev,
+				      "Failed to query vport %d tx speed, err=%d\n",
+				      vport, err);
+
+		if (MLX5_CAP_ESW(dev, esw_vport_state_cap_tx_speed))
+			MLX5_SET(modify_vport_state_in, in, cap_tx_speed,
+				 tx_speed.cap_tx_speed);
+		if (MLX5_CAP_ESW(dev, esw_vport_state_effective_tx_speed))
+			MLX5_SET(modify_vport_state_in, in, effective_tx_speed,
+				 tx_speed.effective_tx_speed);
+	}
+
 	MLX5_SET(modify_vport_state_in, in, opcode,
 		 MLX5_CMD_OP_MODIFY_VPORT_STATE);
 	MLX5_SET(modify_vport_state_in, in, op_mod,
