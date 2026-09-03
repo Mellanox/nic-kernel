@@ -938,15 +938,18 @@ static void esw_vport_cleanup(struct mlx5_eswitch *esw, struct mlx5_vport *vport
 static void mlx5_esw_vport_set_max_tx_speed(struct mlx5_eswitch *esw,
 					    struct mlx5_vport *vport)
 {
+	struct mlx5_vport_tx_speed speed = {
+		.max_tx_speed = vport->agg_max_tx_speed,
+		.flags = MLX5_VPORT_TX_SPEED_MAX,
+	};
 	int ret;
 
 	if (!MLX5_CAP_ESW(esw->dev, esw_vport_state_max_tx_speed))
 		return;
 
-	ret = mlx5_modify_vport_max_tx_speed(esw->dev,
-					     MLX5_VPORT_STATE_OP_MOD_ESW_VPORT,
-					     vport->vport, true,
-					     vport->agg_max_tx_speed);
+	ret = mlx5_modify_vport_tx_speed(esw->dev,
+					 MLX5_VPORT_STATE_OP_MOD_ESW_VPORT,
+					 vport->vport, true, &speed);
 	if (ret)
 		mlx5_core_dbg(esw->dev,
 			      "Failed to set vport %d speed %d, err=%d\n",

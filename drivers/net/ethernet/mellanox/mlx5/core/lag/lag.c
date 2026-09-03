@@ -1648,6 +1648,10 @@ static void mlx5_lag_modify_device_vports_speed(struct mlx5_core_dev *mdev,
 {
 	u16 op_mod = MLX5_VPORT_STATE_OP_MOD_ESW_VPORT;
 	struct mlx5_eswitch *esw = mdev->priv.eswitch;
+	struct mlx5_vport_tx_speed tx_speed = {
+		.max_tx_speed = speed,
+		.flags = MLX5_VPORT_TX_SPEED_MAX,
+	};
 	struct mlx5_vport *vport;
 	unsigned long i;
 	int ret;
@@ -1671,8 +1675,8 @@ static void mlx5_lag_modify_device_vports_speed(struct mlx5_core_dev *mdev,
 		if (!vport->enabled)
 			continue;
 
-		ret = mlx5_modify_vport_max_tx_speed(mdev, op_mod,
-						     vport->vport, true, speed);
+		ret = mlx5_modify_vport_tx_speed(mdev, op_mod,
+						 vport->vport, true, &tx_speed);
 		if (ret)
 			mlx5_core_dbg(mdev,
 				      "Failed to set vport %d speed %d, err=%d\n",
