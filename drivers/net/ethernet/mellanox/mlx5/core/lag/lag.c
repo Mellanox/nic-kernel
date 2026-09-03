@@ -1416,6 +1416,8 @@ static bool mlx5_lag_should_disable_lag(struct mlx5_lag *ldev, bool do_bond)
 static int mlx5_lag_get_devices_oper_speed(struct mlx5_lag *ldev,
 					   u32 *sum_speed)
 {
+	struct mlx5_vport_tx_speed tx_speed = {};
+	struct mlx5_vport_state vport_state;
 	struct mlx5_core_dev *pf_mdev;
 	struct lag_func *pf;
 	u32 pci_bw;
@@ -1437,8 +1439,16 @@ static int mlx5_lag_get_devices_oper_speed(struct mlx5_lag *ldev,
 		if (!pf_mdev)
 			continue;
 		if (mpesw) {
-			if (mlx5_query_vport_state(pf_mdev, opmod, 0) !=
-			    VPORT_STATE_UP)
+			ret = mlx5_query_vport_state_ctx(pf_mdev, opmod, 0, 0,
+							 &tx_speed,
+							 &vport_state);
+			if (ret) {
+				mlx5_core_dbg(pf_mdev,
+					      "State query failed (err=%d)\n",
+					      ret);
+				continue;
+			}
+			if (vport_state.state != VPORT_STATE_UP)
 				continue;
 		} else if (!ldev->tracker.netdev_state[pf_idx].tx_enabled ||
 			   !ldev->tracker.netdev_state[pf_idx].link_up) {

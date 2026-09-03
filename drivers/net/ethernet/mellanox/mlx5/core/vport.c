@@ -132,7 +132,8 @@ int mlx5_modify_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 opmod,
 
 int mlx5_query_vport_state_ctx(struct mlx5_core_dev *mdev, u8 op_mod,
 			       u16 vport, u8 other_vport,
-			       u32 *max_tx_speed, u8 *state)
+			       struct mlx5_vport_tx_speed *tx_speed,
+			       struct mlx5_vport_state *vport_state)
 {
 	u32 out[MLX5_ST_SZ_DW(query_vport_state_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(query_vport_state_in)] = {};
@@ -148,9 +149,18 @@ int mlx5_query_vport_state_ctx(struct mlx5_core_dev *mdev, u8 op_mod,
 	if (err)
 		return err;
 
-	*max_tx_speed = MLX5_GET(query_vport_state_out, out, max_tx_speed);
-	if (state)
-		*state = MLX5_GET(query_vport_state_out, out, state);
+	tx_speed->max_tx_speed =
+		MLX5_GET(query_vport_state_out, out, max_tx_speed);
+	tx_speed->cap_tx_speed =
+		MLX5_GET(query_vport_state_out, out, cap_tx_speed);
+	tx_speed->effective_tx_speed =
+		MLX5_GET(query_vport_state_out, out, effective_tx_speed);
+	if (vport_state) {
+		vport_state->state =
+			MLX5_GET(query_vport_state_out, out, state);
+		vport_state->admin_state =
+			MLX5_GET(query_vport_state_out, out, admin_state);
+	}
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mlx5_query_vport_state_ctx);
