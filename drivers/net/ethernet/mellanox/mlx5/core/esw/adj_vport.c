@@ -14,20 +14,13 @@ int mlx5_esw_adj_vport_modify(struct mlx5_core_dev *dev, u16 vport,
 	if (MLX5_CAP_ESW(dev, esw_vport_state_max_tx_speed)) {
 		u8 op_mod = MLX5_VPORT_STATE_OP_MOD_ESW_VPORT;
 		struct mlx5_vport_tx_speed tx_speed = {};
-		struct mlx5_vport *esw_vport;
 		int err;
 
 		err = mlx5_query_vport_state_ctx(dev, op_mod, vport,
 						 true, &tx_speed, NULL);
-		if (err) {
-			esw_vport = mlx5_eswitch_get_vport(dev->priv.eswitch,
-							   vport);
-			tx_speed.max_tx_speed = IS_ERR(esw_vport) ? 0 :
-				esw_vport->agg_max_tx_speed;
-			mlx5_core_dbg(dev,
-				      "Failed to query vport %d max tx speed, err=%d, using cached %u\n",
-				      vport, err, tx_speed.max_tx_speed);
-		}
+		if (err)
+			mlx5_esw_vport_speed_fallback(dev->priv.eswitch, vport,
+						      err, &tx_speed);
 		MLX5_SET(modify_vport_state_in, in, max_tx_speed,
 			 tx_speed.max_tx_speed);
 		if (MLX5_CAP_ESW(dev, esw_vport_state_cap_tx_speed))
