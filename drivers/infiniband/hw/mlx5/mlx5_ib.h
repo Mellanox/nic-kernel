@@ -660,11 +660,13 @@ struct mlx5_ib_mkey {
 					 IB_ACCESS_REMOTE_WRITE  |\
 					 IB_ACCESS_REMOTE_READ   |\
 					 IB_ACCESS_REMOTE_ATOMIC |\
+					 IB_ACCESS_OPTIONAL      |\
 					 IB_ZERO_BASED)
 
 #define MLX5_IB_DM_SW_ICM_ALLOWED_ACCESS (IB_ACCESS_LOCAL_WRITE   |\
 					  IB_ACCESS_REMOTE_WRITE  |\
 					  IB_ACCESS_REMOTE_READ   |\
+					  IB_ACCESS_OPTIONAL      |\
 					  IB_ZERO_BASED)
 
 #define mlx5_update_odp_stats(mr, counter_name, value)		\
@@ -746,12 +748,6 @@ static inline bool is_dmabuf_mr(struct mlx5_ib_mr *mr)
 struct mlx5_ib_mw {
 	struct ib_mw		ibmw;
 	struct mlx5_ib_mkey	mmkey;
-};
-
-struct mlx5_ib_umr_context {
-	struct ib_cqe		cqe;
-	enum ib_wc_status	status;
-	struct completion	done;
 };
 
 enum {
@@ -1678,7 +1674,7 @@ static inline bool mlx5_umem_needs_ats(struct mlx5_ib_dev *dev,
 {
 	if (!MLX5_CAP_GEN(dev->mdev, ats) || !umem->is_dmabuf)
 		return false;
-	return access_flags & IB_ACCESS_RELAXED_ORDERING;
+	return access_flags & (IB_ACCESS_RELAXED_ORDERING | IB_ACCESS_UNORDERED);
 }
 
 int set_roce_addr(struct mlx5_ib_dev *dev, u32 port_num,
