@@ -96,25 +96,26 @@ int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 	if (MLX5_CAP_ESW(mdev, esw_vport_state_max_tx_speed) &&
 	    opmod == MLX5_VPORT_STATE_OP_MOD_ESW_VPORT &&
 	    vport != MLX5_VPORT_UPLINK) {
-		u32 speed = 0;
+		struct mlx5_vport_tx_speed tx_speed = {};
 		int err;
 
-		err = mlx5_query_vport_max_tx_speed(mdev, opmod, vport,
-						    other_vport, &speed, NULL);
+		err = mlx5_query_vport_state_ctx(mdev, opmod, vport,
+						 other_vport, &tx_speed, NULL);
 		if (err) {
 #ifdef CONFIG_MLX5_ESWITCH
 			struct mlx5_vport *esw_vport;
 
 			esw_vport = mlx5_eswitch_get_vport(mdev->priv.eswitch,
 							   vport);
-			speed = IS_ERR(esw_vport) ? 0 :
+			tx_speed.max_tx_speed = IS_ERR(esw_vport) ? 0 :
 				esw_vport->agg_max_tx_speed;
 #endif
 			mlx5_core_dbg(mdev,
 				      "Failed to query vport %d max tx speed, err=%d, using cached %u\n",
-				      vport, err, speed);
+				      vport, err, tx_speed.max_tx_speed);
 		}
-		MLX5_SET(modify_vport_state_in, in, max_tx_speed, speed);
+		MLX5_SET(modify_vport_state_in, in, max_tx_speed,
+			 tx_speed.max_tx_speed);
 	}
 
 	MLX5_SET(modify_vport_state_in, in, opcode,
@@ -154,9 +155,10 @@ int mlx5_modify_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 opmod,
 	return mlx5_cmd_exec_in(mdev, modify_vport_state, in);
 }
 
-int mlx5_query_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 op_mod,
-				  u16 vport, u8 other_vport,
-				  u32 *max_tx_speed, u8 *state)
+int mlx5_query_vport_state_ctx(struct mlx5_core_dev *mdev, u8 op_mod,
+			       u16 vport, u8 other_vport,
+			       struct mlx5_vport_tx_speed *tx_speed,
+			       struct mlx5_vport_state *vport_state)
 {
 	u32 out[MLX5_ST_SZ_DW(query_vport_state_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(query_vport_state_in)] = {};
@@ -172,12 +174,21 @@ int mlx5_query_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 op_mod,
 	if (err)
 		return err;
 
-	*max_tx_speed = MLX5_GET(query_vport_state_out, out, max_tx_speed);
-	if (state)
-		*state = MLX5_GET(query_vport_state_out, out, state);
+	tx_speed->max_tx_speed =
+		MLX5_GET(query_vport_state_out, out, max_tx_speed);
+	tx_speed->cap_tx_speed =
+		MLX5_GET(query_vport_state_out, out, cap_tx_speed);
+	tx_speed->effective_tx_speed =
+		MLX5_GET(query_vport_state_out, out, effective_tx_speed);
+	if (vport_state) {
+		vport_state->state =
+			MLX5_GET(query_vport_state_out, out, state);
+		vport_state->admin_state =
+			MLX5_GET(query_vport_state_out, out, admin_state);
+	}
 	return 0;
 }
-EXPORT_SYMBOL_GPL(mlx5_query_vport_max_tx_speed);
+EXPORT_SYMBOL_GPL(mlx5_query_vport_state_ctx);
 
 static int mlx5_query_nic_vport_context(struct mlx5_core_dev *mdev, u16 vport,
 					bool other_vport, u32 *out)

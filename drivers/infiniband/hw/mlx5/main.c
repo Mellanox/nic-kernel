@@ -1629,21 +1629,21 @@ static int mlx5_ib_query_port_speed_from_vport(struct mlx5_core_dev *mdev,
 					       struct mlx5_ib_dev *dev,
 					       u32 port_num)
 {
-	u32 max_tx_speed;
-	u8 vport_state;
+	struct mlx5_vport_tx_speed tx_speed = {};
+	struct mlx5_vport_state vport_state;
 	int err;
 
-	err = mlx5_query_vport_max_tx_speed(mdev, op_mod, vport, other_vport,
-					    &max_tx_speed, &vport_state);
+	err = mlx5_query_vport_state_ctx(mdev, op_mod, vport, other_vport,
+					 &tx_speed, &vport_state);
 	if (err)
 		return err;
 
-	if (vport_state == VPORT_STATE_DOWN || max_tx_speed == 0)
+	if (vport_state.state == VPORT_STATE_DOWN || tx_speed.max_tx_speed == 0)
 		/* Value 0 indicates field not supported, fallback */
 		return mlx5_ib_query_port_speed_from_port(dev, port_num,
 							  speed);
 
-	*speed = max_tx_speed;
+	*speed = tx_speed.max_tx_speed;
 	return 0;
 }
 
