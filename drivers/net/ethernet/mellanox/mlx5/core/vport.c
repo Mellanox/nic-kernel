@@ -94,6 +94,12 @@ int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 		}
 		MLX5_SET(modify_vport_state_in, in, max_tx_speed,
 			 tx_speed.max_tx_speed);
+		if (MLX5_CAP_ESW(mdev, esw_vport_state_cap_tx_speed))
+			MLX5_SET(modify_vport_state_in, in, cap_tx_speed,
+				 tx_speed.cap_tx_speed);
+		if (MLX5_CAP_ESW(mdev, esw_vport_state_effective_tx_speed))
+			MLX5_SET(modify_vport_state_in, in, effective_tx_speed,
+				 tx_speed.effective_tx_speed);
 	}
 
 	MLX5_SET(modify_vport_state_in, in, opcode,
