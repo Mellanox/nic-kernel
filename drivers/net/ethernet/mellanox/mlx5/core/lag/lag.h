@@ -99,7 +99,7 @@ struct mlx5_lag {
 	/* Protect lag fields/state changes */
 	struct mutex		  lock;
 	struct lag_mpesw	  lag_mpesw;
-	u32			  agg_speed_mbps;
+	struct mlx5_lag_speed	  agg_speed_mbps;
 };
 
 static inline struct mlx5_lag *
@@ -262,14 +262,18 @@ struct mlx5_devcom_comp_dev *mlx5_lag_get_devcom_comp(struct mlx5_lag *ldev);
 void mlx5_lag_notify_speed_change(struct mlx5_lag *ldev);
 void mlx5_lag_update_agg_speed(struct mlx5_lag *ldev);
 void mlx5_lag_reset_agg_speed(struct mlx5_lag *ldev);
+int mlx5_lag_update_agg_cap_speed(struct mlx5_lag *ldev);
 
 #ifdef CONFIG_MLX5_ESWITCH
-void mlx5_lag_set_vports_agg_speed(struct mlx5_lag *ldev);
+void mlx5_lag_set_vports_agg_speed(struct mlx5_lag *ldev, bool update_cap);
 void mlx5_lag_reset_vports_speed(struct mlx5_lag *ldev);
 #else
-static inline void mlx5_lag_set_vports_agg_speed(struct mlx5_lag *ldev)
+static inline void mlx5_lag_set_vports_agg_speed(struct mlx5_lag *ldev,
+						 bool update_cap)
 {
 	mlx5_lag_update_agg_speed(ldev);
+	if (update_cap)
+		mlx5_lag_update_agg_cap_speed(ldev);
 }
 
 static inline void mlx5_lag_reset_vports_speed(struct mlx5_lag *ldev)
