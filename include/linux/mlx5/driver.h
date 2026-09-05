@@ -1161,6 +1161,12 @@ bool mlx5_lag_is_roce(struct mlx5_core_dev *dev);
 bool mlx5_lag_is_sriov(struct mlx5_core_dev *dev);
 bool mlx5_lag_is_active(struct mlx5_core_dev *dev);
 int mlx5_lag_query_bond_speed(struct mlx5_core_dev *dev, u32 *speed);
+
+struct mlx5_lag_speed {
+	u32 oper_speed;
+	u32 cap_speed;
+};
+
 int mlx5_lag_query_aggregated_speed(struct mlx5_core_dev *dev, u32 *speed);
 bool mlx5_lag_mode_is_hash(struct mlx5_core_dev *dev);
 bool mlx5_lag_is_master(struct mlx5_core_dev *dev);
