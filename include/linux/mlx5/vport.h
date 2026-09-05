@@ -42,7 +42,7 @@
 	 (MLX5_CAP_GEN(mdev, port_type) == MLX5_CAP_PORT_TYPE_ETH) &&	\
 	 mlx5_core_is_pf(mdev))
 
-#define MLX5_MAX_TX_SPEED_UNIT 100
+#define MLX5_TX_SPEED_UNIT 100
 
 enum {
 	MLX5_CAP_INLINE_MODE_L2,
