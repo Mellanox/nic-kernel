@@ -295,7 +295,7 @@ void mlx5_mpesw_speed_update_work(struct work_struct *work)
 		if (ldev->mode_changes_in_progress)
 			queue_work(ldev->wq, &ldev->speed_update_work);
 		else
-			mlx5_lag_set_vports_agg_speed(ldev);
+			mlx5_lag_set_vports_agg_speed(ldev, false);
 	}
 
 	mutex_unlock(&ldev->lock);
