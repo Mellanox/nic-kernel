@@ -260,7 +260,7 @@ void mlx5_lag_add_devices_filter(struct mlx5_lag *ldev, u32 filter);
 struct mlx5_devcom_comp_dev *mlx5_lag_get_devcom_comp(struct mlx5_lag *ldev);
 
 void mlx5_lag_notify_speed_change(struct mlx5_lag *ldev);
-void mlx5_lag_update_agg_speed(struct mlx5_lag *ldev);
+int mlx5_lag_update_agg_speed(struct mlx5_lag *ldev);
 void mlx5_lag_reset_agg_speed(struct mlx5_lag *ldev);
 int mlx5_lag_update_agg_cap_speed(struct mlx5_lag *ldev);
 
