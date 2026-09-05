@@ -1658,7 +1658,7 @@ static int mlx5_ib_query_port_speed_from_bond(struct mlx5_ib_dev *dev,
 	if (err)
 		return err;
 
-	*speed = bond_speed / MLX5_MAX_TX_SPEED_UNIT;
+	*speed = bond_speed / MLX5_TX_SPEED_UNIT;
 
 	return 0;
 }
