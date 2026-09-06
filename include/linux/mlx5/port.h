@@ -137,6 +137,21 @@ enum mlx5_ptys_width {
 	MLX5_PTYS_WIDTH_12X	= 1 << 4,
 };
 
+enum mlx5_ptys_rate {
+	MLX5_PTYS_RATE_SDR	= 1 << 0,
+	MLX5_PTYS_RATE_DDR	= 1 << 1,
+	MLX5_PTYS_RATE_QDR	= 1 << 2,
+	MLX5_PTYS_RATE_FDR10	= 1 << 3,
+	MLX5_PTYS_RATE_FDR	= 1 << 4,
+	MLX5_PTYS_RATE_EDR	= 1 << 5,
+	MLX5_PTYS_RATE_HDR	= 1 << 6,
+	MLX5_PTYS_RATE_NDR	= 1 << 7,
+	MLX5_PTYS_RATE_XDR	= 1 << 8,
+};
+
+int mlx5_ptys_width_enum_to_int(enum mlx5_ptys_width width);
+int mlx5_ptys_rate_enum_to_int(enum mlx5_ptys_rate rate);
+
 #define MLX5E_PROT_MASK(link_mode) (1U << link_mode)
 #define MLX5_GET_ETH_PROTO(reg, out, ext, field)	\
 	(ext ? MLX5_GET(reg, out, ext_##field) :	\
