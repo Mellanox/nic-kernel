@@ -168,6 +168,36 @@ int mlx5_set_port_beacon(struct mlx5_core_dev *dev, u16 beacon_duration)
 				    sizeof(out), MLX5_REG_MLCR, 0, 1);
 }
 
+int mlx5_ptys_width_enum_to_int(enum mlx5_ptys_width width)
+{
+	switch (width) {
+	case MLX5_PTYS_WIDTH_1X:  return  1;
+	case MLX5_PTYS_WIDTH_2X:  return  2;
+	case MLX5_PTYS_WIDTH_4X:  return  4;
+	case MLX5_PTYS_WIDTH_8X:  return  8;
+	case MLX5_PTYS_WIDTH_12X: return 12;
+	default:		  return -1;
+	}
+}
+EXPORT_SYMBOL(mlx5_ptys_width_enum_to_int);
+
+int mlx5_ptys_rate_enum_to_int(enum mlx5_ptys_rate rate)
+{
+	switch (rate) {
+	case MLX5_PTYS_RATE_SDR:   return 2500;
+	case MLX5_PTYS_RATE_DDR:   return 5000;
+	case MLX5_PTYS_RATE_QDR:
+	case MLX5_PTYS_RATE_FDR10: return 10000;
+	case MLX5_PTYS_RATE_FDR:   return 14000;
+	case MLX5_PTYS_RATE_EDR:   return 25000;
+	case MLX5_PTYS_RATE_HDR:   return 50000;
+	case MLX5_PTYS_RATE_NDR:   return 100000;
+	case MLX5_PTYS_RATE_XDR:   return 200000;
+	default:		   return -1;
+	}
+}
+EXPORT_SYMBOL(mlx5_ptys_rate_enum_to_int);
+
 int mlx5_query_ib_port_oper(struct mlx5_core_dev *dev, u16 *link_width_oper,
 			    u16 *proto_oper, u8 local_port, u8 plane_index)
 {
