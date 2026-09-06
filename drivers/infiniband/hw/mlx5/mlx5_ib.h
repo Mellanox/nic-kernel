@@ -771,6 +771,8 @@ struct umr_common {
 	struct ib_pd	*pd;
 	struct ib_cq	*cq;
 	struct ib_qp	*qp;
+	/* Checked against each CQE in adversarial_mode */
+	u32		qpn;
 	/* Protects from UMR QP overflow
 	 */
 	struct semaphore	sem;
@@ -1329,6 +1331,9 @@ int mlx5_ib_create_user_cq(struct ib_cq *ibcq,
 			   struct uverbs_attr_bundle *attrs);
 int mlx5_ib_destroy_cq(struct ib_cq *cq, struct ib_udata *udata);
 int mlx5_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
+int mlx5_ib_poll_one_umr(struct mlx5_ib_cq *cq, struct mlx5_ib_qp **cur_qp,
+		      struct ib_wc *wc);
+void mlx5_ib_cq_stop_polling(struct ib_cq *ibcq);
 int mlx5_ib_pre_destroy_cq(struct ib_cq *cq);
 void mlx5_ib_post_destroy_cq(struct ib_cq *cq);
 int mlx5_ib_arm_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
