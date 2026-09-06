@@ -37,6 +37,7 @@
 #include "mlx5_ib.h"
 #include "srq.h"
 #include "qp.h"
+#include "umr.h"
 
 #define UVERBS_MODULE_NAME mlx5_ib
 #include <rdma/uverbs_named_ioctl.h>
@@ -608,6 +609,190 @@ static int poll_soft_wc(struct mlx5_ib_cq *cq, int num_entries,
 	return npolled;
 }
 
+/**
+ * mlx5_ib_cq_stop_polling - stop interpreting CQEs on a CQ
+ * @ibcq: the CQ
+ *
+ * Takes cq->lock, which mlx5_ib_poll_cq() holds while polling, so no poll
+ * is in flight on return and later polls return no CQE from the NIC.
+ */
+void mlx5_ib_cq_stop_polling(struct ib_cq *ibcq)
+{
+	struct mlx5_ib_cq *cq = to_mcq(ibcq);
+	unsigned long flags;
+
+	spin_lock_irqsave(&cq->lock, flags);
+	cq->umr_verify = false;
+	spin_unlock_irqrestore(&cq->lock, flags);
+}
+
+/*
+ * Poll one CQE of the UMR CQ in adversarial_mode. A CQE is accepted only if
+ * it matches the oldest request in the shadow FIFO, otherwise the device is
+ * treated as compromised.
+ */
+static int mlx5_ib_poll_one_umr(struct mlx5_ib_cq *cq, struct mlx5_ib_qp **cur_qp,
+				struct ib_wc *wc)
+{
+	struct mlx5_ib_dev *dev = to_mdev(cq->ibcq.device);
+	struct mlx5r_umr_context *expected;
+	struct umr_common *umrc = &dev->umrc;
+	struct mlx5_err_cqe err_cqe;
+	struct mlx5_cqe64 *cqe64;
+	struct mlx5_ib_wq *wq;
+	struct mlx5_ib_qp *qp;
+	struct ib_qp *ibqp;
+	u16 wqe_ctr;
+	u8 opcode;
+	u32 head;
+	u32 sop_qpn;
+	u32 qpn;
+	u8 sop;
+	int idx;
+	void *cqe;
+
+	cqe = next_cqe_sw(cq);
+	if (!cqe)
+		return -EAGAIN;
+
+	cqe64 = (cq->mcq.cqe_sz == 64) ? cqe : cqe + 64;
+	++cq->mcq.cons_index;
+	/*
+	 * Read each field once, so a NIC rewriting the CQE cannot change it
+	 * between validation and use.
+	 */
+	rmb();
+	opcode  = READ_ONCE(cqe64->op_own) >> 4;
+	sop_qpn = ntohl(READ_ONCE(cqe64->sop_drop_qpn));
+	qpn     = sop_qpn & 0xffffff;
+	sop     = sop_qpn >> 24;
+	wqe_ctr = be16_to_cpu(READ_ONCE(cqe64->wqe_counter));
+
+	/*
+	 * umr_verify is set before the UMR QP is published, so a CQE
+	 * seen while the QP is NULL is forged. Teardown stops polling before
+	 * the QP is destroyed.
+	 */
+	ibqp = smp_load_acquire(&dev->umrc.qp);
+	if (unlikely(!ibqp)) {
+		mlx5_ib_err(dev, "CQE on the UMR CQ before its QP is published\n");
+		goto forged_cqe;
+	}
+	qp = to_mqp(ibqp);
+	wq = &qp->sq;
+	idx = wqe_ctr & (wq->wqe_cnt - 1);
+
+	if (unlikely((opcode != MLX5_CQE_REQ && opcode != MLX5_CQE_REQ_ERR) ||
+		     qpn != umrc->qpn || sop != MLX5_OPCODE_UMR)) {
+		mlx5_ib_err(dev,
+			    "Unexpected CQE on UMR CQ: opcode 0x%x sop 0x%x qpn 0x%x\n",
+			    opcode, sop, qpn);
+		goto forged_cqe;
+	}
+
+	/* Pairs with smp_store_release() in mlx5r_umr_post_send() */
+	head = umrc->pending_head;
+	expected = smp_load_acquire(&umrc->pending[head & (MLX5_UMR_MAX_WR - 1)]);
+
+	if (unlikely(!expected)) {
+		mlx5_ib_err(dev,
+			    "UMR CQE wqe_ctr 0x%x with an empty shadow FIFO, possible NIC forgery\n",
+			    wqe_ctr);
+		goto forged_cqe;
+	}
+
+	if (unlikely(wqe_ctr != expected->wqe_ctr)) {
+		mlx5_ib_err(dev,
+			    "UMR wqe_ctr 0x%x mismatch with expected context, possible NIC forgery\n",
+			    wqe_ctr);
+		goto forged_cqe;
+	}
+
+	/*
+	 * A WQE records wq->head when posted, and mlx5r_ring_db() then advances
+	 * wq->head. If they are still equal, mlx5r_ring_db() was not reached
+	 * yet, so the WQE was never handed to the NIC.
+	 */
+	if (unlikely(wq->wqe_head[idx] == READ_ONCE(wq->head))) {
+		mlx5_ib_err(dev,
+			    "UMR CQE wqe_ctr 0x%x for an uncommitted WQE, possible NIC forgery\n",
+			    wqe_ctr);
+		goto forged_cqe;
+	}
+
+	if (opcode == MLX5_CQE_REQ) {
+		wc->status = IB_WC_SUCCESS;
+	} else {
+		/* Copy the CQE, so its syndrome is read once */
+		err_cqe = *(struct mlx5_err_cqe *)cqe64;
+		mlx5_handle_error_cqe(dev, &err_cqe, wc);
+		/*
+		 * A real failure during a recovery is forged, the QP
+		 * only flushes.
+		 */
+		if (wc->status != IB_WC_WR_FLUSH_ERR &&
+		    cmpxchg(&umrc->state, MLX5_UMR_STATE_ACTIVE,
+			    MLX5_UMR_STATE_RECOVER) != MLX5_UMR_STATE_ACTIVE) {
+			mlx5_ib_err(dev,
+				    "UMR error CQE status %d in state %d, possible NIC forgery\n",
+				    wc->status, READ_ONCE(umrc->state));
+			goto forged_cqe;
+		}
+	}
+
+	/* Pop the shadow FIFO head: validated, dispatch to its waiter */
+	WRITE_ONCE(umrc->pending[head & (MLX5_UMR_MAX_WR - 1)], NULL);
+	umrc->pending_head = head + 1;
+	wc->wr_cqe = &expected->cqe;
+
+	wc->qp = &qp->ibqp;
+	wq->tail = wq->wqe_head[idx] + 1;
+	/* Advance wq->last_poll, the internal error flush starts from it */
+	handle_atomics(qp, cqe64, wq->last_poll, idx);
+
+	return 0;
+
+forged_cqe:
+	/* mlx5_ib_poll_cq() updates the CI only for a returned completion */
+	mlx5_cq_set_ci(&cq->mcq);
+	/*
+	 * The NIC forged a CQE. Fail the UMR path for good, ignore any later
+	 * CQE and force the health recovery, as the fatal sensors still read
+	 * clean. The internal error flush then completes the waiters. Return
+	 * an error, not -EAGAIN, as a CQE was consumed.
+	 */
+	umrc->state = MLX5_UMR_STATE_ERR;
+	cq->umr_verify = false;
+	mlx5_trigger_health_work_force(dev->mdev);
+	return -EIO;
+}
+
+/*
+ * mlx5_poll_one() trusts the CQE, so it must not run in adversarial_mode.
+ * Kernel ULPs are kept off the device and user CQs are polled by
+ * userspace, so only the UMR CQ is polled here, by its verifying poller.
+ * Any other CQ, and the UMR CQ before its poller is set up or once polling
+ * stopped, returns no CQE and nothing is consumed.
+ *
+ * Called with cq->lock held, which serializes umr_verify changes.
+ */
+static int mlx5_ib_poll_cq_adversarial(struct mlx5_ib_cq *cq, int num_entries,
+				       struct ib_wc *wc)
+{
+	struct mlx5_ib_qp *cur_qp = NULL;
+	int npolled;
+
+	if (!cq->umr_verify)
+		return 0;
+
+	for (npolled = 0; npolled < num_entries; npolled++) {
+		if (mlx5_ib_poll_one_umr(cq, &cur_qp, wc + npolled))
+			break;
+	}
+
+	return npolled;
+}
+
 int mlx5_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc)
 {
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
@@ -632,11 +817,18 @@ int mlx5_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc)
 	if (unlikely(!list_empty(&cq->wc_list)))
 		soft_polled = poll_soft_wc(cq, num_entries, wc, false);
 
+	if (unlikely(dev->ib_dev.adversarial_mode)) {
+		npolled = mlx5_ib_poll_cq_adversarial(cq, num_entries - soft_polled,
+						      wc + soft_polled);
+		goto set_ci;
+	}
+
 	for (npolled = 0; npolled < num_entries - soft_polled; npolled++) {
 		if (mlx5_poll_one(cq, &cur_qp, wc + soft_polled + npolled))
 			break;
 	}
 
+set_ci:
 	if (npolled)
 		mlx5_cq_set_ci(&cq->mcq);
 out:
