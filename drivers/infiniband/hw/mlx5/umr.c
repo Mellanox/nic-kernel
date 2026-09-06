@@ -194,6 +194,23 @@ int mlx5r_umr_resource_init(struct mlx5_ib_dev *dev)
 	sema_init(&dev->umrc.sem, MAX_UMR_WR);
 	mutex_init(&dev->umrc.lock);
 	dev->umrc.state = MLX5_UMR_STATE_ACTIVE;
+
+	if (mlx5_ib_adversarial_mode) {
+		struct mlx5_ib_cq *mcq = to_mcq(cq);
+		unsigned long flags;
+
+		dev->umrc.qpn = qp->qp_num;
+		/*
+		 * UMRs can be posted as soon as the QP is published below, by
+		 * this caller or by a concurrent MR registration, so install
+		 * mlx5_ib_poll_one_umr() first. The CQ is already armed, so
+		 * swap it under cq->lock, which the poll loop holds.
+		 */
+		spin_lock_irqsave(&mcq->lock, flags);
+		mcq->poll_one = mlx5_ib_poll_one_umr;
+		spin_unlock_irqrestore(&mcq->lock, flags);
+	}
+
 	smp_store_release(&dev->umrc.qp, qp);
 
 	mutex_unlock(&dev->umrc.init_lock);
@@ -212,6 +229,14 @@ void mlx5r_umr_resource_cleanup(struct mlx5_ib_dev *dev)
 {
 	if (dev->umrc.state == MLX5_UMR_STATE_UNINIT)
 		return;
+
+	/*
+	 * Stop polling before the QP is destroyed, as its QPN may then be
+	 * reused and a forged CQE carrying it must not be interpreted.
+	 */
+	if (mlx5_ib_adversarial_mode)
+		mlx5_ib_cq_stop_polling(dev->umrc.cq);
+
 	mutex_destroy(&dev->umrc.lock);
 	/* After device init, UMR cp/qp are not unset during the lifetime. */
 	ib_destroy_qp(dev->umrc.qp);
@@ -319,6 +344,11 @@ static int mlx5r_umr_recover(struct mlx5_ib_dev *dev, u32 mkey,
 	int err;
 
 	mutex_lock(&umrc->lock);
+	if (mlx5_ib_adversarial_mode && umrc->state == MLX5_UMR_STATE_ERR) {
+		/* The NIC forged a CQE, don't revive the QP */
+		mutex_unlock(&umrc->lock);
+		return -EFAULT;
+	}
 	/* Preventing any further WRs to be sent now */
 	if (umrc->state != MLX5_UMR_STATE_RECOVER) {
 		mlx5_ib_warn(dev, "UMR recovery encountered an unexpected state=%d\n",
@@ -424,6 +454,14 @@ static int mlx5r_umr_post_send_wait(struct mlx5_ib_dev *dev, u32 mkey,
 
 		if (umr_context.status == IB_WC_WR_FLUSH_ERR)
 			continue;
+
+		if (mlx5_ib_adversarial_mode) {
+			/* A forged CQE was detected, don't recover the QP */
+			if (umrc->state == MLX5_UMR_STATE_ERR) {
+				err = -EFAULT;
+				break;
+			}
+		}
 
 		WARN_ON_ONCE(1);
 		mlx5_ib_warn(dev,
