@@ -164,6 +164,8 @@ int mlx5_query_port_ptys(struct mlx5_core_dev *dev, u32 *ptys,
 
 int mlx5_query_ib_port_oper(struct mlx5_core_dev *dev, u16 *link_width_oper,
 			    u16 *proto_oper, u8 local_port, u8 plane_index);
+int mlx5_query_ib_port_cap(struct mlx5_core_dev *dev, u32 *speed,
+			   u8 local_port, u8 plane_index);
 
 void mlx5_query_port_max_mtu(struct mlx5_core_dev *dev, u16 *max_mtu, u8 port);
 void mlx5_query_port_oper_mtu(struct mlx5_core_dev *dev, u16 *oper_mtu,

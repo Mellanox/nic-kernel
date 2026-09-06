@@ -198,6 +198,44 @@ int mlx5_ptys_rate_enum_to_int(enum mlx5_ptys_rate rate)
 }
 EXPORT_SYMBOL(mlx5_ptys_rate_enum_to_int);
 
+static int mlx5_ptys_mask_to_max_bit(u16 mask, u16 known_mask)
+{
+	mask &= known_mask;
+	if (!mask)
+		return -1;
+
+	return 1 << (fls(mask) - 1);
+}
+
+static int mlx5_ptys_width_mask_to_max_int(u16 mask)
+{
+	static const u16 known_mask = MLX5_PTYS_WIDTH_1X | MLX5_PTYS_WIDTH_2X |
+				      MLX5_PTYS_WIDTH_4X | MLX5_PTYS_WIDTH_8X |
+				      MLX5_PTYS_WIDTH_12X;
+	int bit = mlx5_ptys_mask_to_max_bit(mask, known_mask);
+
+	if (bit < 0)
+		return -1;
+
+	return mlx5_ptys_width_enum_to_int(bit);
+}
+
+static int mlx5_ptys_rate_mask_to_max_int(u16 mask)
+{
+	static const u16 known_mask = MLX5_PTYS_RATE_SDR | MLX5_PTYS_RATE_DDR |
+				      MLX5_PTYS_RATE_QDR |
+				      MLX5_PTYS_RATE_FDR10 |
+				      MLX5_PTYS_RATE_FDR | MLX5_PTYS_RATE_EDR |
+				      MLX5_PTYS_RATE_HDR | MLX5_PTYS_RATE_NDR |
+				      MLX5_PTYS_RATE_XDR;
+	int bit = mlx5_ptys_mask_to_max_bit(mask, known_mask);
+
+	if (bit < 0)
+		return -1;
+
+	return mlx5_ptys_rate_enum_to_int(bit);
+}
+
 int mlx5_query_ib_port_oper(struct mlx5_core_dev *dev, u16 *link_width_oper,
 			    u16 *proto_oper, u8 local_port, u8 plane_index)
 {
@@ -215,6 +253,36 @@ int mlx5_query_ib_port_oper(struct mlx5_core_dev *dev, u16 *link_width_oper,
 	return 0;
 }
 EXPORT_SYMBOL(mlx5_query_ib_port_oper);
+
+/* Returns speed in Mbps. */
+int mlx5_query_ib_port_cap(struct mlx5_core_dev *dev, u32 *speed,
+			   u8 local_port, u8 plane_index)
+{
+	u32 out[MLX5_ST_SZ_DW(ptys_reg)];
+	u16 link_width_cap;
+	u16 proto_cap;
+	int rate, width;
+	int err;
+
+	err = mlx5_query_port_ptys(dev, out, sizeof(out), MLX5_PTYS_IB,
+				   local_port, plane_index);
+	if (err)
+		return err;
+
+	link_width_cap = MLX5_GET(ptys_reg, out, ib_link_width_capability);
+	proto_cap = MLX5_GET(ptys_reg, out, ib_proto_capability);
+
+	rate = mlx5_ptys_rate_mask_to_max_int(proto_cap);
+	if (rate < 0)
+		return -EINVAL;
+	width = mlx5_ptys_width_mask_to_max_int(link_width_cap);
+	if (width < 0)
+		return -EINVAL;
+
+	*speed = rate * width;
+	return 0;
+}
+EXPORT_SYMBOL(mlx5_query_ib_port_cap);
 
 /* This function should be used after setting a port register only */
 void mlx5_toggle_port_link(struct mlx5_core_dev *dev)
@@ -1214,51 +1282,49 @@ u32 mlx5_port_info2linkmodes(struct mlx5_core_dev *mdev,
 	return link_modes;
 }
 
-int mlx5_port_oper_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
+static u32 mlx5_port_proto_mask_to_speed(struct mlx5_core_dev *mdev,
+					 u32 proto_mask)
 {
 	const struct mlx5_link_info *table;
-	struct mlx5_port_eth_proto eproto;
-	u32 oper_speed = 0;
+	u32 max_speed = 0;
 	u32 max_size;
+	int i;
+
+	mlx5e_port_get_link_mode_info_arr(mdev, &table, &max_size, false);
+	for (i = 0; i < max_size; ++i)
+		if (proto_mask & MLX5E_PROT_MASK(i))
+			max_speed = max(max_speed, table[i].speed);
+
+	return max_speed;
+}
+
+int mlx5_port_oper_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
+{
+	struct mlx5_port_eth_proto eproto;
 	bool ext;
 	int err;
-	int i;
 
 	ext = mlx5_ptys_ext_supported(mdev);
 	err = mlx5_port_query_eth_proto(mdev, 1, ext, &eproto);
 	if (err)
 		return err;
 
-	mlx5e_port_get_link_mode_info_arr(mdev, &table, &max_size, false);
-	for (i = 0; i < max_size; ++i)
-		if (eproto.oper & MLX5E_PROT_MASK(i))
-			oper_speed = max(oper_speed, table[i].speed);
-
-	*speed = oper_speed;
+	*speed = mlx5_port_proto_mask_to_speed(mdev, eproto.oper);
 	return 0;
 }
 
 int mlx5_port_max_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
 {
-	const struct mlx5_link_info *table;
 	struct mlx5_port_eth_proto eproto;
-	u32 max_speed = 0;
-	u32 max_size;
 	bool ext;
 	int err;
-	int i;
 
 	ext = mlx5_ptys_ext_supported(mdev);
 	err = mlx5_port_query_eth_proto(mdev, 1, ext, &eproto);
 	if (err)
 		return err;
 
-	mlx5e_port_get_link_mode_info_arr(mdev, &table, &max_size, false);
-	for (i = 0; i < max_size; ++i)
-		if (eproto.cap & MLX5E_PROT_MASK(i))
-			max_speed = max(max_speed, table[i].speed);
-
-	*speed = max_speed;
+	*speed = mlx5_port_proto_mask_to_speed(mdev, eproto.cap);
 	return 0;
 }
 
