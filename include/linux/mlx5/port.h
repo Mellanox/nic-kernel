@@ -161,6 +161,8 @@ int mlx5_set_port_caps(struct mlx5_core_dev *dev, u8 port_num, u32 caps);
 int mlx5_query_port_ptys(struct mlx5_core_dev *dev, u32 *ptys,
 			 int ptys_size, int proto_mask,
 			 u8 local_port, u8 plane_index);
+int mlx5_port_max_linkspeed_num(struct mlx5_core_dev *mdev, u32 *speed,
+				u8 local_port);
 
 int mlx5_query_ib_port_oper(struct mlx5_core_dev *dev, u16 *link_width_oper,
 			    u16 *proto_oper, u8 local_port, u8 plane_index);

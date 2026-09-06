@@ -1313,19 +1313,26 @@ int mlx5_port_oper_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
 	return 0;
 }
 
-int mlx5_port_max_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
+int mlx5_port_max_linkspeed_num(struct mlx5_core_dev *mdev, u32 *speed,
+				u8 local_port)
 {
 	struct mlx5_port_eth_proto eproto;
 	bool ext;
 	int err;
 
 	ext = mlx5_ptys_ext_supported(mdev);
-	err = mlx5_port_query_eth_proto(mdev, 1, ext, &eproto);
+	err = mlx5_port_query_eth_proto(mdev, local_port, ext, &eproto);
 	if (err)
 		return err;
 
 	*speed = mlx5_port_proto_mask_to_speed(mdev, eproto.cap);
 	return 0;
+}
+EXPORT_SYMBOL_GPL(mlx5_port_max_linkspeed_num);
+
+int mlx5_port_max_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
+{
+	return mlx5_port_max_linkspeed_num(mdev, speed, 1);
 }
 
 int mlx5_query_mpir_reg(struct mlx5_core_dev *dev, u32 *mpir)
