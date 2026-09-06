@@ -1775,27 +1775,35 @@ static int mlx5_ib_query_port_speed_rep(struct mlx5_ib_dev *dev, u32 port_num,
 						   port_num);
 }
 
-int mlx5_ib_query_port_speed(struct ib_device *ibdev, u32 port_num, u64 *speed)
+static int mlx5_ib_query_port_speed_ex(struct ib_device *ibdev, u32 port_num,
+				       u64 *oper_speed, u64 *cap_speed)
 {
 	struct mlx5_ib_dev *dev = to_mdev(ibdev);
-	struct mlx5_ib_port_speed port_speed = {};
+	struct mlx5_ib_port_speed speed = {};
 	int err;
 
 	if (mlx5_ib_port_link_layer(ibdev, port_num) ==
 	    IB_LINK_LAYER_INFINIBAND || mlx5_core_mp_enabled(dev->mdev))
 		err = mlx5_ib_query_port_speed_from_port(dev, port_num,
-							 &port_speed);
+							 &speed);
 	else if (!dev->is_rep)
-		err = mlx5_ib_query_port_speed_non_rep(dev, port_num,
-						       &port_speed);
+		err = mlx5_ib_query_port_speed_non_rep(dev, port_num, &speed);
 	else
-		err = mlx5_ib_query_port_speed_rep(dev, port_num, &port_speed);
+		err = mlx5_ib_query_port_speed_rep(dev, port_num, &speed);
 
 	if (err)
 		return err;
 
-	*speed = port_speed.effective_speed;
+	*oper_speed = speed.effective_speed;
+	*cap_speed = speed.max_speed;
 	return 0;
+}
+
+int mlx5_ib_query_port_speed(struct ib_device *ibdev, u32 port_num, u64 *speed)
+{
+	u64 cap_speed;
+
+	return mlx5_ib_query_port_speed_ex(ibdev, port_num, speed, &cap_speed);
 }
 
 static int mlx5_ib_query_gid(struct ib_device *ibdev, u32 port, int index,
@@ -4722,6 +4730,7 @@ static const struct ib_device_ops mlx5_ib_dev_ops = {
 	.query_gid = mlx5_ib_query_gid,
 	.query_pkey = mlx5_ib_query_pkey,
 	.query_port_speed = mlx5_ib_query_port_speed,
+	.query_port_speed_ex = mlx5_ib_query_port_speed_ex,
 	.query_qp = mlx5_ib_query_qp,
 	.query_srq = mlx5_ib_query_srq,
 	.query_ucontext = mlx5_ib_query_ucontext,
