@@ -1211,7 +1211,8 @@ int mlx5_port_query_eth_proto(struct mlx5_core_dev *dev, u8 port, bool ext,
 	return 0;
 }
 
-bool mlx5_ptys_ext_supported(struct mlx5_core_dev *mdev)
+static bool mlx5_ptys_ext_supported_port(struct mlx5_core_dev *mdev,
+					 u8 local_port)
 {
 	struct mlx5_port_eth_proto eproto;
 	int err;
@@ -1219,11 +1220,30 @@ bool mlx5_ptys_ext_supported(struct mlx5_core_dev *mdev)
 	if (MLX5_CAP_PCAM_FEATURE(mdev, ptys_extended_ethernet))
 		return true;
 
-	err = mlx5_port_query_eth_proto(mdev, 1, true, &eproto);
+	err = mlx5_port_query_eth_proto(mdev, local_port, true, &eproto);
 	if (err)
 		return false;
 
 	return !!eproto.cap;
+}
+
+bool mlx5_ptys_ext_supported(struct mlx5_core_dev *mdev)
+{
+	return mlx5_ptys_ext_supported_port(mdev, 1);
+}
+
+static void mlx5e_port_get_link_mode_info_arr_port(struct mlx5_core_dev *mdev,
+						   const struct mlx5_link_info **arr,
+						   u32 *size,
+						   bool force_legacy,
+						   u8 local_port)
+{
+	bool ext = force_legacy ? false :
+		   mlx5_ptys_ext_supported_port(mdev, local_port);
+
+	*size = ext ? ARRAY_SIZE(mlx5e_ext_link_info) :
+		      ARRAY_SIZE(mlx5e_link_info);
+	*arr  = ext ? mlx5e_ext_link_info : mlx5e_link_info;
 }
 
 static void mlx5e_port_get_link_mode_info_arr(struct mlx5_core_dev *mdev,
@@ -1231,11 +1251,7 @@ static void mlx5e_port_get_link_mode_info_arr(struct mlx5_core_dev *mdev,
 					      u32 *size,
 					      bool force_legacy)
 {
-	bool ext = force_legacy ? false : mlx5_ptys_ext_supported(mdev);
-
-	*size = ext ? ARRAY_SIZE(mlx5e_ext_link_info) :
-		      ARRAY_SIZE(mlx5e_link_info);
-	*arr  = ext ? mlx5e_ext_link_info : mlx5e_link_info;
+	mlx5e_port_get_link_mode_info_arr_port(mdev, arr, size, force_legacy, 1);
 }
 
 const struct mlx5_link_info *mlx5_port_ptys2info(struct mlx5_core_dev *mdev,
@@ -1280,20 +1296,27 @@ u32 mlx5_port_info2linkmodes(struct mlx5_core_dev *mdev,
 	return link_modes;
 }
 
-static u32 mlx5_port_proto_mask_to_speed(struct mlx5_core_dev *mdev,
-					 u32 proto_mask)
+static u32 mlx5_port_proto_mask_to_speed_port(struct mlx5_core_dev *mdev,
+					      u32 proto_mask, u8 local_port)
 {
 	const struct mlx5_link_info *table;
 	u32 max_speed = 0;
 	u32 max_size;
 	int i;
 
-	mlx5e_port_get_link_mode_info_arr(mdev, &table, &max_size, false);
+	mlx5e_port_get_link_mode_info_arr_port(mdev, &table, &max_size, false,
+					       local_port);
 	for (i = 0; i < max_size; ++i)
 		if (proto_mask & MLX5E_PROT_MASK(i))
 			max_speed = max(max_speed, table[i].speed);
 
 	return max_speed;
+}
+
+static u32 mlx5_port_proto_mask_to_speed(struct mlx5_core_dev *mdev,
+					 u32 proto_mask)
+{
+	return mlx5_port_proto_mask_to_speed_port(mdev, proto_mask, 1);
 }
 
 int mlx5_port_oper_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
@@ -1311,19 +1334,27 @@ int mlx5_port_oper_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
 	return 0;
 }
 
-int mlx5_port_max_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
+int mlx5_port_max_linkspeed_num(struct mlx5_core_dev *mdev, u32 *speed,
+				u8 local_port)
 {
 	struct mlx5_port_eth_proto eproto;
 	bool ext;
 	int err;
 
-	ext = mlx5_ptys_ext_supported(mdev);
-	err = mlx5_port_query_eth_proto(mdev, 1, ext, &eproto);
+	ext = mlx5_ptys_ext_supported_port(mdev, local_port);
+	err = mlx5_port_query_eth_proto(mdev, local_port, ext, &eproto);
 	if (err)
 		return err;
 
-	*speed = mlx5_port_proto_mask_to_speed(mdev, eproto.cap);
+	*speed = mlx5_port_proto_mask_to_speed_port(mdev, eproto.cap,
+						    local_port);
 	return 0;
+}
+EXPORT_SYMBOL_GPL(mlx5_port_max_linkspeed_num);
+
+int mlx5_port_max_linkspeed(struct mlx5_core_dev *mdev, u32 *speed)
+{
+	return mlx5_port_max_linkspeed_num(mdev, speed, 1);
 }
 
 int mlx5_query_mpir_reg(struct mlx5_core_dev *dev, u32 *mpir)
