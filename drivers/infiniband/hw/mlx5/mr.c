@@ -430,7 +430,8 @@ static struct mlx5_ib_mr *alloc_cacheable_mr(struct ib_pd *pd,
 	struct mlx5_ib_mr *mr;
 	unsigned long page_size;
 
-	if (umem->is_dmabuf)
+	/* Not pinned means this is a movable (ODP) dmabuf */
+	if (umem->is_dmabuf && !to_ib_umem_dmabuf(umem)->pinned)
 		page_size = mlx5_umem_dmabuf_default_pgsz(umem, iova);
 	else
 		page_size = mlx5_umem_mkc_find_best_pgsz(dev, umem, iova,
@@ -894,7 +895,9 @@ static const struct dma_buf_attach_ops mlx5_ib_dmabuf_attach_ops = {
 	.invalidate_mappings = mlx5_ib_dmabuf_invalidate_cb,
 };
 
-int mlx5_ib_dmabuf_mr_update_pas(struct mlx5_ib_mr *mr, u32 pdn, u32 flags)
+/* The caller holds the dmabuf reservation lock. */
+static int mlx5_ib_dmabuf_mr_update_pas_locked(struct mlx5_ib_mr *mr, u32 pdn,
+					       u32 flags)
 {
 	struct ib_umem_dmabuf *umem_dmabuf = to_ib_umem_dmabuf(mr->umem);
 	int access_mode = mr->data_direct ? MLX5_MKC_ACCESS_MODE_KSM :
@@ -904,12 +907,11 @@ int mlx5_ib_dmabuf_mr_update_pas(struct mlx5_ib_mr *mr, u32 pdn, u32 flags)
 	unsigned long page_size;
 	int err;
 
-	dma_resv_lock(umem_dmabuf->attach->dmabuf->resv, NULL);
+	dma_resv_assert_held(umem_dmabuf->attach->dmabuf->resv);
+
 	err = ib_umem_dmabuf_map_pages(umem_dmabuf);
-	if (err) {
-		dma_resv_unlock(umem_dmabuf->attach->dmabuf->resv);
+	if (err)
 		return err;
-	}
 
 	page_size = mlx5_umem_dmabuf_find_best_pgsz(umem_dmabuf, access_mode);
 	if (!page_size) {
@@ -930,7 +932,6 @@ int mlx5_ib_dmabuf_mr_update_pas(struct mlx5_ib_mr *mr, u32 pdn, u32 flags)
 							      pdn);
 		}
 	}
-	dma_resv_unlock(umem_dmabuf->attach->dmabuf->resv);
 
 	if (err) {
 		mr->page_shift = old_page_shift;
@@ -941,7 +942,20 @@ int mlx5_ib_dmabuf_mr_update_pas(struct mlx5_ib_mr *mr, u32 pdn, u32 flags)
 	return 0;
 }
 
-int mlx5_ib_init_dmabuf_mr(struct mlx5_ib_mr *mr, struct ib_pd *pd)
+int mlx5_ib_dmabuf_mr_update_pas(struct mlx5_ib_mr *mr, u32 pdn, u32 flags)
+{
+	struct dma_resv *resv = to_ib_umem_dmabuf(mr->umem)->attach->dmabuf->resv;
+	int err;
+
+	dma_resv_lock(resv, NULL);
+	err = mlx5_ib_dmabuf_mr_update_pas_locked(mr, pdn, flags);
+	dma_resv_unlock(resv);
+	return err;
+}
+
+/* The caller holds the dmabuf reservation lock. */
+static int mlx5_ib_init_dmabuf_mr_locked(struct mlx5_ib_mr *mr,
+					 struct ib_pd *pd)
 {
 	struct mlx5_ib_dev *dev = mr_to_mdev(mr);
 	u32 pdn;
@@ -951,7 +965,48 @@ int mlx5_ib_init_dmabuf_mr(struct mlx5_ib_mr *mr, struct ib_pd *pd)
 	else
 		pdn = to_mpd(pd)->pdn;
 
-	return mlx5_ib_dmabuf_mr_update_pas(mr, pdn, MLX5_IB_UPD_XLT_ENABLE);
+	return mlx5_ib_dmabuf_mr_update_pas_locked(mr, pdn,
+						   MLX5_IB_UPD_XLT_ENABLE);
+}
+
+int mlx5_ib_init_dmabuf_mr(struct mlx5_ib_mr *mr, struct ib_pd *pd)
+{
+	struct dma_resv *resv = to_ib_umem_dmabuf(mr->umem)->attach->dmabuf->resv;
+	int err;
+
+	dma_resv_lock(resv, NULL);
+	err = mlx5_ib_init_dmabuf_mr_locked(mr, pd);
+	dma_resv_unlock(resv);
+	return err;
+}
+
+/*
+ * Revoke callback of a pinned revocable dmabuf MR. It runs under the dmabuf
+ * reservation lock, either on an exporter invalidation or from
+ * ib_umem_release() at deregistration. It returns void, and the caller
+ * unconditionally unmaps and unpins the buffer once it returns, so it
+ * disables the mkey with a UMR to stop the device from accessing it.
+ */
+static void mlx5_ib_dmabuf_pinned_revoke(void *priv)
+{
+	struct mlx5_ib_mr *mr = priv;
+	struct mlx5_ib_dev *dev = mr_to_mdev(mr);
+	int err;
+
+	dma_resv_assert_held(to_ib_umem_dmabuf(mr->umem)->attach->dmabuf->resv);
+
+	err = mlx5r_umr_revoke_mr(mr);
+	if (err) {
+		mlx5_ib_warn(dev, "dmabuf mr revoke failed to disable mkey 0x%x, err %d\n",
+			     mr->mmkey.key, err);
+		return;
+	}
+
+	/*
+	 * Mark the key as disabled. If the UMR failed, deregistration destroys
+	 * the key instead of returning it to the pool.
+	 */
+	mr->revoked = true;
 }
 
 static struct ib_mr *
@@ -964,6 +1019,7 @@ reg_user_mr_dmabuf(struct ib_pd *pd, struct device *dma_device,
 	struct mlx5_ib_dev *dev = to_mdev(pd->device);
 	struct mlx5_ib_mr *mr = NULL;
 	struct ib_umem_dmabuf *umem_dmabuf;
+	bool revocable_and_pinned = false;
 	u16 st_index = MLX5_MKC_PCIE_TPH_NO_STEERING_TAG_INDEX;
 	u8 ph = MLX5_IB_NO_PH;
 	int err;
@@ -972,12 +1028,23 @@ reg_user_mr_dmabuf(struct ib_pd *pd, struct device *dma_device,
 	if (err)
 		return ERR_PTR(err);
 
-	if (!pinned_mode)
-		umem_dmabuf = ib_umem_dmabuf_get(&dev->ib_dev,
-						 offset, length, fd,
-						 access_flags,
-						 &mlx5_ib_dmabuf_attach_ops);
-	else if (dma_device)
+	if (!pinned_mode) {
+		umem_dmabuf = ib_umem_dmabuf_get_pinned_revocable_and_lock(
+				&dev->ib_dev, offset, length, fd, access_flags);
+		if (!IS_ERR(umem_dmabuf)) {
+			revocable_and_pinned = true;
+		} else {
+			if (!IS_ENABLED(CONFIG_INFINIBAND_ON_DEMAND_PAGING)) {
+				mlx5_ib_dbg(dev,
+					   "dmabuf pin failed (%pe) and ODP is not supported\n",
+					   umem_dmabuf);
+				return ERR_CAST(umem_dmabuf);
+			}
+			umem_dmabuf = ib_umem_dmabuf_get(
+				&dev->ib_dev, offset, length, fd,
+				access_flags, &mlx5_ib_dmabuf_attach_ops);
+		}
+	} else if (dma_device)
 		umem_dmabuf = ib_umem_dmabuf_get_pinned_with_dma_device(&dev->ib_dev,
 				dma_device, offset, length,
 				fd, access_flags);
@@ -1002,6 +1069,8 @@ reg_user_mr_dmabuf(struct ib_pd *pd, struct device *dma_device,
 				access_flags, access_mode,
 				st_index, ph);
 	if (IS_ERR(mr)) {
+		if (revocable_and_pinned)
+			ib_umem_dmabuf_revoke_unlock(umem_dmabuf);
 		ib_umem_release(&umem_dmabuf->umem);
 		return ERR_CAST(mr);
 	}
@@ -1010,6 +1079,23 @@ reg_user_mr_dmabuf(struct ib_pd *pd, struct device *dma_device,
 
 	atomic_add(ib_umem_num_pages(mr->umem), &dev->mdev->priv.reg_pages);
 	umem_dmabuf->private = mr;
+	if (revocable_and_pinned) {
+		/*
+		 * Keep the reservation lock until the key is enabled, so an
+		 * exporter revoke cannot run on a half registered MR. A revoke
+		 * that is pending runs once we unlock, on a complete MR.
+		 */
+		err = mlx5_ib_init_dmabuf_mr_locked(mr, pd);
+		if (!err)
+			ib_umem_dmabuf_set_revoke_locked(umem_dmabuf,
+							 mlx5_ib_dmabuf_pinned_revoke,
+							 mr);
+		ib_umem_dmabuf_revoke_unlock(umem_dmabuf);
+		if (err)
+			goto err_dereg_mr;
+		return &mr->ibmr;
+	}
+
 	if (!pinned_mode) {
 		err = mlx5r_odp_create_eq(dev, &dev->odp_pf_eq);
 		if (err)
@@ -1096,8 +1182,7 @@ struct ib_mr *mlx5_ib_reg_user_mr_dmabuf(struct ib_pd *pd, u64 offset,
 	int mlx5_access_flags = 0;
 	int err;
 
-	if (!IS_ENABLED(CONFIG_INFINIBAND_USER_MEM) ||
-	    !IS_ENABLED(CONFIG_INFINIBAND_ON_DEMAND_PAGING))
+	if (!IS_ENABLED(CONFIG_INFINIBAND_USER_MEM))
 		return ERR_PTR(-EOPNOTSUPP);
 
 	if (uverbs_attr_is_valid(attrs, MLX5_IB_ATTR_REG_DMABUF_MR_ACCESS_FLAGS)) {
@@ -1453,6 +1538,12 @@ static int mlx5_umr_revoke_mr_with_lock(struct mlx5_ib_mr *mr)
 	return ret;
 }
 
+static bool is_pinned_revoke_dmabuf_mr(struct mlx5_ib_mr *mr)
+{
+	return mr->umem && mr->umem->is_dmabuf &&
+	       to_ib_umem_dmabuf(mr->umem)->pinned_revoke;
+}
+
 static int mlx5r_handle_mkey_cleanup(struct mlx5_ib_mr *mr)
 {
 	bool is_odp_dma_buf = is_dmabuf_mr(mr) &&
@@ -1460,6 +1551,23 @@ static int mlx5r_handle_mkey_cleanup(struct mlx5_ib_mr *mr)
 	struct mlx5_ib_dev *dev = to_mdev(mr->ibmr.device);
 	bool is_odp = is_odp_mr(mr);
 	int ret;
+
+	if (is_pinned_revoke_dmabuf_mr(mr)) {
+		/*
+		 * Run the revoke callback if the exporter did not. A key revoked
+		 * by a UMR returns to the pool once the umem is released,
+		 * otherwise destroy it here. ib_umem_dmabuf_revoke() is
+		 * idempotent, so the release later does nothing more.
+		 */
+		ib_umem_dmabuf_revoke(to_ib_umem_dmabuf(mr->umem));
+		if (mr->revoked && mr->ibmr.frmr.pool)
+			return 0;
+
+		ret = destroy_mkey(dev, mr);
+		if (!ret && mr->ibmr.frmr.pool)
+			ib_frmr_pool_drop(&mr->ibmr);
+		return ret;
+	}
 
 	if (mr->ibmr.frmr.pool) {
 		if (!mlx5_umr_revoke_mr_with_lock(mr)) {
@@ -1545,6 +1653,7 @@ static int __mlx5_ib_dereg_mr(struct ib_mr *ibmr)
 
 	if (mr->umem) {
 		bool is_odp = is_odp_mr(mr);
+		bool is_pinned_revoke = is_pinned_revoke_dmabuf_mr(mr);
 
 		if (!is_odp)
 			atomic_sub(ib_umem_num_pages(mr->umem),
@@ -1552,6 +1661,9 @@ static int __mlx5_ib_dereg_mr(struct ib_mr *ibmr)
 		ib_umem_release(mr->umem);
 		if (is_odp)
 			mlx5_ib_free_odp_mr(mr);
+		/* Push after the release, mr->umem is not touched again */
+		if (is_pinned_revoke && mr->revoked && mr->ibmr.frmr.pool)
+			ib_frmr_pool_push(mr->ibmr.device, &mr->ibmr);
 	}
 
 	if (!mr->ibmr.frmr.pool)
