@@ -28,7 +28,7 @@ mlx5_ib_set_vport_rep(struct mlx5_core_dev *dev,
 
 	ret = ib_device_set_netdev(&ibdev->ib_dev, ndev, vport_index + 1);
 	if (ret)
-		return ret;
+		goto err_set_netdev;
 
 	/* Only Vports that are not native to the LAG master eswitch need to add
 	 * demux rule.
@@ -36,7 +36,18 @@ mlx5_ib_set_vport_rep(struct mlx5_core_dev *dev,
 	if (mlx5_eswitch_get_total_vports(dev) > vport_index)
 		return 0;
 
-	return mlx5_lag_demux_rule_add(rep_dev, rep->vport, vport_index);
+	ret = mlx5_lag_demux_rule_add(rep_dev, rep->vport, vport_index);
+	if (ret)
+		goto err_demux;
+
+	return 0;
+
+err_demux:
+	ib_device_set_netdev(&ibdev->ib_dev, NULL, vport_index + 1);
+err_set_netdev:
+	rep->rep_data[REP_IB].priv = NULL;
+	ibdev->port[vport_index].rep = NULL;
+	return ret;
 }
 
 static void mlx5_ib_register_peer_vport_reps(struct mlx5_core_dev *mdev);
