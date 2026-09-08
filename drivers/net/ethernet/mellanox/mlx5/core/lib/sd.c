@@ -820,6 +820,20 @@ int mlx5_sd_init(struct mlx5_core_dev *dev)
 			goto err_unset_secondaries;
 	}
 
+	/* Initialize vport metadata for all group devices. Done here since
+	 * mlx5_sd_pf_num_get() requires the SD group to be ready.
+	 */
+	mlx5_sd_for_each_dev(i, primary, pos) {
+		struct mlx5_eswitch *esw = pos->priv.eswitch;
+
+		err = mlx5_esw_offloads_sd_metadata_init(esw);
+		if (err) {
+			sd_warn(primary, "Failed to init metadata for %s: %d\n",
+				dev_name(pos->device), err);
+			goto err_metadata;
+		}
+	}
+
 	sd_lag_init(primary);
 
 	primary_sd->dfs =
@@ -849,6 +863,15 @@ out:
 	mlx5_devcom_comp_unlock(sd->devcom);
 	return 0;
 
+err_metadata:
+	to = pos;
+	mlx5_sd_for_each_dev_to(i, primary, to, pos) {
+		struct mlx5_eswitch *esw = pos->priv.eswitch;
+
+		mlx5_esw_offloads_metadata_uninit(esw);
+	}
+	/* All secondaries are set at this stage, unset all of them */
+	pos = NULL;
 err_unset_secondaries:
 	to = pos;
 	mlx5_sd_for_each_secondary_to(i, primary, to, pos)
@@ -896,6 +919,11 @@ void mlx5_sd_cleanup(struct mlx5_core_dev *dev)
 	debugfs_remove_recursive(primary_sd->dfs);
 	primary_sd->dfs = NULL;
 	sd_lag_cleanup(primary);
+	mlx5_sd_for_each_dev(i, primary, pos) {
+		struct mlx5_eswitch *esw = pos->priv.eswitch;
+
+		mlx5_esw_offloads_metadata_uninit(esw);
+	}
 	mlx5_sd_for_each_secondary(i, primary, pos)
 		sd_cmd_unset_secondary(pos);
 	sd_cmd_unset_primary(primary);
@@ -987,7 +1015,6 @@ static bool mlx5_sd_all_paired(struct mlx5_core_dev *primary)
 static void mlx5_sd_activate_shared_fdb(struct mlx5_core_dev *primary)
 {
 	struct mlx5_sd *sd = mlx5_get_sd(primary);
-	struct mlx5_core_dev *pos;
 	struct mlx5_lag *ldev;
 	struct lag_func *pf;
 	int err;
@@ -1018,21 +1045,6 @@ static void mlx5_sd_activate_shared_fdb(struct mlx5_core_dev *primary)
 	if (!mlx5_lag_shared_fdb_supported_filter(ldev, sd->group_id)) {
 		sd_warn(primary, "Shared FDB not supported\n");
 		goto unlock;
-	}
-
-	/* Initialize vport metadata for all group devices. This is deferred
-	 * from esw_offloads_enable() because mlx5_sd_pf_num_get() requires
-	 * the SD group to be ready.
-	 */
-	mlx5_sd_for_each_dev(i, primary, pos) {
-		struct mlx5_eswitch *esw = pos->priv.eswitch;
-
-		err = mlx5_esw_offloads_init_deferred_metadata(esw);
-		if (err) {
-			sd_warn(primary, "Failed to init metadata for %s: %d\n",
-				dev_name(pos->device), err);
-			goto unlock;
-		}
 	}
 
 	err = mlx5_lag_shared_fdb_create(ldev, NULL, 0, sd->group_id);
