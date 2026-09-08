@@ -1161,7 +1161,8 @@ struct mlx5_lag_speed {
 	u32 cap_speed;
 };
 
-int mlx5_lag_query_aggregated_speed(struct mlx5_core_dev *dev, u32 *speed);
+int mlx5_lag_query_aggregated_speed(struct mlx5_core_dev *dev,
+				    struct mlx5_lag_speed *speed);
 bool mlx5_lag_mode_is_hash(struct mlx5_core_dev *dev);
 bool mlx5_lag_is_master(struct mlx5_core_dev *dev);
 bool mlx5_lag_is_shared_fdb(struct mlx5_core_dev *dev);

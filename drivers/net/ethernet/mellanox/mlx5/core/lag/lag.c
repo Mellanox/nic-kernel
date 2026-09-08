@@ -2170,25 +2170,23 @@ static int mlx5_handle_changeinfodata_event(struct mlx5_lag *ldev,
 	return 1;
 }
 
-/* Returns speed in Mbps. */
-int mlx5_lag_query_aggregated_speed(struct mlx5_core_dev *mdev, u32 *speed)
+/* Returns oper_speed and cap_speed in Mbps.
+ * 0 in either field means unknown.
+ */
+int mlx5_lag_query_aggregated_speed(struct mlx5_core_dev *mdev,
+				    struct mlx5_lag_speed *speed)
 {
 	struct mlx5_lag *ldev;
-	int ret = 0;
 
 	ldev = mlx5_lag_dev(mdev);
 	if (!ldev)
 		return -ENODEV;
 
 	mutex_lock(&ldev->lock);
-	*speed = ldev->agg_speed_mbps.oper_speed;
-	if (*speed == 0)
-		ret = -EINVAL;
+	*speed = ldev->agg_speed_mbps;
 	mutex_unlock(&ldev->lock);
 
-	if (ret == -EINVAL)
-		mlx5_core_dbg(mdev, "aggregated speed is unknown\n");
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(mlx5_lag_query_aggregated_speed);
 

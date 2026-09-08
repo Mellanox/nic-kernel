@@ -1651,14 +1651,14 @@ static int mlx5_ib_query_port_speed_from_bond(struct mlx5_ib_dev *dev,
 					      u32 port_num, u64 *speed)
 {
 	struct mlx5_core_dev *mdev = dev->mdev;
-	u32 bond_speed;
+	struct mlx5_lag_speed agg_speed;
 	int err;
 
-	err = mlx5_lag_query_aggregated_speed(mdev, &bond_speed);
+	err = mlx5_lag_query_aggregated_speed(mdev, &agg_speed);
 	if (err)
 		return err;
 
-	*speed = bond_speed / MLX5_TX_SPEED_UNIT;
+	*speed = agg_speed.oper_speed / MLX5_TX_SPEED_UNIT;
 
 	return 0;
 }
