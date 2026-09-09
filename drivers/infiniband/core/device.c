@@ -312,6 +312,14 @@ static void ib_device_check_mandatory(struct ib_device *device)
 			break;
 		}
 	}
+
+	/*
+	 * Kernel ULPs must not bind to an adversarial_mode device. Its kverbs
+	 * ops are still present, as uverbs uses them, so clear kverbs_provider
+	 * explicitly. uverbs sets no_kverbs_req, so it still binds.
+	 */
+	if (device->adversarial_mode)
+		device->kverbs_provider = false;
 }
 
 /*
