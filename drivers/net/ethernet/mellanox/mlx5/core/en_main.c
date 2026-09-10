@@ -6041,9 +6041,7 @@ static int mlx5e_nic_init(struct mlx5_core_dev *mdev,
 	priv->dfs_root = debugfs_create_dir("nic",
 					    mlx5_debugfs_get_dev_root(mdev));
 
-	fs = mlx5e_fs_init(priv->profile, mdev,
-			   !test_bit(MLX5E_STATE_DESTROYING, &priv->state),
-			   priv->dfs_root);
+	fs = mlx5e_fs_init(priv->profile, mdev, false, priv->dfs_root);
 	if (!fs) {
 		err = -ENOMEM;
 		mlx5_core_err(mdev, "FS initialization failed, %d\n", err);
@@ -6121,16 +6119,24 @@ static int mlx5e_init_nic_rx(struct mlx5e_priv *priv)
 					 priv->netdev);
 	if (err) {
 		mlx5_core_warn(mdev, "create flow steering failed, %d\n", err);
+		mlx5e_fs_set_rx_mode_active(priv->fs, false);
+		cancel_work_sync(&priv->set_rx_mode_work);
 		goto err_destroy_rx_res;
 	}
 
 	err = mlx5e_tc_nic_init(priv);
-	if (err)
+	if (err) {
+		mlx5e_fs_set_rx_mode_active(priv->fs, false);
+		cancel_work_sync(&priv->set_rx_mode_work);
 		goto err_destroy_flow_steering;
+	}
 
 	err = mlx5e_accel_init_rx(priv);
-	if (err)
+	if (err) {
+		mlx5e_fs_set_rx_mode_active(priv->fs, false);
+		cancel_work_sync(&priv->set_rx_mode_work);
 		goto err_tc_nic_cleanup;
+	}
 
 #ifdef CONFIG_MLX5_EN_ARFS
 	priv->netdev->rx_cpu_rmap =  mlx5_eq_table_get_rmap(priv->mdev);
@@ -6558,9 +6564,6 @@ int mlx5e_attach_netdev(struct mlx5e_priv *priv)
 	int err;
 
 	clear_bit(MLX5E_STATE_DESTROYING, &priv->state);
-	if (priv->fs)
-		mlx5e_fs_set_state_destroy(priv->fs,
-					   !test_bit(MLX5E_STATE_DESTROYING, &priv->state));
 
 	/* Validate the max_wqe_size_sq capability. */
 	if (WARN_ON_ONCE(mlx5e_get_max_sq_wqebbs(priv->mdev) < MLX5E_MAX_TX_WQEBBS)) {
@@ -6621,6 +6624,9 @@ int mlx5e_attach_netdev(struct mlx5e_priv *priv)
 	if (err)
 		goto err_cleanup_tx;
 
+	if (priv->fs)
+		mlx5e_fs_set_rx_mode_active(priv->fs, true);
+
 	if (profile->enable) {
 		err = profile->enable(priv);
 		if (err)
@@ -6632,6 +6638,10 @@ int mlx5e_attach_netdev(struct mlx5e_priv *priv)
 	return 0;
 
 err_cleanup_rx:
+	if (priv->fs) {
+		mlx5e_fs_set_rx_mode_active(priv->fs, false);
+		cancel_work_sync(&priv->set_rx_mode_work);
+	}
 	profile->cleanup_rx(priv);
 err_cleanup_tx:
 	profile->cleanup_tx(priv);
@@ -6639,9 +6649,6 @@ err_cleanup_tx:
 out:
 	mlx5e_reset_channels(priv->netdev);
 	set_bit(MLX5E_STATE_DESTROYING, &priv->state);
-	if (priv->fs)
-		mlx5e_fs_set_state_destroy(priv->fs,
-					   !test_bit(MLX5E_STATE_DESTROYING, &priv->state));
 	cancel_work_sync(&priv->update_stats_work);
 	return err;
 }
@@ -6652,8 +6659,7 @@ void mlx5e_detach_netdev(struct mlx5e_priv *priv)
 
 	set_bit(MLX5E_STATE_DESTROYING, &priv->state);
 	if (priv->fs)
-		mlx5e_fs_set_state_destroy(priv->fs,
-					   !test_bit(MLX5E_STATE_DESTROYING, &priv->state));
+		mlx5e_fs_set_rx_mode_active(priv->fs, false);
 
 	if (profile->disable)
 		profile->disable(priv);
