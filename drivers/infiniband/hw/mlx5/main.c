@@ -1629,21 +1629,21 @@ static int mlx5_ib_query_port_speed_from_vport(struct mlx5_core_dev *mdev,
 					       struct mlx5_ib_dev *dev,
 					       u32 port_num)
 {
-	u32 max_tx_speed;
-	u8 vport_state;
+	struct mlx5_vport_tx_speed tx_speed = {};
+	struct mlx5_vport_state vport_state;
 	int err;
 
-	err = mlx5_query_vport_max_tx_speed(mdev, op_mod, vport, other_vport,
-					    &max_tx_speed, &vport_state);
+	err = mlx5_query_vport_state_ctx(mdev, op_mod, vport, other_vport,
+					 &tx_speed, &vport_state);
 	if (err)
 		return err;
 
-	if (vport_state == VPORT_STATE_DOWN || max_tx_speed == 0)
+	if (vport_state.state == VPORT_STATE_DOWN || tx_speed.max_tx_speed == 0)
 		/* Value 0 indicates field not supported, fallback */
 		return mlx5_ib_query_port_speed_from_port(dev, port_num,
 							  speed);
 
-	*speed = max_tx_speed;
+	*speed = tx_speed.max_tx_speed;
 	return 0;
 }
 
@@ -1651,14 +1651,14 @@ static int mlx5_ib_query_port_speed_from_bond(struct mlx5_ib_dev *dev,
 					      u32 port_num, u64 *speed)
 {
 	struct mlx5_core_dev *mdev = dev->mdev;
-	u32 bond_speed;
+	struct mlx5_lag_speed agg_speed;
 	int err;
 
-	err = mlx5_lag_query_bond_speed(mdev, &bond_speed);
+	err = mlx5_lag_query_aggregated_speed(mdev, &agg_speed);
 	if (err)
 		return err;
 
-	*speed = bond_speed / MLX5_MAX_TX_SPEED_UNIT;
+	*speed = agg_speed.oper_speed / MLX5_TX_SPEED_UNIT;
 
 	return 0;
 }
@@ -3693,6 +3693,16 @@ static int lag_event(struct notifier_block *nb, unsigned long event, void *data)
 			rdma_roce_rescan_port(ibdev, portnum + 1);
 		}
 		break;
+	case MLX5_DRIVER_EVENT_LAG_SPEED_CHANGE: {
+		struct ib_event speed_event = {};
+
+		if (!dev->ib_active)
+			break;
+		speed_event.device = ibdev;
+		speed_event.event = IB_EVENT_DEVICE_SPEED_CHANGE;
+		ib_dispatch_event(&speed_event);
+		break;
+	}
 	default:
 		return NOTIFY_DONE;
 	}

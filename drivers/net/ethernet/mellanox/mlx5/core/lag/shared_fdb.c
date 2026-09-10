@@ -256,7 +256,7 @@ int mlx5_lag_shared_fdb_create(struct mlx5_lag *ldev,
 	}
 
 	if (filter == MLX5_LAG_FILTER_PORTS || filter == MLX5_LAG_FILTER_ALL)
-		mlx5_lag_set_vports_agg_speed(ldev);
+		mlx5_lag_set_vports_agg_speed(ldev, true);
 	return 0;
 
 err_rescan_drivers:

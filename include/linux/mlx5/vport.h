@@ -33,6 +33,7 @@
 #ifndef __MLX5_VPORT_H__
 #define __MLX5_VPORT_H__
 
+#include <linux/bits.h>
 #include <linux/mlx5/driver.h>
 #include <linux/mlx5/device.h>
 
@@ -41,7 +42,7 @@
 	 (MLX5_CAP_GEN(mdev, port_type) == MLX5_CAP_PORT_TYPE_ETH) &&	\
 	 mlx5_core_is_pf(mdev))
 
-#define MLX5_MAX_TX_SPEED_UNIT 100
+#define MLX5_TX_SPEED_UNIT 100
 
 enum {
 	MLX5_CAP_INLINE_MODE_L2,
@@ -60,11 +61,31 @@ enum {
 u8 mlx5_query_vport_state(struct mlx5_core_dev *mdev, u8 opmod, u16 vport);
 int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 				  u16 vport, u8 other_vport, u8 state);
-int mlx5_query_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 op_mod,
-				  u16 vport, u8 other_vport,
-				  u32 *max_tx_speed, u8 *state);
-int mlx5_modify_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 opmod,
-				   u16 vport, u8 other_vport, u16 max_tx_speed);
+enum mlx5_vport_tx_speed_valid {
+	MLX5_VPORT_TX_SPEED_MAX = BIT(0),
+	MLX5_VPORT_TX_SPEED_CAP = BIT(1),
+	MLX5_VPORT_TX_SPEED_EFFECTIVE = BIT(2),
+};
+
+struct mlx5_vport_tx_speed {
+	u16 max_tx_speed;
+	u16 cap_tx_speed;
+	u16 effective_tx_speed;
+	u8  flags; /* bitmask of enum mlx5_vport_tx_speed_valid */
+};
+
+struct mlx5_vport_state {
+	u8 state;
+	u8 admin_state;
+};
+
+int mlx5_query_vport_state_ctx(struct mlx5_core_dev *mdev, u8 op_mod,
+			       u16 vport, u8 other_vport,
+			       struct mlx5_vport_tx_speed *tx_speed,
+			       struct mlx5_vport_state *vport_state);
+int mlx5_modify_vport_tx_speed(struct mlx5_core_dev *mdev, u8 opmod,
+			       u16 vport, u8 other_vport,
+			       const struct mlx5_vport_tx_speed *tx_speed);
 int mlx5_query_nic_vport_mac_address(struct mlx5_core_dev *mdev,
 				     u16 vport, bool other, u8 *addr);
 int mlx5_query_mac_address(struct mlx5_core_dev *mdev, u8 *addr);

@@ -62,28 +62,6 @@ u8 mlx5_query_vport_state(struct mlx5_core_dev *mdev, u8 opmod, u16 vport)
 	return MLX5_GET(query_vport_state_out, out, state);
 }
 
-static int mlx5_query_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
-					u16 vport, u8 other_vport,
-					u8 *admin_state)
-{
-	u32 out[MLX5_ST_SZ_DW(query_vport_state_out)] = {};
-	u32 in[MLX5_ST_SZ_DW(query_vport_state_in)] = {};
-	int err;
-
-	MLX5_SET(query_vport_state_in, in, opcode,
-		 MLX5_CMD_OP_QUERY_VPORT_STATE);
-	MLX5_SET(query_vport_state_in, in, op_mod, opmod);
-	MLX5_SET(query_vport_state_in, in, vport_number, vport);
-	MLX5_SET(query_vport_state_in, in, other_vport, other_vport);
-
-	err = mlx5_cmd_exec_inout(mdev, query_vport_state, in, out);
-	if (err)
-		return err;
-
-	*admin_state = MLX5_GET(query_vport_state_out, out, admin_state);
-	return 0;
-}
-
 int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 				  u16 vport, u8 other_vport, u8 state)
 {
@@ -96,25 +74,25 @@ int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 	if (MLX5_CAP_ESW(mdev, esw_vport_state_max_tx_speed) &&
 	    opmod == MLX5_VPORT_STATE_OP_MOD_ESW_VPORT &&
 	    vport != MLX5_VPORT_UPLINK) {
-		u32 speed = 0;
+		struct mlx5_vport_tx_speed tx_speed = {};
 		int err;
 
-		err = mlx5_query_vport_max_tx_speed(mdev, opmod, vport,
-						    other_vport, &speed, NULL);
+		err = mlx5_query_vport_state_ctx(mdev, opmod, vport,
+						 other_vport, &tx_speed, NULL);
 		if (err) {
 #ifdef CONFIG_MLX5_ESWITCH
-			struct mlx5_vport *esw_vport;
-
-			esw_vport = mlx5_eswitch_get_vport(mdev->priv.eswitch,
-							   vport);
-			speed = IS_ERR(esw_vport) ? 0 :
-				esw_vport->agg_max_tx_speed;
+			mlx5_esw_vport_speed_fallback(mdev->priv.eswitch,
+						      vport, err, &tx_speed);
 #endif
-			mlx5_core_dbg(mdev,
-				      "Failed to query vport %d max tx speed, err=%d, using cached %u\n",
-				      vport, err, speed);
 		}
-		MLX5_SET(modify_vport_state_in, in, max_tx_speed, speed);
+		MLX5_SET(modify_vport_state_in, in, max_tx_speed,
+			 tx_speed.max_tx_speed);
+		if (MLX5_CAP_ESW(mdev, esw_vport_state_cap_tx_speed))
+			MLX5_SET(modify_vport_state_in, in, cap_tx_speed,
+				 tx_speed.cap_tx_speed);
+		if (MLX5_CAP_ESW(mdev, esw_vport_state_effective_tx_speed))
+			MLX5_SET(modify_vport_state_in, in, effective_tx_speed,
+				 tx_speed.effective_tx_speed);
 	}
 
 	MLX5_SET(modify_vport_state_in, in, opcode,
@@ -127,36 +105,60 @@ int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 	return mlx5_cmd_exec_in(mdev, modify_vport_state, in);
 }
 
-int mlx5_modify_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 opmod,
-				   u16 vport, u8 other_vport, u16 max_tx_speed)
+int mlx5_modify_vport_tx_speed(struct mlx5_core_dev *mdev, u8 opmod,
+			       u16 vport, u8 other_vport,
+			       const struct mlx5_vport_tx_speed *tx_speed)
 {
 	u32 in[MLX5_ST_SZ_DW(modify_vport_state_in)] = {};
-	u8 admin_state;
+	struct mlx5_vport_tx_speed cur_speed;
+	struct mlx5_vport_state vport_state;
+	u16 effective_speed;
+	u16 max_speed;
+	u16 cap_speed;
 	int err;
 
 #ifdef CONFIG_MLX5_ESWITCH
 	lockdep_assert_held(&mdev->priv.eswitch->state_lock);
 #endif
 
-	err = mlx5_query_vport_admin_state(mdev, opmod, vport, other_vport,
-					   &admin_state);
+	err = mlx5_query_vport_state_ctx(mdev, opmod, vport, other_vport,
+					 &cur_speed, &vport_state);
 	if (err)
 		return err;
+
+	max_speed = tx_speed->flags & MLX5_VPORT_TX_SPEED_MAX ?
+		tx_speed->max_tx_speed : cur_speed.max_tx_speed;
 
 	MLX5_SET(modify_vport_state_in, in, opcode,
 		 MLX5_CMD_OP_MODIFY_VPORT_STATE);
 	MLX5_SET(modify_vport_state_in, in, op_mod, opmod);
 	MLX5_SET(modify_vport_state_in, in, vport_number, vport);
 	MLX5_SET(modify_vport_state_in, in, other_vport, other_vport);
-	MLX5_SET(modify_vport_state_in, in, admin_state, admin_state);
-	MLX5_SET(modify_vport_state_in, in, max_tx_speed, max_tx_speed);
+	MLX5_SET(modify_vport_state_in, in, admin_state,
+		 vport_state.admin_state);
+	MLX5_SET(modify_vport_state_in, in, max_tx_speed, max_speed);
+
+	if (MLX5_CAP_ESW(mdev, esw_vport_state_cap_tx_speed)) {
+		cap_speed = tx_speed->flags & MLX5_VPORT_TX_SPEED_CAP ?
+			tx_speed->cap_tx_speed : cur_speed.cap_tx_speed;
+		MLX5_SET(modify_vport_state_in, in, cap_tx_speed, cap_speed);
+	}
+	if (MLX5_CAP_ESW(mdev, esw_vport_state_effective_tx_speed)) {
+		effective_speed =
+			tx_speed->flags & MLX5_VPORT_TX_SPEED_EFFECTIVE ?
+			tx_speed->effective_tx_speed :
+			cur_speed.effective_tx_speed;
+		MLX5_SET(modify_vport_state_in, in, effective_tx_speed,
+			 effective_speed);
+	}
 
 	return mlx5_cmd_exec_in(mdev, modify_vport_state, in);
 }
 
-int mlx5_query_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 op_mod,
-				  u16 vport, u8 other_vport,
-				  u32 *max_tx_speed, u8 *state)
+int mlx5_query_vport_state_ctx(struct mlx5_core_dev *mdev, u8 op_mod,
+			       u16 vport, u8 other_vport,
+			       struct mlx5_vport_tx_speed *tx_speed,
+			       struct mlx5_vport_state *vport_state)
 {
 	u32 out[MLX5_ST_SZ_DW(query_vport_state_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(query_vport_state_in)] = {};
@@ -172,12 +174,21 @@ int mlx5_query_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 op_mod,
 	if (err)
 		return err;
 
-	*max_tx_speed = MLX5_GET(query_vport_state_out, out, max_tx_speed);
-	if (state)
-		*state = MLX5_GET(query_vport_state_out, out, state);
+	tx_speed->max_tx_speed =
+		MLX5_GET(query_vport_state_out, out, max_tx_speed);
+	tx_speed->cap_tx_speed =
+		MLX5_GET(query_vport_state_out, out, cap_tx_speed);
+	tx_speed->effective_tx_speed =
+		MLX5_GET(query_vport_state_out, out, effective_tx_speed);
+	if (vport_state) {
+		vport_state->state =
+			MLX5_GET(query_vport_state_out, out, state);
+		vport_state->admin_state =
+			MLX5_GET(query_vport_state_out, out, admin_state);
+	}
 	return 0;
 }
-EXPORT_SYMBOL_GPL(mlx5_query_vport_max_tx_speed);
+EXPORT_SYMBOL_GPL(mlx5_query_vport_state_ctx);
 
 static int mlx5_query_nic_vport_context(struct mlx5_core_dev *mdev, u16 vport,
 					bool other_vport, u32 *out)

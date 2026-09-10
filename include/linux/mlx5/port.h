@@ -137,6 +137,21 @@ enum mlx5_ptys_width {
 	MLX5_PTYS_WIDTH_12X	= 1 << 4,
 };
 
+enum mlx5_ptys_rate {
+	MLX5_PTYS_RATE_SDR	= 1 << 0,
+	MLX5_PTYS_RATE_DDR	= 1 << 1,
+	MLX5_PTYS_RATE_QDR	= 1 << 2,
+	MLX5_PTYS_RATE_FDR10	= 1 << 3,
+	MLX5_PTYS_RATE_FDR	= 1 << 4,
+	MLX5_PTYS_RATE_EDR	= 1 << 5,
+	MLX5_PTYS_RATE_HDR	= 1 << 6,
+	MLX5_PTYS_RATE_NDR	= 1 << 7,
+	MLX5_PTYS_RATE_XDR	= 1 << 8,
+};
+
+int mlx5_ptys_width_enum_to_int(enum mlx5_ptys_width width);
+int mlx5_ptys_rate_enum_to_int(enum mlx5_ptys_rate rate);
+
 #define MLX5E_PROT_MASK(link_mode) (1U << link_mode)
 #define MLX5_GET_ETH_PROTO(reg, out, ext, field)	\
 	(ext ? MLX5_GET(reg, out, ext_##field) :	\
@@ -146,9 +161,13 @@ int mlx5_set_port_caps(struct mlx5_core_dev *dev, u8 port_num, u32 caps);
 int mlx5_query_port_ptys(struct mlx5_core_dev *dev, u32 *ptys,
 			 int ptys_size, int proto_mask,
 			 u8 local_port, u8 plane_index);
+int mlx5_port_max_linkspeed_num(struct mlx5_core_dev *mdev, u32 *speed,
+				u8 local_port);
 
 int mlx5_query_ib_port_oper(struct mlx5_core_dev *dev, u16 *link_width_oper,
 			    u16 *proto_oper, u8 local_port, u8 plane_index);
+int mlx5_query_ib_port_cap(struct mlx5_core_dev *dev, u32 *speed,
+			   u8 local_port, u8 plane_index);
 
 void mlx5_query_port_max_mtu(struct mlx5_core_dev *dev, u16 *max_mtu, u8 port);
 void mlx5_query_port_oper_mtu(struct mlx5_core_dev *dev, u16 *oper_mtu,
