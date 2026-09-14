@@ -1869,7 +1869,6 @@ static int nvme_tcp_alloc_queue(struct nvme_ctrl *nctrl, int qid,
 	}
 
 	sk_net_refcnt_upgrade(queue->sock->sk);
-	nvme_tcp_reclassify_socket(queue->sock);
 
 	/* Single syn retry */
 	tcp_sock_set_syncnt(queue->sock->sk, 1);
@@ -1957,6 +1956,8 @@ static int nvme_tcp_alloc_queue(struct nvme_ctrl *nctrl, int qid,
 		if (ret)
 			goto err_init_connect;
 	}
+
+	nvme_tcp_reclassify_socket(queue->sock);
 
 	ret = nvme_tcp_init_connection(queue);
 	if (ret)
