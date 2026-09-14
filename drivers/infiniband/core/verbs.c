@@ -2291,7 +2291,7 @@ struct ib_mr *ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 		if (!(pd->device->attrs.kernel_cap_flags &
 		      IBK_ON_DEMAND_PAGING)) {
 			pr_debug("ODP support not available\n");
-			return ERR_PTR(-EINVAL);
+			return ERR_PTR(-EOPNOTSUPP);
 		}
 	}
 
@@ -2362,7 +2362,7 @@ EXPORT_SYMBOL(ib_dereg_mr_user);
  * @max_num_sg:    maximum sg entries available for registration.
  *
  * Notes:
- * Memory registeration page/sg lists must not exceed max_num_sg.
+ * Memory registration page/sg lists must not exceed max_num_sg.
  * For mr_type IB_MR_TYPE_MEM_REG, the total length cannot exceed
  * max_num_sg * used_page_size.
  *
