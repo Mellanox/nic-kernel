@@ -1895,8 +1895,10 @@ static int nldev_dellink(struct sk_buff *skb, struct nlmsghdr *nlh,
 		mutex_lock(&nldev_dellink_mutex);
 		err = device->link_ops->dellink(device);
 		mutex_unlock(&nldev_dellink_mutex);
-		if (err)
+		if (err) {
+			ib_device_put(device);
 			return err;
+		}
 	}
 
 	ib_unregister_device_and_put(device);
@@ -2943,7 +2945,7 @@ static int nldev_frmr_pools_set_doit(struct sk_buff *skb, struct nlmsghdr *nlh,
 	u32 aging_period;
 	int err;
 
-	tb = kzalloc_objs(*tb, RDMA_NLDEV_ATTR_MAX, GFP_KERNEL);
+	tb = kzalloc_objs(*tb, RDMA_NLDEV_ATTR_MAX);
 	if (!tb)
 		return -ENOMEM;
 

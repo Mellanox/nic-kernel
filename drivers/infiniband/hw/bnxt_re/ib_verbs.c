@@ -2903,7 +2903,7 @@ static int bnxt_re_build_qp1_send_v2(struct bnxt_re_qp *qp,
 	qp->send_psn &= BTH_PSN_MASK;
 	qp->qp1_hdr.bth.psn = cpu_to_be32(qp->send_psn);
 	/* DETH */
-	/* Use the priviledged Q_Key for QP1 */
+	/* Use the privileged Q_Key for QP1 */
 	qp->qp1_hdr.deth.qkey = cpu_to_be32(IB_QP1_QKEY);
 	qp->qp1_hdr.deth.source_qpn = IB_QP1;
 
@@ -3749,12 +3749,13 @@ int bnxt_re_resize_cq(struct ib_cq *ibcq, unsigned int cqe,
 	if (rc)
 		goto fail;
 
-	cq->resize_umem = ib_umem_get_va(&rdev->ibdev, req.cq_va,
-					 entries * sizeof(struct cq_base),
-					 IB_ACCESS_LOCAL_WRITE);
+	cq->resize_umem = ib_umem_get_cq_buf_or_va(&rdev->ibdev, NULL,
+						   req.cq_va,
+						   entries * sizeof(struct cq_base),
+						   IB_ACCESS_LOCAL_WRITE);
 	if (IS_ERR(cq->resize_umem)) {
 		rc = PTR_ERR(cq->resize_umem);
-		ibdev_err(&rdev->ibdev, "%s: ib_umem_get_va failed! rc = %pe\n",
+		ibdev_err(&rdev->ibdev, "%s: ib_umem_get_cq_buf_or_va failed! rc = %pe\n",
 			  __func__, cq->resize_umem);
 		cq->resize_umem = NULL;
 		goto fail;
