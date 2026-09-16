@@ -17,8 +17,8 @@ int mlx5_esw_adj_vport_modify(struct mlx5_core_dev *dev, u16 vport,
 		u32 speed = 0;
 		int err;
 
-		err = mlx5_query_vport_max_tx_speed(dev, op_mod, vport,
-						    true, &speed, NULL);
+		err = mlx5_query_vport_state_ctx(dev, op_mod, vport,
+						 true, &speed, NULL);
 		if (err) {
 			esw_vport = mlx5_eswitch_get_vport(dev->priv.eswitch,
 							   vport);

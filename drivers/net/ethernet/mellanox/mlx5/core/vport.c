@@ -99,8 +99,8 @@ int mlx5_modify_vport_admin_state(struct mlx5_core_dev *mdev, u8 opmod,
 		u32 speed = 0;
 		int err;
 
-		err = mlx5_query_vport_max_tx_speed(mdev, opmod, vport,
-						    other_vport, &speed, NULL);
+		err = mlx5_query_vport_state_ctx(mdev, opmod, vport,
+						 other_vport, &speed, NULL);
 		if (err) {
 #ifdef CONFIG_MLX5_ESWITCH
 			struct mlx5_vport *esw_vport;
@@ -154,9 +154,9 @@ int mlx5_modify_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 opmod,
 	return mlx5_cmd_exec_in(mdev, modify_vport_state, in);
 }
 
-int mlx5_query_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 op_mod,
-				  u16 vport, u8 other_vport,
-				  u32 *max_tx_speed, u8 *state)
+int mlx5_query_vport_state_ctx(struct mlx5_core_dev *mdev, u8 op_mod,
+			       u16 vport, u8 other_vport,
+			       u32 *max_tx_speed, u8 *state)
 {
 	u32 out[MLX5_ST_SZ_DW(query_vport_state_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(query_vport_state_in)] = {};
@@ -177,7 +177,7 @@ int mlx5_query_vport_max_tx_speed(struct mlx5_core_dev *mdev, u8 op_mod,
 		*state = MLX5_GET(query_vport_state_out, out, state);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(mlx5_query_vport_max_tx_speed);
+EXPORT_SYMBOL_GPL(mlx5_query_vport_state_ctx);
 
 static int mlx5_query_nic_vport_context(struct mlx5_core_dev *mdev, u16 vport,
 					bool other_vport, u32 *out)

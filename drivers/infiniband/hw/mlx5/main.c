@@ -1633,8 +1633,8 @@ static int mlx5_ib_query_port_speed_from_vport(struct mlx5_core_dev *mdev,
 	u8 vport_state;
 	int err;
 
-	err = mlx5_query_vport_max_tx_speed(mdev, op_mod, vport, other_vport,
-					    &max_tx_speed, &vport_state);
+	err = mlx5_query_vport_state_ctx(mdev, op_mod, vport, other_vport,
+					 &max_tx_speed, &vport_state);
 	if (err)
 		return err;
 
