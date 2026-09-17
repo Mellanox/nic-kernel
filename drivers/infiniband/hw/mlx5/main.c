@@ -2799,7 +2799,6 @@ static int mlx5_ib_mmap(struct ib_ucontext *ibcontext, struct vm_area_struct *vm
 static int mlx5_ib_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 {
 	struct mlx5_ib_pd *pd = to_mpd(ibpd);
-	struct ib_device *ibdev = ibpd->device;
 	struct mlx5_ib_alloc_pd_resp resp = {};
 	int err;
 	u32 out[MLX5_ST_SZ_DW(alloc_pd_out)] = {};
@@ -2811,7 +2810,7 @@ static int mlx5_ib_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 	uid = context ? context->devx_uid : 0;
 	MLX5_SET(alloc_pd_in, in, opcode, MLX5_CMD_OP_ALLOC_PD);
 	MLX5_SET(alloc_pd_in, in, uid, uid);
-	err = mlx5_cmd_exec_inout(to_dev(ibdev)->mdev, alloc_pd, in, out);
+	err = mlx5_cmd_exec_inout(pd_to_mdev(pd), alloc_pd, in, out);
 	if (err)
 		return err;
 
@@ -2821,7 +2820,7 @@ static int mlx5_ib_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 		resp.pdn = pd->pdn;
 		err = ib_respond_udata(udata, resp);
 		if (err) {
-			mlx5_cmd_dealloc_pd(to_dev(ibdev)->mdev, pd->pdn, uid);
+			mlx5_cmd_dealloc_pd(pd_to_mdev(pd), pd->pdn, uid);
 			return err;
 		}
 	}
@@ -2831,10 +2830,9 @@ static int mlx5_ib_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 
 static int mlx5_ib_dealloc_pd(struct ib_pd *pd, struct ib_udata *udata)
 {
-	struct mlx5_ib_dev *dev = to_dev(pd->device);
 	struct mlx5_ib_pd *mpd = to_mpd(pd);
 
-	return mlx5_cmd_dealloc_pd(dev->mdev, mpd->pdn, mpd->uid);
+	return mlx5_cmd_dealloc_pd(pd_to_mdev(mpd), mpd->pdn, mpd->uid);
 }
 
 static int mlx5_ib_mcg_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
