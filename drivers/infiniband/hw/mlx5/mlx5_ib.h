@@ -1266,6 +1266,33 @@ static inline struct mlx5_ib_mr *to_mmr(struct ib_mr *ibmr)
 	return container_of(ibmr, struct mlx5_ib_mr, ibmr);
 }
 
+/*
+ * Device resolvers.
+ *
+ * Each helper is named <resource>_to_mdev() or <resource>_to_dev(). Where more
+ * than one resource type has to be accepted, the interface is a _Generic()
+ * that dispatches to one helper per type.
+ */
+static inline struct mlx5_core_dev *__ib_pd_to_mdev(struct ib_pd *pd)
+{
+	return to_dev(pd->device)->mdev;
+}
+
+static inline struct mlx5_core_dev *__mlx5_ib_pd_to_mdev(struct mlx5_ib_pd *pd)
+{
+	return to_dev(pd->ibpd.device)->mdev;
+}
+
+#define pd_to_mdev(pd) \
+	_Generic((pd), \
+		struct ib_pd * : __ib_pd_to_mdev, \
+		struct mlx5_ib_pd * : __mlx5_ib_pd_to_mdev)(pd)
+
+static inline struct mlx5_core_dev *srq_to_mdev(struct mlx5_core_srq *msrq)
+{
+	return pd_to_mdev(to_mibsrq(msrq)->ibsrq.pd);
+}
+
 static inline struct mlx5_ib_mw *to_mmw(struct ib_mw *ibmw)
 {
 	return container_of(ibmw, struct mlx5_ib_mw, ibmw);
