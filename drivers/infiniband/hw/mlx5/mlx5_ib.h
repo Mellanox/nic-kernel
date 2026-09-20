@@ -687,6 +687,7 @@ struct mlx5_ib_mkey {
 struct mlx5_ib_mr {
 	struct ib_mr ibmr;
 	struct mlx5_ib_mkey mmkey;
+	struct mlx5_core_dev *mdev;
 
 	struct ib_umem *umem;
 	/* The mr is data direct related */
@@ -1316,6 +1317,16 @@ static inline struct mlx5_core_dev *srq_to_mdev(struct mlx5_core_srq *msrq)
 	return pd_to_mdev(to_mibsrq(msrq)->ibsrq.pd);
 }
 
+static inline struct mlx5_core_dev *mr_to_mdev(struct mlx5_ib_mr *mr)
+{
+	return mr->mdev;
+}
+
+static inline struct mlx5_core_dev *mw_to_mdev(struct ib_mw *ibmw)
+{
+	return pd_to_mdev(ibmw->pd);
+}
+
 static inline struct mlx5_ib_mw *to_mmw(struct ib_mw *ibmw)
 {
 	return container_of(ibmw, struct mlx5_ib_mw, ibmw);
@@ -1456,6 +1467,7 @@ int mlx5_ib_get_cqe_size(struct ib_cq *ibcq);
 int mlx5r_frmr_pools_init(struct ib_device *device);
 void mlx5r_frmr_pools_cleanup(struct ib_device *device);
 struct mlx5_ib_mr *mlx5_mr_cache_alloc(struct mlx5_ib_dev *dev,
+				       struct mlx5_core_dev *mdev,
 				       int access_flags, int access_mode,
 				       int ndescs);
 
@@ -1741,10 +1753,10 @@ static inline bool rt_supported(int ts_cap)
  *
  * For now assume if the umem is a dma_buf then it is P2P.
  */
-static inline bool mlx5_umem_needs_ats(struct mlx5_ib_dev *dev,
+static inline bool mlx5_umem_needs_ats(struct mlx5_core_dev *mdev,
 				       struct ib_umem *umem, int access_flags)
 {
-	if (!MLX5_CAP_GEN(dev->mdev, ats) || !umem->is_dmabuf)
+	if (!MLX5_CAP_GEN(mdev, ats) || !umem->is_dmabuf)
 		return false;
 	return access_flags & (IB_ACCESS_RELAXED_ORDERING | IB_ACCESS_UNORDERED);
 }
@@ -1767,39 +1779,39 @@ static inline u32 smi_to_native_portnum(struct mlx5_ib_dev *dev, u32 port)
 	return (port - 1) / dev->num_ports + 1;
 }
 
-static inline unsigned int get_max_log_entity_size_cap(struct mlx5_ib_dev *dev,
-						       int access_mode)
+static inline unsigned int
+get_max_log_entity_size_cap(struct mlx5_core_dev *mdev, int access_mode)
 {
 	int max_log_size = 0;
 
 	if (access_mode == MLX5_MKC_ACCESS_MODE_MTT)
 		max_log_size =
-			MLX5_CAP_GEN_2(dev->mdev, max_mkey_log_entity_size_mtt);
+			MLX5_CAP_GEN_2(mdev, max_mkey_log_entity_size_mtt);
 	else if (access_mode == MLX5_MKC_ACCESS_MODE_KSM)
 		max_log_size = MLX5_CAP_GEN_2(
-			dev->mdev, max_mkey_log_entity_size_fixed_buffer);
+			mdev, max_mkey_log_entity_size_fixed_buffer);
 
 	if (!max_log_size ||
 	    (max_log_size > 31 &&
-	     !MLX5_CAP_GEN_2(dev->mdev, umr_log_entity_size_5)))
+	     !MLX5_CAP_GEN_2(mdev, umr_log_entity_size_5)))
 		max_log_size = 31;
 
 	return max_log_size;
 }
 
-static inline unsigned int get_min_log_entity_size_cap(struct mlx5_ib_dev *dev,
-						       int access_mode)
+static inline unsigned int
+get_min_log_entity_size_cap(struct mlx5_core_dev *mdev, int access_mode)
 {
 	int min_log_size = 0;
 
 	if (access_mode == MLX5_MKC_ACCESS_MODE_KSM &&
-	    MLX5_CAP_GEN_2(dev->mdev,
+	    MLX5_CAP_GEN_2(mdev,
 			   min_mkey_log_entity_size_fixed_buffer_valid))
 		min_log_size = MLX5_CAP_GEN_2(
-			dev->mdev, min_mkey_log_entity_size_fixed_buffer);
+			mdev, min_mkey_log_entity_size_fixed_buffer);
 	else
 		min_log_size =
-			MLX5_CAP_GEN_2(dev->mdev, log_min_mkey_entity_size);
+			MLX5_CAP_GEN_2(mdev, log_min_mkey_entity_size);
 
 	min_log_size = max(min_log_size, MLX5_ADAPTER_PAGE_SHIFT);
 	return min_log_size;
@@ -1810,14 +1822,16 @@ static inline unsigned int get_min_log_entity_size_cap(struct mlx5_ib_dev *dev,
  * specifies both the page_offset and the on-the-wire IOVA
  */
 static __always_inline unsigned long
-mlx5_umem_mkc_find_best_pgsz(struct mlx5_ib_dev *dev, struct ib_umem *umem,
+mlx5_umem_mkc_find_best_pgsz(struct mlx5_core_dev *mdev, struct ib_umem *umem,
 			     u64 iova, int access_mode)
 {
 	unsigned int max_log_entity_size_cap, min_log_entity_size_cap;
 	unsigned long bitmap;
 
-	max_log_entity_size_cap = get_max_log_entity_size_cap(dev, access_mode);
-	min_log_entity_size_cap = get_min_log_entity_size_cap(dev, access_mode);
+	max_log_entity_size_cap =
+		get_max_log_entity_size_cap(mdev, access_mode);
+	min_log_entity_size_cap =
+		get_min_log_entity_size_cap(mdev, access_mode);
 
 	bitmap = GENMASK_ULL(max_log_entity_size_cap, min_log_entity_size_cap);
 
@@ -1829,10 +1843,11 @@ mlx5_umem_mkc_find_best_pgsz(struct mlx5_ib_dev *dev, struct ib_umem *umem,
 }
 
 static inline unsigned long
-mlx5_umem_dmabuf_find_best_pgsz(struct ib_umem_dmabuf *umem_dmabuf,
+mlx5_umem_dmabuf_find_best_pgsz(struct mlx5_core_dev *mdev,
+				struct ib_umem_dmabuf *umem_dmabuf,
 				int access_mode)
 {
-	return mlx5_umem_mkc_find_best_pgsz(to_dev(umem_dmabuf->umem.ibdev),
+	return mlx5_umem_mkc_find_best_pgsz(mdev,
 					    &umem_dmabuf->umem,
 					    umem_dmabuf->umem.iova,
 					    access_mode);
