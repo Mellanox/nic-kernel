@@ -38,9 +38,9 @@ struct mlx5_ib_gsi_wr {
 	bool completed:1;
 };
 
-static bool mlx5_ib_deth_sqpn_cap(struct mlx5_ib_dev *dev)
+static bool mlx5_ib_deth_sqpn_cap(struct mlx5_core_dev *mdev)
 {
-	return MLX5_CAP_GEN(dev->mdev, set_deth_sqpn);
+	return MLX5_CAP_GEN(mdev, set_deth_sqpn);
 }
 
 /* Call with gsi->lock locked */
@@ -89,6 +89,7 @@ int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 		       struct ib_qp_init_attr *attr)
 {
 	struct mlx5_ib_dev *dev = to_dev(pd->device);
+	struct mlx5_core_dev *mdev = pd_to_mdev(pd);
 	struct mlx5_ib_gsi_qp *gsi;
 	struct ib_qp_init_attr hw_init_attr = *attr;
 	const u8 port_num = attr->port_num;
@@ -99,9 +100,8 @@ int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 	    port_num > ARRAY_SIZE(dev->devr.ports))
 		return -EINVAL;
 
-	if (mlx5_ib_deth_sqpn_cap(dev)) {
-		if (MLX5_CAP_GEN(dev->mdev,
-				 port_type) == MLX5_CAP_PORT_TYPE_IB)
+	if (mlx5_ib_deth_sqpn_cap(mdev)) {
+		if (MLX5_CAP_GEN(mdev, port_type) == MLX5_CAP_PORT_TYPE_IB)
 			num_qps = pd->device->attrs.max_pkeys;
 		else if (dev->lag_active)
 			num_qps = dev->lag_ports;
@@ -272,7 +272,8 @@ static void setup_qp(struct mlx5_ib_gsi_qp *gsi, u16 qp_index)
 	u16 pkey;
 	int ret;
 
-	if (MLX5_CAP_GEN(dev->mdev,  port_type) != MLX5_CAP_PORT_TYPE_IB)
+	if (MLX5_CAP_GEN(qp_to_mdev(gsi->rx_qp), port_type) !=
+	    MLX5_CAP_PORT_TYPE_IB)
 		pkey_index = 0;
 
 	ret = ib_query_pkey(device, gsi->port_num, pkey_index, &pkey);

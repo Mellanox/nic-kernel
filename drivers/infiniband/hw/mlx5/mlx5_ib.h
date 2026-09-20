@@ -1698,7 +1698,9 @@ static inline void mlx5r_deref_wait_odp_mkey(struct mlx5_ib_mkey *mmkey)
 	wait_event(mmkey->wait, refcount_read(&mmkey->usecount) == 0);
 }
 
-static inline bool mlx5_ib_lag_should_assign_affinity(struct mlx5_ib_dev *dev)
+static inline bool
+mlx5_ib_lag_should_assign_affinity(struct mlx5_ib_dev *dev,
+				   struct mlx5_core_dev *mdev)
 {
 	/*
 	 * If the driver is in hash mode and the port_select_flow_table_bypass cap
@@ -1708,16 +1710,16 @@ static inline bool mlx5_ib_lag_should_assign_affinity(struct mlx5_ib_dev *dev)
 	 * the port affinity by default.
 	 */
 	if (dev->lag_active &&
-	    mlx5_lag_mode_is_hash(dev->mdev) &&
-	    MLX5_CAP_PORT_SELECTION(dev->mdev, port_select_flow_table_bypass))
+	    mlx5_lag_mode_is_hash(mdev) &&
+	    MLX5_CAP_PORT_SELECTION(mdev, port_select_flow_table_bypass))
 		return 0;
 
-	if (mlx5_lag_is_lacp_owner(dev->mdev) && !dev->lag_active)
+	if (mlx5_lag_is_lacp_owner(mdev) && !dev->lag_active)
 		return 0;
 
 	return dev->lag_active ||
-		(MLX5_CAP_GEN(dev->mdev, num_lag_ports) > 1 &&
-		 MLX5_CAP_GEN(dev->mdev, lag_tx_port_affinity));
+		(MLX5_CAP_GEN(mdev, num_lag_ports) > 1 &&
+		 MLX5_CAP_GEN(mdev, lag_tx_port_affinity));
 }
 
 static inline bool rt_supported(int ts_cap)
