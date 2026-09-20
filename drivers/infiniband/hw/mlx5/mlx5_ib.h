@@ -276,7 +276,6 @@ struct mlx5_ib_steering_anchor {
 
 struct mlx5_ib_pp {
 	u16 index;
-	struct mlx5_core_dev *mdev;
 };
 
 enum mlx5_ib_optional_counter_type {
@@ -1325,6 +1324,11 @@ static inline struct mlx5_core_dev *mr_to_mdev(struct mlx5_ib_mr *mr)
 static inline struct mlx5_core_dev *mw_to_mdev(struct ib_mw *ibmw)
 {
 	return pd_to_mdev(ibmw->pd);
+}
+
+static inline struct mlx5_core_dev *uctx_to_mdev(struct mlx5_ib_ucontext *uctx)
+{
+	return to_dev(uctx->ibucontext.device)->mdev;
 }
 
 static inline struct mlx5_ib_mw *to_mmw(struct ib_mw *ibmw)

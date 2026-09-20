@@ -209,6 +209,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DM_MAP_OP_ADDR)(
 {
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(
 		attrs, MLX5_IB_ATTR_DM_MAP_OP_ADDR_REQ_HANDLE);
+	struct mlx5_ib_ucontext *c = to_mucontext(uobj->context);
 	struct mlx5_ib_dev *dev = to_dev(uobj->context->device);
 	struct ib_dm *ibdm = uobj->object;
 	struct mlx5_ib_dm *mdm = to_mdm(ibdm);
@@ -227,7 +228,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DM_MAP_OP_ADDR)(
 	if (op >= BITS_PER_TYPE(u32))
 		return -EOPNOTSUPP;
 
-	if (!(MLX5_CAP_DEV_MEM(dev->mdev, memic_operations) & BIT(op)))
+	if (!(MLX5_CAP_DEV_MEM(uctx_to_mdev(c), memic_operations) & BIT(op)))
 		return -EOPNOTSUPP;
 
 	mutex_lock(&dm->ops_xa_lock);
@@ -363,7 +364,7 @@ static struct ib_dm *handle_alloc_dm_sw_icm(struct ib_ucontext *ctx,
 					    struct uverbs_attr_bundle *attrs,
 					    int type)
 {
-	struct mlx5_core_dev *mdev = to_dev(ctx->device)->mdev;
+	struct mlx5_core_dev *mdev = uctx_to_mdev(to_mucontext(ctx));
 	enum mlx5_sw_icm_type icm_type;
 	struct mlx5_ib_dm_icm *dm;
 	u64 act_size;
@@ -480,7 +481,7 @@ static int mlx5_dm_icm_dealloc(struct mlx5_ib_ucontext *ctx,
 			       struct mlx5_ib_dm_icm *dm)
 {
 	enum mlx5_sw_icm_type type = get_icm_type(dm->base.type);
-	struct mlx5_core_dev *mdev = to_dev(dm->base.ibdm.device)->mdev;
+	struct mlx5_core_dev *mdev = uctx_to_mdev(ctx);
 	int err;
 
 	err = mlx5_dm_sw_icm_dealloc(mdev, type, dm->base.size, ctx->devx_uid,

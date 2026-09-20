@@ -2244,7 +2244,8 @@ static int mlx5_ib_alloc_ucontext(struct ib_ucontext *uctx,
 		return -EINVAL;
 
 	if (req.flags & MLX5_IB_ALLOC_UCTX_DEVX) {
-		err = mlx5_ib_devx_create(dev, true, uctx->enabled_caps);
+		err = mlx5_ib_devx_create(dev, uctx_to_mdev(context), true,
+					  uctx->enabled_caps);
 		if (err < 0)
 			goto out_ctx;
 		context->devx_uid = err;
@@ -2346,7 +2347,7 @@ out_ucap:
 
 out_devx:
 	if (req.flags & MLX5_IB_ALLOC_UCTX_DEVX)
-		mlx5_ib_devx_destroy(dev, context->devx_uid);
+		mlx5_ib_devx_destroy(uctx_to_mdev(context), context->devx_uid);
 
 out_ctx:
 	return err;
@@ -2392,7 +2393,7 @@ static void mlx5_ib_dealloc_ucontext(struct ib_ucontext *ibcontext)
 		if (uctx_rdma_ctrl_is_enabled(ibcontext->enabled_caps))
 			mlx5_cmd_remove_privileged_uid(dev->mdev,
 						       context->devx_uid);
-		mlx5_ib_devx_destroy(dev, context->devx_uid);
+		mlx5_ib_devx_destroy(uctx_to_mdev(context), context->devx_uid);
 	}
 }
 
