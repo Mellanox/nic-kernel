@@ -323,7 +323,8 @@ struct mlx5_flow_handle *create_flow_rule_vport_sq(struct mlx5_ib_dev *dev,
 						   struct mlx5_ib_sq *sq,
 						   u32 port)
 {
-	struct mlx5_eswitch *esw = dev->mdev->priv.eswitch;
+	struct mlx5_core_dev *mdev = qp_to_mdev(sq->base.container_mibqp);
+	struct mlx5_eswitch *esw = mdev->priv.eswitch;
 	struct mlx5_eswitch_rep *rep;
 
 	if (!dev->is_rep || !port)

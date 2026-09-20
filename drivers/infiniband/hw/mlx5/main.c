@@ -2317,7 +2317,7 @@ uar_done:
 	context->lib_caps = req.lib_caps;
 	print_lib_caps(dev, context->lib_caps);
 
-	if (mlx5_ib_lag_should_assign_affinity(dev)) {
+	if (mlx5_ib_lag_should_assign_affinity(dev, dev->mdev)) {
 		u32 port = mlx5_core_native_port_num(dev->mdev) - 1;
 
 		atomic_set(&context->tx_port_affinity,
@@ -2850,7 +2850,7 @@ static int mlx5_ib_mcg_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 		return -EOPNOTSUPP;
 	}
 
-	err = mlx5_cmd_attach_mcg(dev->mdev, gid, ibqp->qp_num, uid);
+	err = mlx5_cmd_attach_mcg(qp_to_mdev(ibqp), gid, ibqp->qp_num, uid);
 	if (err)
 		mlx5_ib_warn(dev, "failed attaching QPN 0x%x, MGID %pI6\n",
 			     ibqp->qp_num, gid->raw);
@@ -2866,7 +2866,7 @@ static int mlx5_ib_mcg_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 
 	uid = ibqp->pd ?
 		to_mpd(ibqp->pd)->uid : 0;
-	err = mlx5_cmd_detach_mcg(dev->mdev, gid, ibqp->qp_num, uid);
+	err = mlx5_cmd_detach_mcg(qp_to_mdev(ibqp), gid, ibqp->qp_num, uid);
 	if (err)
 		mlx5_ib_warn(dev, "failed detaching QPN 0x%x, MGID %pI6\n",
 			     ibqp->qp_num, gid->raw);
