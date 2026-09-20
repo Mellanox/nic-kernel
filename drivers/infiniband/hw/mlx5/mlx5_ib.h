@@ -1288,6 +1288,29 @@ static inline struct mlx5_core_dev *__mlx5_ib_pd_to_mdev(struct mlx5_ib_pd *pd)
 		struct ib_pd * : __ib_pd_to_mdev, \
 		struct mlx5_ib_pd * : __mlx5_ib_pd_to_mdev)(pd)
 
+static inline struct mlx5_core_dev *__ibqp_to_mdev(struct ib_qp *ibqp)
+{
+	struct ib_pd *pd = ibqp->pd ?: to_dev(ibqp->device)->devr.p0;
+
+	return pd_to_mdev(pd);
+}
+
+static inline struct mlx5_core_dev *__mlx5_ibqp_to_mdev(struct mlx5_ib_qp *qp)
+{
+	return __ibqp_to_mdev(&qp->ibqp);
+}
+
+static inline struct mlx5_core_dev *__mqp_to_mdev(struct mlx5_core_qp *mqp)
+{
+	return __mlx5_ibqp_to_mdev(to_mibqp(mqp));
+}
+
+#define qp_to_mdev(q) \
+	_Generic((q), \
+		struct ib_qp * : __ibqp_to_mdev, \
+		struct mlx5_ib_qp * : __mlx5_ibqp_to_mdev, \
+		struct mlx5_core_qp * : __mqp_to_mdev)(q)
+
 static inline struct mlx5_core_dev *srq_to_mdev(struct mlx5_core_srq *msrq)
 {
 	return pd_to_mdev(to_mibsrq(msrq)->ibsrq.pd);
