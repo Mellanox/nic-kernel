@@ -20,7 +20,7 @@ void mlx5r_umr_resource_cleanup(struct mlx5_ib_dev *dev);
 int mlx5r_umr_init(struct mlx5_ib_dev *dev);
 void mlx5r_umr_cleanup(struct mlx5_ib_dev *dev);
 
-static inline bool mlx5r_umr_can_load_pas(struct mlx5_ib_dev *dev,
+static inline bool mlx5r_umr_can_load_pas(struct mlx5_core_dev *mdev,
 					  size_t length)
 {
 	/*
@@ -31,14 +31,14 @@ static inline bool mlx5r_umr_can_load_pas(struct mlx5_ib_dev *dev,
 	 * quirky hardware by just saying it can't use PAS lists with UMR at
 	 * all.
 	 */
-	if (MLX5_CAP_GEN(dev->mdev, umr_modify_entity_size_disabled))
+	if (MLX5_CAP_GEN(mdev, umr_modify_entity_size_disabled))
 		return false;
 
 	/*
 	 * length is the size of the MR in bytes when mlx5_ib_update_xlt() is
 	 * used.
 	 */
-	if (!MLX5_CAP_GEN(dev->mdev, umr_extended_translation_offset) &&
+	if (!MLX5_CAP_GEN(mdev, umr_extended_translation_offset) &&
 	    length >= MLX5_MAX_UMR_PAGES * PAGE_SIZE)
 		return false;
 	return true;
@@ -46,37 +46,37 @@ static inline bool mlx5r_umr_can_load_pas(struct mlx5_ib_dev *dev,
 
 /* Return subset of access_flags whose mkey fields can't be updated via UMR. */
 static inline unsigned int
-mlx5r_umr_get_unchangeable_access_flags(struct mlx5_ib_dev *dev,
+mlx5r_umr_get_unchangeable_access_flags(struct mlx5_core_dev *mdev,
 					unsigned int access_flags)
 {
 	unsigned int ret = access_flags & IB_ACCESS_UNORDERED;
 
 	if ((access_flags & IB_ACCESS_REMOTE_ATOMIC) &&
-	    MLX5_CAP_GEN(dev->mdev, atomic) &&
-	    MLX5_CAP_GEN(dev->mdev, umr_modify_atomic_disabled))
+	    MLX5_CAP_GEN(mdev, atomic) &&
+	    MLX5_CAP_GEN(mdev, umr_modify_atomic_disabled))
 		ret |= IB_ACCESS_REMOTE_ATOMIC;
 
 	if ((access_flags & IB_ACCESS_RELAXED_ORDERING) &&
-	    MLX5_CAP_GEN(dev->mdev, mkc_order_write_after_write_ro) &&
-	    !MLX5_CAP_GEN(dev->mdev, order_write_after_write_umr))
+	    MLX5_CAP_GEN(mdev, mkc_order_write_after_write_ro) &&
+	    !MLX5_CAP_GEN(mdev, order_write_after_write_umr))
 		ret |= IB_ACCESS_RELAXED_ORDERING;
 
 	if ((access_flags & IB_ACCESS_RELAXED_ORDERING) &&
-	    (MLX5_CAP_GEN(dev->mdev, pci_relaxed_ordered_read) ||
-	     MLX5_CAP_GEN(dev->mdev, relaxed_ordering_read_pci_enabled)) &&
-	    !MLX5_CAP_GEN(dev->mdev, pci_relaxed_ordered_read_umr))
+	    (MLX5_CAP_GEN(mdev, pci_relaxed_ordered_read) ||
+	     MLX5_CAP_GEN(mdev, relaxed_ordering_read_pci_enabled)) &&
+	    !MLX5_CAP_GEN(mdev, pci_relaxed_ordered_read_umr))
 		ret |= IB_ACCESS_RELAXED_ORDERING;
 
 	return ret;
 }
 
 /* true if an existing MR can be reconfigured to new access_flags using UMR. */
-static inline bool mlx5r_umr_can_reconfig(struct mlx5_ib_dev *dev,
+static inline bool mlx5r_umr_can_reconfig(struct mlx5_core_dev *mdev,
 					  unsigned int current_access_flags,
 					  unsigned int target_access_flags)
 {
 	return mlx5r_umr_get_unchangeable_access_flags(
-		dev, current_access_flags ^ target_access_flags) == 0;
+		mdev, current_access_flags ^ target_access_flags) == 0;
 }
 
 static inline u64 mlx5r_umr_get_xlt_octo(u64 bytes)

@@ -107,7 +107,7 @@ static u8 mlx5_imr_ksm_page_shift;
 static void populate_ksm(struct mlx5_ksm *pksm, size_t idx, size_t nentries,
 			struct mlx5_ib_mr *imr, int flags)
 {
-	struct mlx5_core_dev *mdev = mr_to_dev(imr)->mdev;
+	struct mlx5_core_dev *mdev = mr_to_mdev(imr);
 	struct mlx5_ksm *end = pksm + nentries;
 	u64 step = MLX5_CAP_ODP(mdev, mem_page_fault) ? mlx5_imr_mtt_size : 0;
 	__be32 key = MLX5_CAP_ODP(mdev, mem_page_fault) ?
@@ -254,7 +254,7 @@ static void destroy_unused_implicit_child_mr(struct mlx5_ib_mr *mr)
 		return;
 	}
 
-	if (MLX5_CAP_ODP(mr_to_dev(mr)->mdev, mem_page_fault))
+	if (MLX5_CAP_ODP(mr_to_mdev(mr), mem_page_fault))
 		xa_erase(&mr_to_dev(mr)->odp_mkeys,
 			 mlx5_base_mkey(mr->mmkey.key));
 	xa_unlock(&imr->implicit_children);
@@ -367,7 +367,8 @@ static void internal_fill_odp_caps(struct mlx5_ib_dev *dev)
 
 	memset(caps, 0, sizeof(*caps));
 
-	if (!MLX5_CAP_GEN(dev->mdev, pg) || !mlx5r_umr_can_load_pas(dev, 0))
+	if (!MLX5_CAP_GEN(dev->mdev, pg) ||
+	    !mlx5r_umr_can_load_pas(dev->mdev, 0))
 		return;
 
 	caps->general_caps = IB_ODP_SUPPORT;
@@ -425,7 +426,7 @@ static void internal_fill_odp_caps(struct mlx5_ib_dev *dev)
 	    !MLX5_CAP_GEN(dev->mdev, umr_indirect_mkey_disabled) &&
 	    mlx5_imr_ksm_entries != 0 &&
 	    !(mlx5_imr_ksm_page_shift >
-	      get_max_log_entity_size_cap(dev, MLX5_MKC_ACCESS_MODE_KSM)))
+	      get_max_log_entity_size_cap(dev->mdev, MLX5_MKC_ACCESS_MODE_KSM)))
 		caps->general_caps |= IB_ODP_SUPPORT_IMPLICIT;
 }
 
@@ -481,7 +482,7 @@ static struct mlx5_ib_mr *implicit_get_child_mr(struct mlx5_ib_mr *imr,
 	if (IS_ERR(odp))
 		return ERR_CAST(odp);
 
-	mr = mlx5_mr_cache_alloc(dev, imr->access_flags,
+	mr = mlx5_mr_cache_alloc(dev, mr_to_mdev(imr), imr->access_flags,
 				 MLX5_MKC_ACCESS_MODE_MTT,
 				 mlx5_imr_mtt_entries);
 	if (IS_ERR(mr)) {
@@ -529,7 +530,7 @@ static struct mlx5_ib_mr *implicit_get_child_mr(struct mlx5_ib_mr *imr,
 		goto out_lock;
 	}
 
-	if (MLX5_CAP_ODP(dev->mdev, mem_page_fault)) {
+	if (MLX5_CAP_ODP(mr_to_mdev(imr), mem_page_fault)) {
 		ret = xa_store(&dev->odp_mkeys, mlx5_base_mkey(mr->mmkey.key),
 			       &mr->mmkey, GFP_KERNEL);
 		if (xa_is_err(ret)) {
@@ -557,8 +558,7 @@ out_mr:
  * The null mkey is created with the properties to enable getting the page
  * fault for every time it is accessed and having all relevant access flags.
  */
-static int alloc_implicit_mr_null_mkey(struct mlx5_ib_dev *dev,
-				       struct mlx5_ib_mr *imr,
+static int alloc_implicit_mr_null_mkey(struct mlx5_ib_mr *imr,
 				       struct mlx5_ib_pd *pd)
 {
 	size_t inlen = MLX5_ST_SZ_BYTES(create_mkey_in) + 64;
@@ -579,7 +579,8 @@ static int alloc_implicit_mr_null_mkey(struct mlx5_ib_dev *dev,
 	MLX5_SET(mkc, mkc, rr, 1);
 	MLX5_SET(mkc, mkc, lw, 1);
 	MLX5_SET(mkc, mkc, lr, 1);
-	mlx5_core_mkey_set_ordering(dev->mdev, mkc, MLX5_MKEY_ORDER_RELAXED);
+	mlx5_core_mkey_set_ordering(mr_to_mdev(imr), mkc,
+				    MLX5_MKEY_ORDER_RELAXED);
 	MLX5_SET(mkc, mkc, free, 0);
 	MLX5_SET(mkc, mkc, umr_en, 0);
 	MLX5_SET(mkc, mkc, access_mode_1_0, MLX5_MKC_ACCESS_MODE_MTT);
@@ -591,7 +592,8 @@ static int alloc_implicit_mr_null_mkey(struct mlx5_ib_dev *dev,
 	MLX5_SET64(mkc, mkc, start_addr, 0);
 	MLX5_SET(mkc, mkc, qpn, 0xffffff);
 
-	err = mlx5_core_create_mkey(dev->mdev, &imr->null_mmkey.key, in, inlen);
+	err = mlx5_core_create_mkey(mr_to_mdev(imr), &imr->null_mmkey.key, in,
+				    inlen);
 	if (err)
 		goto free_in;
 
@@ -610,14 +612,16 @@ struct mlx5_ib_mr *mlx5_ib_alloc_implicit_mr(struct mlx5_ib_pd *pd,
 	struct mlx5_ib_mr *imr;
 	int err;
 
-	if (!mlx5r_umr_can_load_pas(dev, mlx5_imr_mtt_entries * PAGE_SIZE))
+	if (!mlx5r_umr_can_load_pas(pd_to_mdev(pd),
+				    mlx5_imr_mtt_entries * PAGE_SIZE))
 		return ERR_PTR(-EOPNOTSUPP);
 
 	umem_odp = ib_umem_odp_alloc_implicit(&dev->ib_dev, access_flags);
 	if (IS_ERR(umem_odp))
 		return ERR_CAST(umem_odp);
 
-	imr = mlx5_mr_cache_alloc(dev, access_flags, MLX5_MKC_ACCESS_MODE_KSM,
+	imr = mlx5_mr_cache_alloc(dev, pd_to_mdev(pd), access_flags,
+				  MLX5_MKC_ACCESS_MODE_KSM,
 				  mlx5_imr_ksm_entries);
 	if (IS_ERR(imr)) {
 		ib_umem_odp_release(umem_odp);
@@ -634,8 +638,8 @@ struct mlx5_ib_mr *mlx5_ib_alloc_implicit_mr(struct mlx5_ib_pd *pd,
 	imr->is_odp_implicit = true;
 	xa_init(&imr->implicit_children);
 
-	if (MLX5_CAP_ODP(dev->mdev, mem_page_fault)) {
-		err = alloc_implicit_mr_null_mkey(dev, imr, pd);
+	if (MLX5_CAP_ODP(pd_to_mdev(pd), mem_page_fault)) {
+		err = alloc_implicit_mr_null_mkey(imr, pd);
 		if (err)
 			goto out_mr;
 
@@ -684,7 +688,7 @@ void mlx5_ib_free_odp_mr(struct mlx5_ib_mr *mr)
 		xa_erase(&mr_to_dev(mr)->odp_mkeys,
 			 mlx5_base_mkey(mr->null_mmkey.key));
 
-		mlx5_core_destroy_mkey(mr_to_dev(mr)->mdev,
+		mlx5_core_destroy_mkey(mr_to_mdev(mr),
 				       mr->null_mmkey.key);
 	}
 }

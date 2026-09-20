@@ -2391,7 +2391,7 @@ static int devx_umem_reg_cmd_alloc(struct mlx5_ib_dev *dev,
 	MLX5_SET(umem, umem, page_offset,
 		 ib_umem_dma_offset(obj->umem, page_size));
 
-	if (mlx5_umem_needs_ats(dev, obj->umem, access))
+	if (mlx5_umem_needs_ats(dev->mdev, obj->umem, access))
 		MLX5_SET(umem, umem, ats, 1);
 
 	mlx5_ib_populate_pas(obj->umem, page_size, mtt,
