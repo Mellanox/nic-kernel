@@ -105,7 +105,6 @@ struct devx_async_event_file {
 };
 
 struct devx_umem {
-	struct mlx5_core_dev		*mdev;
 	struct ib_umem			*umem;
 	u32				dinlen;
 	u32				dinbox[MLX5_ST_SZ_DW(destroy_umem_in)];
@@ -123,17 +122,17 @@ devx_ufile2uctx(const struct uverbs_attr_bundle *attrs)
 	return to_mucontext(ib_uverbs_get_ucontext(attrs));
 }
 
-static int set_uctx_ucaps(struct mlx5_ib_dev *dev, u64 req_ucaps, u32 *cap)
+static int set_uctx_ucaps(struct mlx5_core_dev *mdev, u64 req_ucaps, u32 *cap)
 {
 	if (UCAP_ENABLED(req_ucaps, RDMA_UCAP_MLX5_CTRL_LOCAL)) {
-		if (MLX5_CAP_GEN(dev->mdev, uctx_cap) & MLX5_UCTX_CAP_RDMA_CTRL)
+		if (MLX5_CAP_GEN(mdev, uctx_cap) & MLX5_UCTX_CAP_RDMA_CTRL)
 			*cap |= MLX5_UCTX_CAP_RDMA_CTRL;
 		else
 			return -EOPNOTSUPP;
 	}
 
 	if (UCAP_ENABLED(req_ucaps, RDMA_UCAP_MLX5_CTRL_OTHER_VHCA)) {
-		if (MLX5_CAP_GEN(dev->mdev, uctx_cap) &
+		if (MLX5_CAP_GEN(mdev, uctx_cap) &
 		    MLX5_UCTX_CAP_RDMA_CTRL_OTHER_VHCA)
 			*cap |= MLX5_UCTX_CAP_RDMA_CTRL_OTHER_VHCA;
 		else
@@ -143,7 +142,8 @@ static int set_uctx_ucaps(struct mlx5_ib_dev *dev, u64 req_ucaps, u32 *cap)
 	return 0;
 }
 
-int mlx5_ib_devx_create(struct mlx5_ib_dev *dev, bool is_user, u64 req_ucaps)
+int mlx5_ib_devx_create(struct mlx5_ib_dev *dev, struct mlx5_core_dev *mdev,
+			bool is_user, u64 req_ucaps)
 {
 	u32 in[MLX5_ST_SZ_DW(create_uctx_in)] = {};
 	u32 out[MLX5_ST_SZ_DW(create_uctx_out)] = {};
@@ -153,22 +153,22 @@ int mlx5_ib_devx_create(struct mlx5_ib_dev *dev, bool is_user, u64 req_ucaps)
 	u32 cap = 0;
 
 	/* 0 means not supported */
-	if (!MLX5_CAP_GEN(dev->mdev, log_max_uctx))
+	if (!MLX5_CAP_GEN(mdev, log_max_uctx))
 		return -EINVAL;
 
 	uctx = MLX5_ADDR_OF(create_uctx_in, in, uctx);
 	if (is_user &&
-	    (MLX5_CAP_GEN(dev->mdev, uctx_cap) & MLX5_UCTX_CAP_RAW_TX) &&
+	    (MLX5_CAP_GEN(mdev, uctx_cap) & MLX5_UCTX_CAP_RAW_TX) &&
 	    rdma_dev_has_raw_cap(&dev->ib_dev))
 		cap |= MLX5_UCTX_CAP_RAW_TX;
 	if (is_user &&
-	    (MLX5_CAP_GEN(dev->mdev, uctx_cap) &
+	    (MLX5_CAP_GEN(mdev, uctx_cap) &
 	     MLX5_UCTX_CAP_INTERNAL_DEV_RES) &&
 	    capable(CAP_SYS_RAWIO))
 		cap |= MLX5_UCTX_CAP_INTERNAL_DEV_RES;
 
 	if (req_ucaps) {
-		err = set_uctx_ucaps(dev, req_ucaps, &cap);
+		err = set_uctx_ucaps(mdev, req_ucaps, &cap);
 		if (err)
 			return err;
 	}
@@ -176,7 +176,7 @@ int mlx5_ib_devx_create(struct mlx5_ib_dev *dev, bool is_user, u64 req_ucaps)
 	MLX5_SET(create_uctx_in, in, opcode, MLX5_CMD_OP_CREATE_UCTX);
 	MLX5_SET(uctx, uctx, cap, cap);
 
-	err = mlx5_cmd_exec(dev->mdev, in, sizeof(in), out, sizeof(out));
+	err = mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
 	if (err)
 		return err;
 
@@ -184,7 +184,7 @@ int mlx5_ib_devx_create(struct mlx5_ib_dev *dev, bool is_user, u64 req_ucaps)
 	return uid;
 }
 
-void mlx5_ib_devx_destroy(struct mlx5_ib_dev *dev, u16 uid)
+void mlx5_ib_devx_destroy(struct mlx5_core_dev *mdev, u16 uid)
 {
 	u32 in[MLX5_ST_SZ_DW(destroy_uctx_in)] = {};
 	u32 out[MLX5_ST_SZ_DW(destroy_uctx_out)] = {};
@@ -192,7 +192,7 @@ void mlx5_ib_devx_destroy(struct mlx5_ib_dev *dev, u16 uid)
 	MLX5_SET(destroy_uctx_in, in, opcode, MLX5_CMD_OP_DESTROY_UCTX);
 	MLX5_SET(destroy_uctx_in, in, uid, uid);
 
-	mlx5_cmd_exec(dev->mdev, in, sizeof(in), out, sizeof(out));
+	mlx5_cmd_exec(mdev, in, sizeof(in), out, sizeof(out));
 }
 
 static bool is_legacy_unaffiliated_event_num(u16 event_num)
@@ -631,10 +631,8 @@ static u64 devx_get_obj_id(const void *in)
 	return obj_id;
 }
 
-static bool devx_is_valid_obj_id(struct uverbs_attr_bundle *attrs,
-				 struct ib_uobject *uobj, const void *in)
+static bool devx_is_valid_obj_id(struct ib_uobject *uobj, const void *in)
 {
-	struct mlx5_ib_dev *dev = udata_to_dev(&attrs->driver_udata);
 	u64 obj_id = devx_get_obj_id(in);
 
 	if (!obj_id)
@@ -659,7 +657,7 @@ static bool devx_is_valid_obj_id(struct uverbs_attr_bundle *attrs,
 			opcode = MLX5_CMD_OP_CREATE_XRQ;
 			break;
 		default:
-			if (!dev->mdev->issi)
+			if (!srq_to_mdev(srq)->issi)
 				opcode = MLX5_CMD_OP_CREATE_SRQ;
 			else
 				opcode = MLX5_CMD_OP_CREATE_RMP;
@@ -992,12 +990,12 @@ static int devx_get_uid(struct mlx5_ib_ucontext *c, void *cmd_in)
 	return c->devx_uid;
 }
 
-static bool devx_is_general_cmd(void *in, struct mlx5_ib_dev *dev)
+static bool devx_is_general_cmd(void *in, struct mlx5_core_dev *mdev)
 {
 	u16 opcode = MLX5_GET(general_obj_in_cmd_hdr, in, opcode);
 
 	/* Pass all cmds for vhca_tunnel as general, tracking is done in FW */
-	if ((MLX5_CAP_GEN_64(dev->mdev, vhca_tunnel_commands) &&
+	if ((MLX5_CAP_GEN_64(mdev, vhca_tunnel_commands) &&
 	     MLX5_GET(general_obj_in_cmd_hdr, in, vhca_tunnel_id)) ||
 	    (opcode >= MLX5_CMD_OP_GENERAL_START &&
 	     opcode < MLX5_CMD_OP_GENERAL_END))
@@ -1031,7 +1029,6 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_QUERY_EQN)(
 	struct uverbs_attr_bundle *attrs)
 {
 	struct mlx5_ib_ucontext *c;
-	struct mlx5_ib_dev *dev;
 	int user_vector;
 	int dev_eqn;
 	int err;
@@ -1043,9 +1040,8 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_QUERY_EQN)(
 	c = devx_ufile2uctx(attrs);
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_dev(c->ibucontext.device);
 
-	err = mlx5_comp_eqn_get(dev->mdev, user_vector, &dev_eqn);
+	err = mlx5_comp_eqn_get(uctx_to_mdev(c), user_vector, &dev_eqn);
 	if (err < 0)
 		return err;
 
@@ -1108,7 +1104,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OTHER)(
 	struct uverbs_attr_bundle *attrs)
 {
 	struct mlx5_ib_ucontext *c;
-	struct mlx5_ib_dev *dev;
+	struct mlx5_core_dev *mdev;
 	void *cmd_in = uverbs_attr_get_alloced_ptr(
 		attrs, MLX5_IB_ATTR_DEVX_OTHER_CMD_IN);
 	int cmd_out_len = uverbs_attr_get_len(attrs,
@@ -1120,14 +1116,14 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OTHER)(
 	c = devx_ufile2uctx(attrs);
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_dev(c->ibucontext.device);
+	mdev = uctx_to_mdev(c);
 
 	uid = devx_get_uid(c, cmd_in);
 	if (uid < 0)
 		return uid;
 
 	/* Only white list of some general HCA commands are allowed for this method. */
-	if (!devx_is_general_cmd(cmd_in, dev))
+	if (!devx_is_general_cmd(cmd_in, mdev))
 		return -EINVAL;
 
 	cmd_out = uverbs_zalloc(attrs, cmd_out_len);
@@ -1135,7 +1131,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OTHER)(
 		return PTR_ERR(cmd_out);
 
 	MLX5_SET(general_obj_in_cmd_hdr, cmd_in, uid, uid);
-	err = mlx5_cmd_do(dev->mdev, cmd_in,
+	err = mlx5_cmd_do(mdev, cmd_in,
 			  uverbs_attr_get_len(attrs, MLX5_IB_ATTR_DEVX_OTHER_CMD_IN),
 			  cmd_out, cmd_out_len);
 	if (err && err != -EREMOTEIO)
@@ -1448,6 +1444,8 @@ static int devx_obj_cleanup(struct ib_uobject *uobject,
 			    enum rdma_remove_reason why,
 			    struct uverbs_attr_bundle *attrs)
 {
+	struct mlx5_core_dev *mdev =
+		uctx_to_mdev(to_mucontext(uobject->context));
 	u32 out[MLX5_ST_SZ_DW(general_obj_out_cmd_hdr)];
 	struct mlx5_devx_event_table *devx_event_table;
 	struct devx_obj *obj = uobject->object;
@@ -1469,12 +1467,12 @@ static int devx_obj_cleanup(struct ib_uobject *uobject,
 	if (obj->flags & DEVX_OBJ_FLAGS_HW_FREED)
 		ret = 0;
 	else if (obj->flags & DEVX_OBJ_FLAGS_DCT)
-		ret = mlx5_core_destroy_dct(obj->ib_dev, obj->ib_dev->mdev,
+		ret = mlx5_core_destroy_dct(obj->ib_dev, mdev,
 					    &obj->core_dct);
 	else if (obj->flags & DEVX_OBJ_FLAGS_CQ)
-		ret = mlx5_core_destroy_cq(obj->ib_dev->mdev, &obj->core_cq);
+		ret = mlx5_core_destroy_cq(mdev, &obj->core_cq);
 	else
-		ret = mlx5_cmd_exec(obj->ib_dev->mdev, obj->dinbox,
+		ret = mlx5_cmd_exec(mdev, obj->dinbox,
 				    obj->dinlen, out, sizeof(out));
 	if (ret)
 		return ret;
@@ -1513,9 +1511,9 @@ out:
 	rcu_read_unlock();
 }
 
-static bool is_apu_cq(struct mlx5_ib_dev *dev, const void *in)
+static bool is_apu_cq(struct mlx5_core_dev *mdev, const void *in)
 {
-	if (!MLX5_CAP_GEN(dev->mdev, apu) ||
+	if (!MLX5_CAP_GEN(mdev, apu) ||
 	    !MLX5_GET(cqc, MLX5_ADDR_OF(create_cq_in, in, cq_context), apu_cq))
 		return false;
 
@@ -1536,6 +1534,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_CREATE)(
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
 	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
+	struct mlx5_core_dev *mdev = uctx_to_mdev(c);
 	u32 out[MLX5_ST_SZ_DW(general_obj_out_cmd_hdr)];
 	struct devx_obj *obj;
 	u16 obj_type = 0;
@@ -1573,18 +1572,18 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_CREATE)(
 
 	if (opcode == MLX5_CMD_OP_CREATE_DCT) {
 		obj->flags |= DEVX_OBJ_FLAGS_DCT;
-		err = mlx5_core_create_dct(dev, dev->mdev, &obj->core_dct,
+		err = mlx5_core_create_dct(dev, mdev, &obj->core_dct,
 					   cmd_in, cmd_in_len, cmd_out,
 					   cmd_out_len);
 	} else if (opcode == MLX5_CMD_OP_CREATE_CQ &&
-		   !is_apu_cq(dev, cmd_in)) {
+		   !is_apu_cq(mdev, cmd_in)) {
 		obj->flags |= DEVX_OBJ_FLAGS_CQ;
 		obj->core_cq.comp = devx_cq_comp;
-		err = mlx5_create_cq(dev->mdev, &obj->core_cq,
+		err = mlx5_create_cq(mdev, &obj->core_cq,
 				     cmd_in, cmd_in_len, cmd_out,
 				     cmd_out_len);
 	} else {
-		err = mlx5_cmd_do(dev->mdev, cmd_in, cmd_in_len,
+		err = mlx5_cmd_do(mdev, cmd_in, cmd_in_len,
 				  cmd_out, cmd_out_len);
 	}
 
@@ -1633,12 +1632,11 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_CREATE)(
 
 obj_destroy:
 	if (obj->flags & DEVX_OBJ_FLAGS_DCT)
-		mlx5_core_destroy_dct(obj->ib_dev, obj->ib_dev->mdev,
-				      &obj->core_dct);
+		mlx5_core_destroy_dct(obj->ib_dev, mdev, &obj->core_dct);
 	else if (obj->flags & DEVX_OBJ_FLAGS_CQ)
-		mlx5_core_destroy_cq(obj->ib_dev->mdev, &obj->core_cq);
+		mlx5_core_destroy_cq(mdev, &obj->core_cq);
 	else
-		mlx5_cmd_exec(obj->ib_dev->mdev, obj->dinbox, obj->dinlen, out,
+		mlx5_cmd_exec(mdev, obj->dinbox, obj->dinlen, out,
 			      sizeof(out));
 obj_free:
 	kfree(obj);
@@ -1655,7 +1653,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_MODIFY)(
 							  MLX5_IB_ATTR_DEVX_OBJ_MODIFY_HANDLE);
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
-	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
+	struct mlx5_core_dev *mdev = uctx_to_mdev(c);
 	void *cmd_out;
 	int err, err2;
 	int uid;
@@ -1670,7 +1668,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_MODIFY)(
 	if (!devx_is_obj_modify_cmd(cmd_in))
 		return -EINVAL;
 
-	if (!devx_is_valid_obj_id(attrs, uobj, cmd_in))
+	if (!devx_is_valid_obj_id(uobj, cmd_in))
 		return -EINVAL;
 
 	cmd_out = uverbs_zalloc(attrs, cmd_out_len);
@@ -1680,7 +1678,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_MODIFY)(
 	MLX5_SET(general_obj_in_cmd_hdr, cmd_in, uid, uid);
 	devx_set_umem_valid(cmd_in);
 
-	err = mlx5_cmd_do(dev->mdev, cmd_in,
+	err = mlx5_cmd_do(mdev, cmd_in,
 			  uverbs_attr_get_len(attrs, MLX5_IB_ATTR_DEVX_OBJ_MODIFY_CMD_IN),
 			  cmd_out, cmd_out_len);
 	if (err && err != -EREMOTEIO)
@@ -1705,7 +1703,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_QUERY)(
 	void *cmd_out;
 	int err, err2;
 	int uid;
-	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
+	struct mlx5_core_dev *mdev = uctx_to_mdev(c);
 
 	if (MLX5_GET(general_obj_in_cmd_hdr, cmd_in, vhca_tunnel_id))
 		return -EINVAL;
@@ -1717,7 +1715,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_QUERY)(
 	if (!devx_is_obj_query_cmd(cmd_in))
 		return -EINVAL;
 
-	if (!devx_is_valid_obj_id(attrs, uobj, cmd_in))
+	if (!devx_is_valid_obj_id(uobj, cmd_in))
 		return -EINVAL;
 
 	cmd_out = uverbs_zalloc(attrs, cmd_out_len);
@@ -1725,7 +1723,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_QUERY)(
 		return PTR_ERR(cmd_out);
 
 	MLX5_SET(general_obj_in_cmd_hdr, cmd_in, uid, uid);
-	err = mlx5_cmd_do(dev->mdev, cmd_in,
+	err = mlx5_cmd_do(mdev, cmd_in,
 			  uverbs_attr_get_len(attrs, MLX5_IB_ATTR_DEVX_OBJ_QUERY_CMD_IN),
 			  cmd_out, cmd_out_len);
 	if (err && err != -EREMOTEIO)
@@ -1767,12 +1765,14 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_ASYNC_CMD_FD_ALLOC)(
 
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(
 		attrs, MLX5_IB_ATTR_DEVX_ASYNC_CMD_FD_ALLOC_HANDLE);
-	struct mlx5_ib_dev *dev = udata_to_dev(&attrs->driver_udata);
+	struct mlx5_ib_ucontext *c =
+		rdma_udata_to_drv_context(&attrs->driver_udata,
+					  struct mlx5_ib_ucontext, ibucontext);
 
 	ev_file = container_of(uobj, struct devx_async_cmd_event_file,
 			       uobj);
 	devx_init_event_queue(&ev_file->ev_queue);
-	mlx5_cmd_init_async_ctx(dev->mdev, &ev_file->async_ctx);
+	mlx5_cmd_init_async_ctx(uctx_to_mdev(c), &ev_file->async_ctx);
 	return 0;
 }
 
@@ -1863,7 +1863,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_ASYNC_QUERY)(
 	if (err)
 		return err;
 
-	if (!devx_is_valid_obj_id(attrs, uobj, cmd_in))
+	if (!devx_is_valid_obj_id(uobj, cmd_in))
 		return -EINVAL;
 
 	fd_uobj = uverbs_attr_get_uobject(attrs,
@@ -2148,7 +2148,8 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_SUBSCRIBE_EVENT)(
 	event_type_num_list = uverbs_attr_get_alloced_ptr(attrs,
 			MLX5_IB_ATTR_DEVX_SUBSCRIBE_EVENT_TYPE_NUM_LIST);
 
-	if (!is_valid_events(dev->mdev, num_events, event_type_num_list, obj))
+	if (!is_valid_events(uctx_to_mdev(c), num_events, event_type_num_list,
+			     obj))
 		return -EINVAL;
 
 	INIT_LIST_HEAD(&sub_list);
@@ -2333,7 +2334,7 @@ static unsigned int devx_umem_find_best_pgsize(struct ib_umem *umem,
 	return page_size;
 }
 
-static int devx_umem_reg_cmd_alloc(struct mlx5_ib_dev *dev,
+static int devx_umem_reg_cmd_alloc(struct mlx5_core_dev *mdev,
 				   struct uverbs_attr_bundle *attrs,
 				   struct devx_umem *obj,
 				   struct devx_umem_reg_cmd *cmd,
@@ -2391,7 +2392,7 @@ static int devx_umem_reg_cmd_alloc(struct mlx5_ib_dev *dev,
 	MLX5_SET(umem, umem, page_offset,
 		 ib_umem_dma_offset(obj->umem, page_size));
 
-	if (mlx5_umem_needs_ats(dev->mdev, obj->umem, access))
+	if (mlx5_umem_needs_ats(mdev, obj->umem, access))
 		MLX5_SET(umem, umem, ats, 1);
 
 	mlx5_ib_populate_pas(obj->umem, page_size, mtt,
@@ -2411,6 +2412,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_UMEM_REG)(
 	struct mlx5_ib_ucontext *c = rdma_udata_to_drv_context(
 		&attrs->driver_udata, struct mlx5_ib_ucontext, ibucontext);
 	struct mlx5_ib_dev *dev = to_dev(c->ibucontext.device);
+	struct mlx5_core_dev *mdev = uctx_to_mdev(c);
 	int access_flags;
 	int err;
 
@@ -2434,17 +2436,16 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_UMEM_REG)(
 	if (err)
 		goto err_obj_free;
 
-	err = devx_umem_reg_cmd_alloc(dev, attrs, obj, &cmd, access_flags);
+	err = devx_umem_reg_cmd_alloc(mdev, attrs, obj, &cmd, access_flags);
 	if (err)
 		goto err_umem_release;
 
 	MLX5_SET(create_umem_in, cmd.in, uid, c->devx_uid);
-	err = mlx5_cmd_exec(dev->mdev, cmd.in, cmd.inlen, cmd.out,
+	err = mlx5_cmd_exec(mdev, cmd.in, cmd.inlen, cmd.out,
 			    sizeof(cmd.out));
 	if (err)
 		goto err_umem_release;
 
-	obj->mdev = dev->mdev;
 	uobj->object = obj;
 	devx_obj_build_destroy_cmd(cmd.in, cmd.out, obj->dinbox, &obj->dinlen, &obj_id);
 	uverbs_finalize_uobj_create(attrs, MLX5_IB_ATTR_DEVX_UMEM_REG_HANDLE);
@@ -2464,11 +2465,13 @@ static int devx_umem_cleanup(struct ib_uobject *uobject,
 			     enum rdma_remove_reason why,
 			     struct uverbs_attr_bundle *attrs)
 {
+	struct mlx5_core_dev *mdev =
+		uctx_to_mdev(to_mucontext(uobject->context));
 	struct devx_umem *obj = uobject->object;
 	u32 out[MLX5_ST_SZ_DW(general_obj_out_cmd_hdr)];
 	int err;
 
-	err = mlx5_cmd_exec(obj->mdev, obj->dinbox, obj->dinlen, out, sizeof(out));
+	err = mlx5_cmd_exec(mdev, obj->dinbox, obj->dinlen, out, sizeof(out));
 	if (err)
 		return err;
 
@@ -2654,7 +2657,7 @@ int mlx5_ib_devx_init(struct mlx5_ib_dev *dev)
 	struct mlx5_devx_event_table *table = &dev->devx_event_table;
 	int uid;
 
-	uid = mlx5_ib_devx_create(dev, false, 0);
+	uid = mlx5_ib_devx_create(dev, dev->mdev, false, 0);
 	if (uid > 0) {
 		dev->devx_whitelist_uid = uid;
 		xa_init(&table->event_xa);
@@ -2687,7 +2690,7 @@ void mlx5_ib_devx_cleanup(struct mlx5_ib_dev *dev)
 		mutex_unlock(&dev->devx_event_table.event_xa_lock);
 		xa_destroy(&table->event_xa);
 
-		mlx5_ib_devx_destroy(dev, dev->devx_whitelist_uid);
+		mlx5_ib_devx_destroy(dev->mdev, dev->devx_whitelist_uid);
 	}
 }
 
