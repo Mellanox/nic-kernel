@@ -3506,7 +3506,7 @@ static int ib_to_mlx5_rate_map(u8 rate)
 	return 0;
 }
 
-int mlx5r_ib_rate(struct mlx5_ib_dev *dev, u8 rate)
+int mlx5r_ib_rate(struct mlx5_core_dev *mdev, u8 rate)
 {
 	u32 stat_rate_support;
 
@@ -3517,7 +3517,7 @@ int mlx5r_ib_rate(struct mlx5_ib_dev *dev, u8 rate)
 	if (rate < IB_RATE_2_5_GBPS || rate > IB_RATE_1600_GBPS)
 		return -EINVAL;
 
-	stat_rate_support = MLX5_CAP_GEN(dev->mdev, stat_rate_support);
+	stat_rate_support = MLX5_CAP_GEN(mdev, stat_rate_support);
 	while (rate != IB_RATE_PORT_CURRENT &&
 	       !(1 << ib_to_mlx5_rate_map(rate) & stat_rate_support))
 		--rate;
@@ -3596,6 +3596,7 @@ static int mlx5_set_path(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 			 int attr_mask, u32 path_flags,
 			 const struct ib_qp_attr *attr, bool alt)
 {
+	struct mlx5_core_dev *mdev = qp_to_mdev(qp);
 	const struct ib_global_route *grh = rdma_ah_read_grh(ah);
 	int err;
 	enum ib_gid_type gid_type;
@@ -3656,7 +3657,7 @@ static int mlx5_set_path(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 		       sizeof(grh->dgid.raw));
 	}
 
-	err = mlx5r_ib_rate(dev, rdma_ah_get_static_rate(ah));
+	err = mlx5r_ib_rate(mdev, rdma_ah_get_static_rate(ah));
 	if (err < 0)
 		return err;
 	MLX5_SET(ads, path, stat_rate, err);
