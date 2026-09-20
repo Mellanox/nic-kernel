@@ -1469,7 +1469,8 @@ static int devx_obj_cleanup(struct ib_uobject *uobject,
 	if (obj->flags & DEVX_OBJ_FLAGS_HW_FREED)
 		ret = 0;
 	else if (obj->flags & DEVX_OBJ_FLAGS_DCT)
-		ret = mlx5_core_destroy_dct(obj->ib_dev, &obj->core_dct);
+		ret = mlx5_core_destroy_dct(obj->ib_dev, obj->ib_dev->mdev,
+					    &obj->core_dct);
 	else if (obj->flags & DEVX_OBJ_FLAGS_CQ)
 		ret = mlx5_core_destroy_cq(obj->ib_dev->mdev, &obj->core_cq);
 	else
@@ -1572,8 +1573,9 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_CREATE)(
 
 	if (opcode == MLX5_CMD_OP_CREATE_DCT) {
 		obj->flags |= DEVX_OBJ_FLAGS_DCT;
-		err = mlx5_core_create_dct(dev, &obj->core_dct, cmd_in,
-					   cmd_in_len, cmd_out, cmd_out_len);
+		err = mlx5_core_create_dct(dev, dev->mdev, &obj->core_dct,
+					   cmd_in, cmd_in_len, cmd_out,
+					   cmd_out_len);
 	} else if (opcode == MLX5_CMD_OP_CREATE_CQ &&
 		   !is_apu_cq(dev, cmd_in)) {
 		obj->flags |= DEVX_OBJ_FLAGS_CQ;
@@ -1631,7 +1633,8 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_OBJ_CREATE)(
 
 obj_destroy:
 	if (obj->flags & DEVX_OBJ_FLAGS_DCT)
-		mlx5_core_destroy_dct(obj->ib_dev, &obj->core_dct);
+		mlx5_core_destroy_dct(obj->ib_dev, obj->ib_dev->mdev,
+				      &obj->core_dct);
 	else if (obj->flags & DEVX_OBJ_FLAGS_CQ)
 		mlx5_core_destroy_cq(obj->ib_dev->mdev, &obj->core_cq);
 	else
