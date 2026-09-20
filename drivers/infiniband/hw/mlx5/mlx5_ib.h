@@ -1559,7 +1559,7 @@ int mlx5_ib_get_vf_guid(struct ib_device *device, int vf, u32 port,
 int mlx5_ib_set_vf_guid(struct ib_device *device, int vf, u32 port,
 			u64 guid, int type);
 
-__be16 mlx5_get_roce_udp_sport_min(const struct mlx5_ib_dev *dev,
+__be16 mlx5_get_roce_udp_sport_min(const struct mlx5_core_dev *mdev,
 				   const struct ib_gid_attr *attr);
 
 void mlx5_ib_cleanup_cong_debugfs(struct mlx5_ib_dev *dev, u32 port_num);

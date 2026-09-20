@@ -32,8 +32,8 @@
 
 #include "mlx5_ib.h"
 
-static __be16 mlx5_ah_get_udp_sport(const struct mlx5_ib_dev *dev,
-				  const struct rdma_ah_attr *ah_attr)
+static __be16 mlx5_ah_get_udp_sport(struct mlx5_core_dev *mdev,
+				    const struct rdma_ah_attr *ah_attr)
 {
 	enum ib_gid_type gid_type = ah_attr->grh.sgid_attr->gid_type;
 	__be16 sport;
@@ -44,15 +44,16 @@ static __be16 mlx5_ah_get_udp_sport(const struct mlx5_ib_dev *dev,
 		sport = cpu_to_be16(
 			rdma_flow_label_to_udp_sport(ah_attr->grh.flow_label));
 	else
-		sport = mlx5_get_roce_udp_sport_min(dev,
+		sport = mlx5_get_roce_udp_sport_min(mdev,
 						    ah_attr->grh.sgid_attr);
 
 	return sport;
 }
 
-static int create_ib_ah(struct mlx5_ib_dev *dev, struct mlx5_ib_ah *ah,
-			 struct rdma_ah_init_attr *init_attr)
+static int create_ib_ah(struct mlx5_ib_ah *ah,
+			struct rdma_ah_init_attr *init_attr)
 {
+	struct mlx5_core_dev *mdev = pd_to_mdev(ah->ibah.pd);
 	struct rdma_ah_attr *ah_attr = init_attr->ah_attr;
 	enum ib_gid_type gid_type;
 	int rate_val;
@@ -68,7 +69,7 @@ static int create_ib_ah(struct mlx5_ib_dev *dev, struct mlx5_ib_ah *ah,
 		ah->av.tclass = grh->traffic_class;
 	}
 
-	rate_val = mlx5r_ib_rate(dev, rdma_ah_get_static_rate(ah_attr));
+	rate_val = mlx5r_ib_rate(mdev, rdma_ah_get_static_rate(ah_attr));
 	if (rate_val < 0)
 		return rate_val;
 	ah->av.stat_rate_sl = rate_val << 4;
@@ -76,13 +77,13 @@ static int create_ib_ah(struct mlx5_ib_dev *dev, struct mlx5_ib_ah *ah,
 	if (ah_attr->type == RDMA_AH_ATTR_TYPE_ROCE) {
 		if (init_attr->xmit_slave)
 			ah->xmit_port =
-				mlx5_lag_get_slave_port(dev->mdev,
+				mlx5_lag_get_slave_port(mdev,
 							init_attr->xmit_slave);
 		gid_type = ah_attr->grh.sgid_attr->gid_type;
 
 		memcpy(ah->av.rmac, ah_attr->roce.dmac,
 		       sizeof(ah_attr->roce.dmac));
-		ah->av.udp_sport = mlx5_ah_get_udp_sport(dev, ah_attr);
+		ah->av.udp_sport = mlx5_ah_get_udp_sport(mdev, ah_attr);
 		ah->av.stat_rate_sl |= (rdma_ah_get_sl(ah_attr) & 0x7) << 1;
 		if (gid_type == IB_GID_TYPE_ROCE_UDP_ENCAP)
 #define MLX5_ECN_ENABLED BIT(1)
@@ -102,7 +103,6 @@ int mlx5_ib_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr,
 {
 	struct rdma_ah_attr *ah_attr = init_attr->ah_attr;
 	struct mlx5_ib_ah *ah = to_mah(ibah);
-	struct mlx5_ib_dev *dev = to_dev(ibah->device);
 	enum rdma_ah_attr_type ah_type = ah_attr->type;
 
 	if ((ah_type == RDMA_AH_ATTR_TYPE_ROCE) &&
@@ -126,7 +126,7 @@ int mlx5_ib_create_ah(struct ib_ah *ibah, struct rdma_ah_init_attr *init_attr,
 			return err;
 	}
 
-	return create_ib_ah(dev, ah, init_attr);
+	return create_ib_ah(ah, init_attr);
 }
 
 int mlx5_ib_query_ah(struct ib_ah *ibah, struct rdma_ah_attr *ah_attr)

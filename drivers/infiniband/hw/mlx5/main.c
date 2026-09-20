@@ -705,13 +705,13 @@ static int mlx5_ib_del_gid(const struct ib_gid_attr *attr,
 	return 0;
 }
 
-__be16 mlx5_get_roce_udp_sport_min(const struct mlx5_ib_dev *dev,
+__be16 mlx5_get_roce_udp_sport_min(const struct mlx5_core_dev *mdev,
 				   const struct ib_gid_attr *attr)
 {
 	if (attr->gid_type != IB_GID_TYPE_ROCE_UDP_ENCAP)
 		return 0;
 
-	return cpu_to_be16(MLX5_CAP_ROCE(dev->mdev, r_roce_min_src_udp_port));
+	return cpu_to_be16(MLX5_CAP_ROCE(mdev, r_roce_min_src_udp_port));
 }
 
 static int mlx5_use_mad_ifc(struct mlx5_ib_dev *dev)
