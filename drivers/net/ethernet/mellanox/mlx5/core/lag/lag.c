@@ -1640,9 +1640,20 @@ void mlx5_lag_reset_vports_speed(struct mlx5_lag *ldev)
 			continue;
 		}
 
+		if (!speed) {
+			ret = mlx5_port_max_linkspeed(mdev, &speed);
+			if (ret) {
+				mlx5_core_dbg(mdev,
+					      "Failed to reset vports speed for device %s. Max speed is not available (err=%d)\n",
+					      dev_name(mdev->device), ret);
+				continue;
+			}
+		}
+
 		pci_bw = mlx5_pcie_bandwidth(mdev);
 		if (pci_bw)
 			speed = min(speed, pci_bw);
+
 		speed = speed / MLX5_MAX_TX_SPEED_UNIT;
 		mlx5_lag_modify_device_vports_speed(mdev, speed);
 	}
