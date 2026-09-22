@@ -1673,15 +1673,16 @@ static inline int get_srq_user_index(struct mlx5_ib_ucontext *ucontext,
 	return verify_assign_uidx(cqe_version, ucmd->uidx, user_index);
 }
 
-static inline int get_uars_per_sys_page(struct mlx5_ib_dev *dev, bool lib_support)
+static inline int get_uars_per_sys_page(struct mlx5_core_dev *mdev,
+					bool lib_support)
 {
-	return lib_support && MLX5_CAP_GEN(dev->mdev, uar_4k) ?
+	return lib_support && MLX5_CAP_GEN(mdev, uar_4k) ?
 				MLX5_UARS_IN_PAGE : 1;
 }
 
 extern void *xlt_emergency_page;
 
-int bfregn_to_uar_index(struct mlx5_ib_dev *dev,
+int bfregn_to_uar_index(struct mlx5_core_dev *mdev,
 			struct mlx5_bfreg_info *bfregi, u32 bfregn,
 			bool dyn_bfreg);
 

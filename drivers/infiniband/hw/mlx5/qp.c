@@ -715,40 +715,43 @@ enum {
 	NUM_NON_BLUE_FLAME_BFREGS = 1,
 };
 
-static int max_bfregs(struct mlx5_ib_dev *dev, struct mlx5_bfreg_info *bfregi)
+static int max_bfregs(struct mlx5_core_dev *mdev,
+		      struct mlx5_bfreg_info *bfregi)
 {
-	return get_uars_per_sys_page(dev, bfregi->lib_uar_4k) *
+	return get_uars_per_sys_page(mdev, bfregi->lib_uar_4k) *
 	       bfregi->num_static_sys_pages * MLX5_NON_FP_BFREGS_PER_UAR;
 }
 
-static int num_med_bfreg(struct mlx5_ib_dev *dev,
+static int num_med_bfreg(struct mlx5_core_dev *mdev,
 			 struct mlx5_bfreg_info *bfregi)
 {
-	return max(0, max_bfregs(dev, bfregi) - bfregi->num_low_latency_bfregs -
+	return max(0, max_bfregs(mdev, bfregi) -
+			      bfregi->num_low_latency_bfregs -
 			      NUM_NON_BLUE_FLAME_BFREGS);
 }
 
-static int first_med_bfreg(struct mlx5_ib_dev *dev,
+static int first_med_bfreg(struct mlx5_core_dev *mdev,
 			   struct mlx5_bfreg_info *bfregi)
 {
-	return num_med_bfreg(dev, bfregi) ? 1 : -ENOMEM;
+	return num_med_bfreg(mdev, bfregi) ? 1 : -ENOMEM;
 }
 
-static int first_hi_bfreg(struct mlx5_ib_dev *dev,
+static int first_hi_bfreg(struct mlx5_core_dev *mdev,
 			  struct mlx5_bfreg_info *bfregi)
 {
 	int med;
 
-	med = num_med_bfreg(dev, bfregi);
+	med = num_med_bfreg(mdev, bfregi);
 	return ++med;
 }
 
-static int alloc_high_class_bfreg(struct mlx5_ib_dev *dev,
+static int alloc_high_class_bfreg(struct mlx5_core_dev *mdev,
 				  struct mlx5_bfreg_info *bfregi)
 {
 	int i;
 
-	for (i = first_hi_bfreg(dev, bfregi); i < max_bfregs(dev, bfregi); i++) {
+	for (i = first_hi_bfreg(mdev, bfregi); i < max_bfregs(mdev, bfregi);
+	     i++) {
 		if (!bfregi->count[i]) {
 			bfregi->count[i]++;
 			return i;
@@ -758,16 +761,16 @@ static int alloc_high_class_bfreg(struct mlx5_ib_dev *dev,
 	return -ENOMEM;
 }
 
-static int alloc_med_class_bfreg(struct mlx5_ib_dev *dev,
+static int alloc_med_class_bfreg(struct mlx5_core_dev *mdev,
 				 struct mlx5_bfreg_info *bfregi)
 {
-	int minidx = first_med_bfreg(dev, bfregi);
+	int minidx = first_med_bfreg(mdev, bfregi);
 	int i;
 
 	if (minidx < 0)
 		return minidx;
 
-	for (i = minidx; i < first_hi_bfreg(dev, bfregi); i++) {
+	for (i = minidx; i < first_hi_bfreg(mdev, bfregi); i++) {
 		if (bfregi->count[i] < bfregi->count[minidx])
 			minidx = i;
 		if (!bfregi->count[minidx])
@@ -778,7 +781,7 @@ static int alloc_med_class_bfreg(struct mlx5_ib_dev *dev,
 	return minidx;
 }
 
-static int alloc_bfreg(struct mlx5_ib_dev *dev,
+static int alloc_bfreg(struct mlx5_core_dev *mdev,
 		       struct mlx5_bfreg_info *bfregi)
 {
 	int bfregn = -ENOMEM;
@@ -788,9 +791,9 @@ static int alloc_bfreg(struct mlx5_ib_dev *dev,
 
 	mutex_lock(&bfregi->lock);
 	if (bfregi->ver >= 2) {
-		bfregn = alloc_high_class_bfreg(dev, bfregi);
+		bfregn = alloc_high_class_bfreg(mdev, bfregi);
 		if (bfregn < 0)
-			bfregn = alloc_med_class_bfreg(dev, bfregi);
+			bfregn = alloc_med_class_bfreg(mdev, bfregi);
 	}
 
 	if (bfregn < 0) {
@@ -846,7 +849,7 @@ static void mlx5_ib_lock_cqs(struct mlx5_ib_cq *send_cq,
 static void mlx5_ib_unlock_cqs(struct mlx5_ib_cq *send_cq,
 			       struct mlx5_ib_cq *recv_cq);
 
-int bfregn_to_uar_index(struct mlx5_ib_dev *dev,
+int bfregn_to_uar_index(struct mlx5_core_dev *mdev,
 			struct mlx5_bfreg_info *bfregi, u32 bfregn,
 			bool dyn_bfreg)
 {
@@ -857,7 +860,7 @@ int bfregn_to_uar_index(struct mlx5_ib_dev *dev,
 	if (bfregi->lib_uar_dyn)
 		return -EINVAL;
 
-	bfregs_per_sys_page = get_uars_per_sys_page(dev, bfregi->lib_uar_4k) *
+	bfregs_per_sys_page = get_uars_per_sys_page(mdev, bfregi->lib_uar_4k) *
 				MLX5_NON_FP_BFREGS_PER_UAR;
 	index_of_sys_page = bfregn / bfregs_per_sys_page;
 
@@ -869,7 +872,7 @@ int bfregn_to_uar_index(struct mlx5_ib_dev *dev,
 
 		if (bfregn > bfregi->num_dyn_bfregs ||
 		    bfregi->sys_pages[index_of_sys_page] == MLX5_IB_INVALID_UAR_INDEX) {
-			mlx5_ib_dbg(dev, "Invalid dynamic uar index\n");
+			dev_dbg(mdev->device, "Invalid dynamic uar index\n");
 			return -EINVAL;
 		}
 	}
@@ -994,7 +997,8 @@ static int _create_user_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 		bfregn = MLX5_IB_INVALID_BFREG;
 		break;
 	case MLX5_QP_FLAG_BFREG_INDEX:
-		uar_index = bfregn_to_uar_index(dev, &context->bfregi,
+		uar_index = bfregn_to_uar_index(uctx_to_mdev(context),
+						&context->bfregi,
 						ucmd->bfreg_index, true);
 		if (uar_index < 0)
 			return uar_index;
@@ -1003,7 +1007,7 @@ static int _create_user_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	case 0:
 		if (qp->flags & IB_QP_CREATE_CROSS_CHANNEL)
 			return -EINVAL;
-		bfregn = alloc_bfreg(dev, &context->bfregi);
+		bfregn = alloc_bfreg(uctx_to_mdev(context), &context->bfregi);
 		if (bfregn < 0)
 			return bfregn;
 		break;
@@ -1013,7 +1017,8 @@ static int _create_user_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 
 	mlx5_ib_dbg(dev, "bfregn 0x%x, uar_index 0x%x\n", bfregn, uar_index);
 	if (bfregn != MLX5_IB_INVALID_BFREG)
-		uar_index = bfregn_to_uar_index(dev, &context->bfregi, bfregn,
+		uar_index = bfregn_to_uar_index(uctx_to_mdev(context),
+						&context->bfregi, bfregn,
 						false);
 
 	qp->rq.offset = 0;
