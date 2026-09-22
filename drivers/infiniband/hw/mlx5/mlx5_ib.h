@@ -573,6 +573,7 @@ enum mlx5_ib_cq_pr_flags {
 struct mlx5_ib_cq {
 	struct ib_cq		ibcq;
 	struct mlx5_core_cq	mcq;
+	struct mlx5_core_dev	*mdev;
 	struct mlx5_ib_cq_buf	buf;
 	struct mlx5_db		db;
 
@@ -1329,6 +1330,11 @@ static inline struct mlx5_core_dev *mw_to_mdev(struct ib_mw *ibmw)
 static inline struct mlx5_core_dev *uctx_to_mdev(struct mlx5_ib_ucontext *uctx)
 {
 	return to_dev(uctx->ibucontext.device)->mdev;
+}
+
+static inline struct mlx5_core_dev *cq_to_mdev(struct mlx5_ib_cq *cq)
+{
+	return cq->mdev;
 }
 
 static inline struct mlx5_ib_mw *to_mmw(struct ib_mw *ibmw)

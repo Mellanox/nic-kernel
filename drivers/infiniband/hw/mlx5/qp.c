@@ -5890,7 +5890,7 @@ static void handle_drain_completion(struct ib_cq *cq,
 				    struct mlx5_ib_drain_cqe *sdrain,
 				    struct mlx5_ib_dev *dev)
 {
-	struct mlx5_core_dev *mdev = dev->mdev;
+	struct mlx5_core_dev *mdev = cq_to_mdev(to_mcq(cq));
 
 	if (cq->poll_ctx == IB_POLL_DIRECT) {
 		while (wait_for_completion_timeout(&sdrain->done, HZ / 10) <= 0)
