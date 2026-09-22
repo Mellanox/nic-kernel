@@ -1076,20 +1076,19 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_DEVX_QUERY_UAR)(
 	struct uverbs_attr_bundle *attrs)
 {
 	struct mlx5_ib_ucontext *c;
-	struct mlx5_ib_dev *dev;
 	u32 user_idx;
 	s32 dev_idx;
 
 	c = devx_ufile2uctx(attrs);
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_dev(c->ibucontext.device);
 
 	if (uverbs_copy_from(&user_idx, attrs,
 			     MLX5_IB_ATTR_DEVX_QUERY_UAR_USER_IDX))
 		return -EFAULT;
 
-	dev_idx = bfregn_to_uar_index(dev, &c->bfregi, user_idx, true);
+	dev_idx = bfregn_to_uar_index(uctx_to_mdev(c), &c->bfregi, user_idx,
+				      true);
 	if (dev_idx < 0)
 		return dev_idx;
 
