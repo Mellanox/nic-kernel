@@ -1152,7 +1152,7 @@ int mlx5e_create_rq(struct mlx5e_rq *rq, struct mlx5e_rq_param *rq_param,
 	int err;
 
 	inlen = MLX5_ST_SZ_BYTES(create_rq_in) +
-		sizeof(u64) * rq->wq_ctrl.buf.npages;
+		sizeof(u64) * rq->wq_ctrl.buf.num_frags;
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in)
 		return -ENOMEM;
@@ -1169,7 +1169,7 @@ int mlx5e_create_rq(struct mlx5e_rq *rq, struct mlx5e_rq_param *rq_param,
 	MLX5_SET(rqc,  rqc, state,		MLX5_RQC_STATE_RST);
 	MLX5_SET(rqc,  rqc, ts_format,		ts_format);
 	MLX5_SET(rqc,  rqc, counter_set_id,     q_counter);
-	MLX5_SET(wq,   wq,  log_wq_pg_sz,	rq->wq_ctrl.buf.page_shift -
+	MLX5_SET(wq,   wq,  log_wq_pg_sz,	rq->wq_ctrl.buf.log_frag_sz -
 						MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET64(wq, wq,  dbr_addr,		rq->wq_ctrl.db.dma);
 
@@ -1775,7 +1775,7 @@ static int mlx5e_create_sq(struct mlx5_core_dev *mdev,
 	int err;
 
 	inlen = MLX5_ST_SZ_BYTES(create_sq_in) +
-		sizeof(u64) * csp->wq_ctrl->buf.npages;
+		sizeof(u64) * csp->wq_ctrl->buf.num_frags;
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in)
 		return -ENOMEM;
@@ -1802,7 +1802,7 @@ static int mlx5e_create_sq(struct mlx5_core_dev *mdev,
 
 	MLX5_SET(wq,   wq, wq_type,       MLX5_WQ_TYPE_CYCLIC);
 	MLX5_SET(wq,   wq, uar_page,      csp->uar_page);
-	MLX5_SET(wq,   wq, log_wq_pg_sz,  csp->wq_ctrl->buf.page_shift -
+	MLX5_SET(wq,   wq, log_wq_pg_sz,  csp->wq_ctrl->buf.log_frag_sz -
 					  MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET64(wq, wq, dbr_addr,      csp->wq_ctrl->db.dma);
 
@@ -2308,7 +2308,7 @@ static int mlx5e_create_cq(struct mlx5e_cq *cq, struct mlx5e_cq_param *param)
 		return err;
 
 	inlen = MLX5_ST_SZ_BYTES(create_cq_in) +
-		sizeof(u64) * cq->wq_ctrl.buf.npages;
+		sizeof(u64) * cq->wq_ctrl.buf.num_frags;
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in)
 		return -ENOMEM;
@@ -2324,7 +2324,7 @@ static int mlx5e_create_cq(struct mlx5e_cq *cq, struct mlx5e_cq_param *param)
 
 	MLX5_SET(cqc,   cqc, c_eqn_or_apu_element, eqn);
 	MLX5_SET(cqc,   cqc, uar_page,      cq->uar->index);
-	MLX5_SET(cqc,   cqc, log_page_size, cq->wq_ctrl.buf.page_shift -
+	MLX5_SET(cqc,   cqc, log_page_size, cq->wq_ctrl.buf.log_frag_sz -
 					    MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET64(cqc, cqc, dbr_addr,      cq->wq_ctrl.db.dma);
 
