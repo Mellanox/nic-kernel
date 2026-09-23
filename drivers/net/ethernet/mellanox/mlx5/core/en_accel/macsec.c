@@ -1453,7 +1453,7 @@ static struct mlx5e_macsec_sa *get_macsec_tx_sa_from_obj_id(const struct mlx5e_m
 	list_for_each_entry(iter, device_list, macsec_device_list_element) {
 		for (i = 0; i < MACSEC_NUM_AN; ++i) {
 			macsec_sa = iter->tx_sa[i];
-			if (!macsec_sa || !macsec_sa->active)
+			if (!macsec_sa || !macsec_sa->macsec_obj_created)
 				continue;
 			if (macsec_sa->macsec_obj_id == obj_id)
 				return macsec_sa;
@@ -1479,7 +1479,7 @@ static struct mlx5e_macsec_sa *get_macsec_rx_sa_from_obj_id(const struct mlx5e_m
 		list_for_each_entry(mlx5e_rx_sc, sc_list, rx_sc_list_element) {
 			for (i = 0; i < MACSEC_NUM_AN; ++i) {
 				macsec_sa = mlx5e_rx_sc->rx_sa[i];
-				if (!macsec_sa || !macsec_sa->active)
+				if (!macsec_sa || !macsec_sa->macsec_obj_created)
 					continue;
 				if (macsec_sa->macsec_obj_id == obj_id)
 					return macsec_sa;
