@@ -834,15 +834,13 @@ static void macsec_del_rxsc_ctx(struct mlx5e_macsec *macsec, struct mlx5e_macsec
 		rx_sc->rx_sa[i] = NULL;
 	}
 
-	/* At this point the relevant MACsec offload Rx rule already removed at
-	 * mlx5e_macsec_cleanup_sa need to wait for datapath to finish current
-	 * Rx related data propagating using xa_erase which uses rcu to sync,
-	 * once fs_id is erased then this rx_sc is hidden from datapath.
+	/* Remove the RX SC from lookup before deferring reclamation of both
+	 * the xarray element and the RX SC until existing RCU readers finish.
 	 */
 	list_del_rcu(&rx_sc->rx_sc_list_element);
 	xa_erase(&macsec->sc_xarray, rx_sc->sc_xarray_element->fs_id);
 	dst_release(&rx_sc->md_dst->dst);
-	kfree(rx_sc->sc_xarray_element);
+	kfree_rcu_mightsleep(rx_sc->sc_xarray_element);
 	kfree_rcu_mightsleep(rx_sc);
 }
 
