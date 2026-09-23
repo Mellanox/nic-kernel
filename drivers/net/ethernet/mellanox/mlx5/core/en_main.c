@@ -6358,7 +6358,9 @@ static int mlx5e_nic_enable(struct mlx5e_priv *priv)
 	if (err)
 		goto out_ipsec_cleanup;
 
+	rtnl_lock();
 	err = mlx5e_macsec_init(priv);
+	rtnl_unlock();
 	if (err)
 		mlx5_core_err(mdev, "MACsec initialization failed, %d\n", err);
 
@@ -6418,6 +6420,7 @@ static void mlx5e_nic_disable(struct mlx5e_priv *priv)
 		priv->en_trap = NULL;
 	}
 	netdev_unlock(priv->netdev);
+	mlx5e_macsec_cleanup(priv);
 	rtnl_unlock();
 
 	mlx5e_nic_set_rx_mode(priv);
@@ -6432,13 +6435,14 @@ static void mlx5e_nic_disable(struct mlx5e_priv *priv)
 	mlx5e_disable_async_events(priv);
 	mlx5_lag_remove_netdev(mdev, priv->netdev);
 	mlx5_vxlan_reset_to_default(mdev->vxlan);
-	mlx5e_macsec_cleanup(priv);
 	mlx5e_psp_unregister(priv);
 	mlx5e_ipsec_cleanup(priv);
 }
 
 static int mlx5e_update_nic_rx(struct mlx5e_priv *priv)
 {
+	mlx5e_accel_update_rx(priv);
+
 	return mlx5e_refresh_tirs(priv->mdev, false, false);
 }
 

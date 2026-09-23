@@ -23,6 +23,7 @@ TEST_PROGS := \
 	ping.py \
 	pppoe_gro.py \
 	psp.py \
+	psp_gro.py \
 	queues.py \
 	ring_reconfig.py \
 	shaper.py \
@@ -33,6 +34,7 @@ TEST_PROGS := \
 
 TEST_FILES := \
 	gro_lib.py \
+	psp_lib.py \
 # end of TEST_FILES
 
 # YNL files, must be before "include ..lib.mk"
