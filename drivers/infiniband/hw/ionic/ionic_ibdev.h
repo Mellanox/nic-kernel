@@ -241,6 +241,28 @@ struct ionic_rq_meta {
 	u64			wrid;
 };
 
+struct ionic_rq {
+	struct ionic_queue		q;
+	u32				qid;
+	u32				cqid;
+	struct list_head		cq_flush;
+	spinlock_t			lock; /* for posting and polling */
+
+	phys_addr_t			cmb_addr;
+	struct rdma_user_mmap_entry	*mmap_cmb;
+
+	struct ionic_rq_meta		*meta;
+	struct ionic_rq_meta		*meta_head;
+	struct ib_umem			*umem;
+
+	int				spec;
+	int				cmb_order;
+	u32				cmb_pgid;
+	u16				old_prod;
+	u8				cmb;
+	bool				flush;
+};
+
 struct ionic_qp {
 	struct ib_qp		ibqp;
 	enum ib_qp_state	state;
@@ -248,7 +270,6 @@ struct ionic_qp {
 	u32			qpid;
 	u32			ahid;
 	u32			sq_cqid;
-	u32			rq_cqid;
 	u8			udma_idx;
 	u8			has_ah:1;
 	u8			has_sq:1;
@@ -259,7 +280,6 @@ struct ionic_qp {
 
 	struct list_head	cq_poll_sq;
 	struct list_head	cq_flush_sq;
-	struct list_head	cq_flush_rq;
 	struct list_head	ibkill_flush_ent;
 
 	spinlock_t		sq_lock; /* for posting and polling */
@@ -274,14 +294,7 @@ struct ionic_qp {
 	bool			sq_flush;
 	bool			sq_flush_rcvd;
 
-	spinlock_t		rq_lock; /* for posting and polling */
-	struct ionic_queue	rq;
-	struct ionic_rq_meta	*rq_meta;
-	struct ionic_rq_meta	*rq_meta_head;
-	int			rq_spec;
-	u16			rq_old_prod;
-	u8			rq_cmb;
-	bool			rq_flush;
+	struct ionic_rq		rq;
 
 	struct kref		qp_kref;
 	struct completion	qp_rel_comp;
@@ -294,13 +307,6 @@ struct ionic_qp {
 	struct rdma_user_mmap_entry *mmap_sq_cmb;
 
 	struct ib_umem		*sq_umem;
-
-	int			rq_cmb_order;
-	u32			rq_cmb_pgid;
-	phys_addr_t		rq_cmb_addr;
-	struct rdma_user_mmap_entry *mmap_rq_cmb;
-
-	struct ib_umem		*rq_umem;
 
 	int			dcqcn_profile;
 
