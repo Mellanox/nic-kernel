@@ -3058,6 +3058,13 @@ int ionic_create_srq(struct ib_srq *ibsrq, struct ib_srq_init_attr *attr,
 			goto err_srq_cmd;
 	}
 
+	kref_init(&srq->kref);
+	init_completion(&srq->rel_comp);
+
+	rc = xa_insert_irq(&dev->srq_tbl, srq->rq.qid, srq, GFP_KERNEL);
+	if (rc)
+		goto err_srq_cmd;
+
 	ionic_pgtbl_unbuf(dev, &buf);
 
 	attr->attr.max_wr = srq->rq.q.mask;
@@ -3080,6 +3087,11 @@ int ionic_destroy_srq(struct ib_srq *ibsrq, struct ib_udata *udata)
 	struct ionic_ibdev *dev = to_ionic_ibdev(ibsrq->device);
 	struct ionic_srq *srq = to_ionic_srq(ibsrq);
 	int rc;
+
+	if (xa_erase_irq(&dev->srq_tbl, srq->rq.qid)) {
+		kref_put(&srq->kref, ionic_srq_complete);
+		wait_for_completion(&srq->rel_comp);
+	}
 
 	rc = ionic_destroy_srq_cmd(dev, srq->rq.qid);
 	if (rc)

@@ -318,6 +318,8 @@ static void ionic_destroy_ibdev(struct ionic_ibdev *dev)
 	xa_destroy(&dev->qp_tbl);
 	WARN_ON(!xa_empty(&dev->cq_tbl));
 	xa_destroy(&dev->cq_tbl);
+	WARN_ON(!xa_empty(&dev->srq_tbl));
+	xa_destroy(&dev->srq_tbl);
 	ib_dealloc_device(&dev->ibdev);
 }
 
@@ -336,6 +338,7 @@ static struct ionic_ibdev *ionic_create_ibdev(struct ionic_aux_dev *ionic_adev)
 
 	xa_init_flags(&dev->qp_tbl, XA_FLAGS_LOCK_IRQ);
 	xa_init_flags(&dev->cq_tbl, XA_FLAGS_LOCK_IRQ);
+	xa_init_flags(&dev->srq_tbl, XA_FLAGS_LOCK_IRQ);
 
 	ionic_init_resids(dev);
 
@@ -388,6 +391,7 @@ err_reset:
 	ionic_destroy_resids(dev);
 	xa_destroy(&dev->qp_tbl);
 	xa_destroy(&dev->cq_tbl);
+	xa_destroy(&dev->srq_tbl);
 	ib_dealloc_device(&dev->ibdev);
 
 	return ERR_PTR(rc);

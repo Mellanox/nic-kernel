@@ -92,6 +92,7 @@ struct ionic_ibdev {
 
 	struct xarray		qp_tbl;
 	struct xarray		cq_tbl;
+	struct xarray		srq_tbl;
 
 	struct ionic_resid_bits	inuse_dbid;
 	struct ionic_resid_bits	inuse_pdid;
@@ -270,6 +271,8 @@ struct ionic_rq {
 struct ionic_srq {
 	struct ib_srq		ibsrq;
 	struct ionic_rq		rq;
+	struct kref		kref;
+	struct completion	rel_comp;
 	u16			srq_limit;
 	u8			udma_idx;
 };
@@ -464,6 +467,13 @@ static inline bool ionic_fw_has_qid_alloc(struct ionic_ibdev *dev,
 					  enum ionic_lif_rdma_alloc_qid qtype)
 {
 	return dev->lif_cfg.alloc_qid_cap & qtype;
+}
+
+static inline void ionic_srq_complete(struct kref *kref)
+{
+	struct ionic_srq *srq = container_of(kref, struct ionic_srq, kref);
+
+	complete(&srq->rel_comp);
 }
 
 /* ionic_admin.c */

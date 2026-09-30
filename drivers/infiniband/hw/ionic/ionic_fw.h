@@ -1013,7 +1013,7 @@ enum ionic_v1_eqe_evt_bits {
 	/* cq error events */
 	IONIC_V1_EQE_CQ_ERR		= 8,
 
-	/* qp and srq events */
+	/* qp events */
 	IONIC_V1_EQE_TYPE_QP		= 1,
 	/* qp normal events */
 	IONIC_V1_EQE_SRQ_LEVEL		= 0,
@@ -1024,6 +1024,10 @@ enum ionic_v1_eqe_evt_bits {
 	IONIC_V1_EQE_QP_ERR		= 8,
 	IONIC_V1_EQE_QP_ERR_REQUEST	= 9,
 	IONIC_V1_EQE_QP_ERR_ACCESS	= 10,
+	/* srq events */
+	IONIC_V1_EQE_TYPE_SRQ		= 2,
+	IONIC_V1_EQE_SRQ_LIMIT_REACHED	= 0,
+	IONIC_V1_EQE_SRQ_ERR		= 1,
 };
 
 enum ionic_tfp_csum_profiles {

@@ -945,6 +945,49 @@ out:
 	kref_put(&qp->qp_kref, ionic_qp_complete);
 }
 
+static void ionic_srq_event(struct ionic_ibdev *dev, u32 srqid, u8 code)
+{
+	unsigned long irqflags;
+	struct ionic_srq *srq;
+	struct ib_event ibev;
+
+	xa_lock_irqsave(&dev->srq_tbl, irqflags);
+	srq = xa_load(&dev->srq_tbl, srqid);
+	if (srq)
+		kref_get(&srq->kref);
+	xa_unlock_irqrestore(&dev->srq_tbl, irqflags);
+
+	if (!srq) {
+		ibdev_dbg(&dev->ibdev,
+			  "missing srqid %#x code %u\n", srqid, code);
+		return;
+	}
+
+	ibev.device = &dev->ibdev;
+	ibev.element.srq = &srq->ibsrq;
+
+	switch (code) {
+	case IONIC_V1_EQE_SRQ_LIMIT_REACHED:
+		ibev.event = IB_EVENT_SRQ_LIMIT_REACHED;
+		break;
+
+	case IONIC_V1_EQE_SRQ_ERR:
+		ibev.event = IB_EVENT_SRQ_ERR;
+		break;
+
+	default:
+		ibdev_dbg(&dev->ibdev,
+			  "unrecognized srqid %#x code %u\n", srqid, code);
+		goto out;
+	}
+
+	if (srq->ibsrq.event_handler)
+		srq->ibsrq.event_handler(&ibev, srq->ibsrq.srq_context);
+
+out:
+	kref_put(&srq->kref, ionic_srq_complete);
+}
+
 static u16 ionic_poll_eq(struct ionic_eq *eq, u16 budget)
 {
 	struct ionic_ibdev *dev = eq->dev;
@@ -976,6 +1019,10 @@ static u16 ionic_poll_eq(struct ionic_eq *eq, u16 budget)
 
 		case IONIC_V1_EQE_TYPE_QP:
 			ionic_qp_event(dev, qid, code);
+			break;
+
+		case IONIC_V1_EQE_TYPE_SRQ:
+			ionic_srq_event(dev, qid, code);
 			break;
 
 		default:
