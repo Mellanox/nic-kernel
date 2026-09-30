@@ -38,6 +38,7 @@ struct ionic_lif_cfg {
 	int eq_count;
 	int cq_count;
 	int qp_count;
+	int srq_count;
 
 	u16 stats_type;
 	u8 aq_qtype;

@@ -88,6 +88,10 @@ static inline int to_ionic_mr_flags(int access)
 	return flags;
 }
 
+enum ionic_srq_flags {
+	IONIC_SRQF_CMB			= BIT(0),
+};
+
 enum ionic_qp_flags {
 	/* bits that determine qp access */
 	IONIC_QPF_REMOTE_WRITE		= BIT(0),
@@ -857,6 +861,48 @@ struct ionic_admin_query_qp {
 static_assert(sizeof(struct ionic_admin_query_qp) ==
 	       IONIC_ADMIN_QUERY_QP_IN_V1_LEN);
 
+struct ionic_admin_create_srq {
+	__le64		dma_addr;
+	__le32		map_count;
+	__le32		pd_id;
+	__le32		qid;
+	__le16		dbid;
+	__le16		low_wqes_limit;
+	__le16		flags;
+	__u8		depth_log2;
+	__u8		stride_log2;
+	__u8		page_size_log2;
+	__u8		udma_mask;
+	__le32		resp_buf_len;
+	__le64		resp_dma_addr;
+} __packed;
+
+#define IONIC_ADMIN_CREATE_SRQ_IN_V1_LEN 42
+static_assert(sizeof(struct ionic_admin_create_srq) == IONIC_ADMIN_CREATE_SRQ_IN_V1_LEN);
+
+struct ionic_admin_create_srq_resp {
+	__le32          id;
+	__u8            udma_idx;
+} __packed;
+
+#define IONIC_ADMIN_CREATE_SRQ_OUT_V1_LEN 5
+static_assert(sizeof(struct ionic_admin_create_srq_resp) == IONIC_ADMIN_CREATE_SRQ_OUT_V1_LEN);
+
+struct ionic_admin_modify_srq {
+	__le32		qid;
+	__le16		low_wqes_limit;
+} __packed;
+
+#define IONIC_ADMIN_MODIFY_SRQ_IN_V1_LEN 6
+static_assert(sizeof(struct ionic_admin_modify_srq) == IONIC_ADMIN_MODIFY_SRQ_IN_V1_LEN);
+
+struct ionic_admin_destroy_srq {
+	__le32		qid;
+} __packed;
+
+#define IONIC_ADMIN_DESTROY_SRQ_IN_V1_LEN 4
+static_assert(sizeof(struct ionic_admin_destroy_srq) == IONIC_ADMIN_DESTROY_SRQ_IN_V1_LEN);
+
 #define ADMIN_WQE_STRIDE	64
 #define ADMIN_WQE_HDR_LEN	4
 
@@ -879,6 +925,9 @@ struct ionic_v1_admin_wqe {
 		struct ionic_admin_destroy_qp destroy_qp;
 		struct ionic_admin_mod_qp mod_qp;
 		struct ionic_admin_query_qp query_qp;
+		struct ionic_admin_create_srq create_srq;
+		struct ionic_admin_modify_srq modify_srq;
+		struct ionic_admin_destroy_srq destroy_srq;
 	} cmd;
 };
 
@@ -925,6 +974,10 @@ enum ionic_v1_admin_op {
 	IONIC_V1_ADMIN_DESTROY_AH,
 	IONIC_V1_ADMIN_QP_STATS_HDRS,
 	IONIC_V1_ADMIN_QP_STATS_VALS,
+	IONIC_V1_ADMIN_CREATE_SRQ = 26,
+	IONIC_V1_ADMIN_MODIFY_SRQ,
+	IONIC_V1_ADMIN_QUERY_SRQ,
+	IONIC_V1_ADMIN_DESTROY_SRQ,
 	IONIC_V1_ADMIN_OPCODES_MAX,
 };
 

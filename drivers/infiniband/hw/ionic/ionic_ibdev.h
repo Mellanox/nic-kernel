@@ -36,6 +36,10 @@
 #define IONIC_SQCMB_ORDER 5
 #define IONIC_RQCMB_ORDER 0
 
+#define IONIC_MAX_SRQ_SGES	2
+#define IONIC_MAX_SRQ_LIMIT	0xffff
+#define IONIC_MAX_SRQ_DEPTH	0xffff
+
 #define IONIC_META_LAST		((void *)1ul)
 #define IONIC_META_POSTED	((void *)2ul)
 
@@ -263,6 +267,13 @@ struct ionic_rq {
 	bool				flush;
 };
 
+struct ionic_srq {
+	struct ib_srq		ibsrq;
+	struct ionic_rq		rq;
+	u16			srq_limit;
+	u8			udma_idx;
+};
+
 struct ionic_qp {
 	struct ib_qp		ibqp;
 	enum ib_qp_state	state;
@@ -273,7 +284,6 @@ struct ionic_qp {
 	u8			udma_idx;
 	u8			has_ah:1;
 	u8			has_sq:1;
-	u8			has_rq:1;
 	u8			sig_all:1;
 
 	struct list_head	qp_list_counter;
@@ -311,6 +321,7 @@ struct ionic_qp {
 	int			dcqcn_profile;
 
 	struct ib_ud_header	*hdr;
+	struct ionic_srq	*srq;
 };
 
 struct ionic_ah {
@@ -403,6 +414,11 @@ static inline struct ionic_cq *to_ionic_vcq_cq(struct ib_cq *ibcq,
 static inline struct ionic_qp *to_ionic_qp(struct ib_qp *ibqp)
 {
 	return container_of(ibqp, struct ionic_qp, ibqp);
+}
+
+static inline struct ionic_srq *to_ionic_srq(struct ib_srq *ibsrq)
+{
+	return container_of(ibsrq, struct ionic_srq, ibsrq);
 }
 
 static inline struct ionic_ah *to_ionic_ah(struct ib_ah *ibah)
@@ -513,6 +529,12 @@ int ionic_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int mask,
 int ionic_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int mask,
 		   struct ib_qp_init_attr *init_attr);
 int ionic_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata);
+int ionic_create_srq(struct ib_srq *ibsrq, struct ib_srq_init_attr *attr,
+		     struct ib_udata *udata);
+int ionic_destroy_srq(struct ib_srq *ibsrq, struct ib_udata *udata);
+int ionic_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *srq_attr);
+int ionic_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
+		     enum ib_srq_attr_mask attr_mask, struct ib_udata *udata);
 
 /* ionic_datapath.c */
 int ionic_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,

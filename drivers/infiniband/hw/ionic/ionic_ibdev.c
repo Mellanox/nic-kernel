@@ -73,6 +73,11 @@ static int ionic_query_device(struct ib_device *ibdev,
 	attr->max_ah = dev->lif_cfg.nahs_per_lif;
 	attr->max_fast_reg_page_list_len = dev->lif_cfg.npts_per_lif / 2;
 	attr->max_pkeys = IONIC_PKEY_TBL_LEN;
+	if (dev->lif_cfg.srq_count && ionic_fw_has_qid_alloc(dev, IONIC_LIF_RDMA_ALLOC_QID_SRQ)) {
+		attr->max_srq = dev->lif_cfg.srq_count;
+		attr->max_srq_wr = IONIC_MAX_SRQ_DEPTH;
+		attr->max_srq_sge = IONIC_MAX_SRQ_SGES;
+	}
 
 	return 0;
 }
@@ -266,6 +271,15 @@ static const struct ib_device_ops ionic_dev_ops = {
 	INIT_RDMA_OBJ_SIZE(ib_mw, ionic_mr, ibmw),
 };
 
+static const struct ib_device_ops ionic_srq_ops = {
+	.create_srq = ionic_create_srq,
+	.modify_srq = ionic_modify_srq,
+	.query_srq = ionic_query_srq,
+	.destroy_srq = ionic_destroy_srq,
+
+	INIT_RDMA_OBJ_SIZE(ib_srq, ionic_srq, ibsrq),
+};
+
 static void ionic_init_resids(struct ionic_ibdev *dev)
 {
 	ionic_resid_init(&dev->inuse_cqid, dev->lif_cfg.cq_count);
@@ -354,6 +368,8 @@ static struct ionic_ibdev *ionic_create_ibdev(struct ionic_aux_dev *ionic_adev)
 		goto err_admin;
 
 	ib_set_device_ops(&dev->ibdev, &ionic_dev_ops);
+	if (dev->lif_cfg.srq_count && ionic_fw_has_qid_alloc(dev, IONIC_LIF_RDMA_ALLOC_QID_SRQ))
+		ib_set_device_ops(&dev->ibdev, &ionic_srq_ops);
 
 	ionic_stats_init(dev);
 
