@@ -933,8 +933,19 @@ err_db:
 	return err;
 }
 
+static void drain_soft_wc(struct mlx5_ib_cq *cq)
+{
+	struct mlx5_ib_wc *soft_wc, *next;
+
+	list_for_each_entry_safe(soft_wc, next, &cq->wc_list, list) {
+		list_del(&soft_wc->list);
+		kfree(soft_wc);
+	}
+}
+
 static void destroy_cq_kernel(struct mlx5_ib_dev *dev, struct mlx5_ib_cq *cq)
 {
+	drain_soft_wc(cq);
 	free_cq_buf(dev, &cq->buf);
 	mlx5_db_free(dev->mdev, &cq->db);
 }
@@ -1067,6 +1078,7 @@ int mlx5_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	spin_lock_init(&cq->lock);
 	INIT_LIST_HEAD(&cq->list_send_qp);
 	INIT_LIST_HEAD(&cq->list_recv_qp);
+	INIT_LIST_HEAD(&cq->wc_list);
 
 	cqe_size = cache_line_size() == 128 ? 128 : 64;
 	err = create_cq_kernel(dev, cq, entries, cqe_size, &cqb, &index,
@@ -1102,7 +1114,6 @@ int mlx5_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	mlx5_ib_dbg(dev, "cqn 0x%x\n", cq->mcq.cqn);
 	cq->mcq.event = mlx5_ib_cq_event;
 
-	INIT_LIST_HEAD(&cq->wc_list);
 	kvfree(cqb);
 	return 0;
 
