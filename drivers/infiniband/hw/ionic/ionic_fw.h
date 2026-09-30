@@ -746,11 +746,22 @@ struct ionic_admin_create_cq {
 	__le32		map_count;
 	__le64		dma_addr;
 	__le16		dbid_flags;
+	__u8		udma_idx;
+	__le32		resp_buf_len;
+	__le64		resp_dma_addr;
 } __packed;
 
 #define IONIC_ADMIN_CREATE_CQ_IN_V1_LEN 34
-static_assert(sizeof(struct ionic_admin_create_cq) ==
-	       IONIC_ADMIN_CREATE_CQ_IN_V1_LEN);
+#define IONIC_ADMIN_CREATE_CQ_IN_V2_LEN 47
+static_assert(sizeof(struct ionic_admin_create_cq) == IONIC_ADMIN_CREATE_CQ_IN_V2_LEN);
+
+struct ionic_admin_create_cq_resp {
+	__le32		id;
+	__u8		udma_idx;
+} __packed;
+
+#define IONIC_ADMIN_CREATE_CQ_OUT_V1_LEN 5
+static_assert(sizeof(struct ionic_admin_create_cq_resp) == IONIC_ADMIN_CREATE_CQ_OUT_V1_LEN);
 
 struct ionic_admin_destroy_cq {
 	__le32		cq_id;

@@ -438,6 +438,12 @@ static inline void ionic_cq_complete(struct kref *kref)
 	complete(&cq->cq_rel_comp);
 }
 
+static inline bool ionic_fw_has_qid_alloc(struct ionic_ibdev *dev,
+					  enum ionic_lif_rdma_alloc_qid qtype)
+{
+	return dev->lif_cfg.alloc_qid_cap & qtype;
+}
+
 /* ionic_admin.c */
 extern struct workqueue_struct *ionic_evt_workq;
 void ionic_admin_post(struct ionic_ibdev *dev, struct ionic_admin_wr *wr);
@@ -457,8 +463,11 @@ int ionic_create_cq_common(struct ionic_vcq *vcq,
 			   struct ionic_ctx *ctx,
 			   struct ib_udata *udata,
 			   struct ionic_qdesc *req_cq,
-			   __u32 *resp_cqid,
 			   int udma_idx);
+int ionic_post_create_cq_cmd(struct ionic_cq *cq,
+			     struct ib_udata *udata,
+			     __u32 *resp_cqid);
+void ionic_pre_destroy_cq_cmd(struct ionic_ibdev *dev, struct ionic_cq *cq);
 void ionic_destroy_cq_common(struct ionic_ibdev *dev, struct ionic_cq *cq);
 void ionic_flush_qp(struct ionic_ibdev *dev, struct ionic_qp *qp);
 void ionic_notify_flush_cq(struct ionic_cq *cq);

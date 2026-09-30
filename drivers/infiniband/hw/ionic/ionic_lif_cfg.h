@@ -58,6 +58,7 @@ struct ionic_lif_cfg {
 	bool rq_expdb;
 	u8 expdb_mask;
 	u8 rcq_sign_bit;
+	u8 alloc_qid_cap;
 };
 
 void ionic_fill_lif_cfg(struct ionic_lif *lif, struct ionic_lif_cfg *cfg);
