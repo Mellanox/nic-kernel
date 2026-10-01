@@ -1408,25 +1408,45 @@ void mlx5_lag_remove_devices(struct mlx5_lag *ldev)
 	mlx5_lag_remove_devices_filter(ldev, MLX5_LAG_FILTER_PORTS);
 }
 
+static int mlx5_lag_reload_ib_reps_idx(struct mlx5_lag *ldev, int idx,
+				       u32 flags)
+{
+	struct lag_fn *fn = mlx5_lag_fn(ldev, idx);
+	struct mlx5_eswitch *esw;
+	int ret;
+
+	if (fn->dev->priv.flags & flags)
+		return 0;
+
+	esw = fn->dev->priv.eswitch;
+	mlx5_esw_reps_block(esw);
+	ret = mlx5_eswitch_reload_ib_reps(esw);
+	mlx5_esw_reps_unblock(esw);
+
+	return ret;
+}
+
 static int mlx5_lag_reload_ib_reps_unlocked(struct mlx5_lag *ldev, u32 flags,
 					    u32 filter, bool cont_on_fail)
 {
-	struct lag_fn *fn;
+	int master_idx = mlx5_lag_get_dev_index_by_seq_filter(ldev, MLX5_LAG_P1,
+							     filter);
 	int ret;
 	int i;
 
-	mlx5_lag_for_each(i, 0, ldev, filter) {
-		fn = mlx5_lag_fn(ldev, i);
-		if (!(fn->dev->priv.flags & flags)) {
-			struct mlx5_eswitch *esw;
+	if (master_idx < 0)
+		return -EINVAL;
 
-			esw = fn->dev->priv.eswitch;
-			mlx5_esw_reps_block(esw);
-			ret = mlx5_eswitch_reload_ib_reps(esw);
-			mlx5_esw_reps_unblock(esw);
-			if (ret && !cont_on_fail)
-				return ret;
-		}
+	ret = mlx5_lag_reload_ib_reps_idx(ldev, master_idx, flags);
+	if (ret && !cont_on_fail)
+		return ret;
+
+	mlx5_lag_for_each(i, 0, ldev, filter) {
+		if (i == master_idx)
+			continue;
+		ret = mlx5_lag_reload_ib_reps_idx(ldev, i, flags);
+		if (ret && !cont_on_fail)
+			return ret;
 	}
 
 	return 0;
@@ -1731,12 +1751,14 @@ static void mlx5_lag_modify_device_vports_speed(struct mlx5_core_dev *mdev,
 
 		ret = mlx5_modify_vport_tx_speed(mdev, op_mod,
 						 vport->vport, true, &tx_speed);
-		if (ret)
+		if (ret) {
 			mlx5_core_dbg(mdev,
 				      "Failed to set vport %d speed %d, err=%d\n",
 				      vport->vport, speed, ret);
-		else
+			vport->agg_max_tx_speed = speed;
+		} else {
 			vport->agg_max_tx_speed = 0;
+		}
 	}
 	mutex_unlock(&esw->state_lock);
 }
