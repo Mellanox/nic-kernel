@@ -41,6 +41,7 @@
 #include <linux/mlx5/cq.h>
 #include <linux/mlx5/fs.h>
 #include <linux/mlx5/driver.h>
+#include <linux/mlx5/port.h>
 #include "lib/devcom.h"
 
 extern uint mlx5_core_debug_mask;
@@ -282,6 +283,7 @@ void mlx5_events_cleanup(struct mlx5_core_dev *dev);
 void mlx5_events_start(struct mlx5_core_dev *dev);
 void mlx5_events_stop(struct mlx5_core_dev *dev);
 
+u32 mlx5_pcie_bandwidth(struct mlx5_core_dev *dev);
 int mlx5_adev_idx_alloc(void);
 void mlx5_adev_idx_free(int idx);
 void mlx5_adev_cleanup(struct mlx5_core_dev *dev);
@@ -386,6 +388,21 @@ u32 mlx5_port_info2linkmodes(struct mlx5_core_dev *mdev,
 			     bool force_legacy);
 int mlx5_port_oper_linkspeed(struct mlx5_core_dev *mdev, u32 *speed);
 int mlx5_port_max_linkspeed(struct mlx5_core_dev *mdev, u32 *speed);
+
+enum mlx5_ptys_rate {
+	MLX5_PTYS_RATE_SDR	= 1 << 0,
+	MLX5_PTYS_RATE_DDR	= 1 << 1,
+	MLX5_PTYS_RATE_QDR	= 1 << 2,
+	MLX5_PTYS_RATE_FDR10	= 1 << 3,
+	MLX5_PTYS_RATE_FDR	= 1 << 4,
+	MLX5_PTYS_RATE_EDR	= 1 << 5,
+	MLX5_PTYS_RATE_HDR	= 1 << 6,
+	MLX5_PTYS_RATE_NDR	= 1 << 7,
+	MLX5_PTYS_RATE_XDR	= 1 << 8,
+};
+
+int mlx5_ptys_width_enum_to_int(enum mlx5_ptys_width width);
+int mlx5_ptys_rate_enum_to_int(enum mlx5_ptys_rate rate);
 
 #define MLX5_PPS_CAP(mdev) (MLX5_CAP_GEN((mdev), pps) &&		\
 			    MLX5_CAP_GEN((mdev), pps_modify) &&		\

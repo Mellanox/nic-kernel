@@ -1213,6 +1213,8 @@ int mlx5_deactivate_lag(struct mlx5_lag *ldev)
 	if (master_idx < 0)
 		return -EINVAL;
 
+	mlx5_lag_reset_vports_speed(ldev);
+
 	dev0 = mlx5_lag_fn(ldev, master_idx)->dev;
 	ldev->mode = MLX5_LAG_MODE_NONE;
 	ldev->mode_flags = 0;
@@ -1551,16 +1553,22 @@ static bool mlx5_lag_should_disable_lag(struct mlx5_lag *ldev, bool do_bond)
 	       ldev->mode != MLX5_LAG_MODE_MPESW;
 }
 
-#ifdef CONFIG_MLX5_ESWITCH
-static int
-mlx5_lag_sum_devices_speed(struct mlx5_lag *ldev, u32 *sum_speed,
-			   int (*get_speed)(struct mlx5_core_dev *, u32 *))
+static int mlx5_lag_get_devices_oper_speed(struct mlx5_lag *ldev,
+					   u32 *sum_speed)
 {
+	struct mlx5_vport_tx_speed tx_speed = {};
+	struct mlx5_vport_state vport_state;
 	struct mlx5_core_dev *pf_mdev;
 	struct lag_fn *fn;
+	u32 pci_bw;
 	int pf_idx;
+	bool mpesw;
 	u32 speed;
+	u8 opmod;
 	int ret;
+
+	mpesw = ldev->mode == MLX5_LAG_MODE_MPESW;
+	opmod = MLX5_VPORT_STATE_OP_MOD_VNIC_VPORT;
 
 	*sum_speed = 0;
 	mlx5_ldev_for_each(pf_idx, 0, ldev) {
@@ -1570,40 +1578,134 @@ mlx5_lag_sum_devices_speed(struct mlx5_lag *ldev, u32 *sum_speed,
 		pf_mdev = fn->dev;
 		if (!pf_mdev)
 			continue;
+		if (mpesw) {
+			ret = mlx5_query_vport_state_ctx(pf_mdev, opmod, 0, 0,
+							 &tx_speed,
+							 &vport_state);
+			if (ret) {
+				mlx5_core_dbg(pf_mdev,
+					      "State query failed (err=%d)\n",
+					      ret);
+				continue;
+			}
+			if (vport_state.state != VPORT_STATE_UP)
+				continue;
+		} else if (!ldev->tracker.netdev_state[pf_idx].tx_enabled ||
+			   !ldev->tracker.netdev_state[pf_idx].link_up) {
+			continue;
+		}
 
-		ret = get_speed(pf_mdev, &speed);
+		ret = mlx5_port_oper_linkspeed(pf_mdev, &speed);
 		if (ret) {
 			mlx5_core_dbg(pf_mdev,
-				      "Failed to get device speed using %ps. Device %s speed is not available (err=%d)\n",
-				      get_speed, dev_name(pf_mdev->device),
-				      ret);
+				      "Failed to get device %s oper speed (err=%d)\n",
+				      dev_name(pf_mdev->device), ret);
 			return ret;
 		}
 
+		pci_bw = mlx5_pcie_bandwidth(pf_mdev);
+		if (pci_bw)
+			speed = min(speed, pci_bw);
 		*sum_speed += speed;
 	}
 
 	return 0;
 }
 
-static int mlx5_lag_sum_devices_max_speed(struct mlx5_lag *ldev, u32 *max_speed)
+static int mlx5_lag_get_devices_max_speed(struct mlx5_lag *ldev, u32 *max_speed)
 {
-	return mlx5_lag_sum_devices_speed(ldev, max_speed,
-					  mlx5_port_max_linkspeed);
+	struct mlx5_core_dev *pf_mdev;
+	struct lag_fn *fn;
+	bool take_max;
+	u32 pci_bw;
+	int pf_idx;
+	u32 speed;
+	int ret;
+
+	take_max = ldev->tracker.tx_type == NETDEV_LAG_TX_TYPE_ACTIVEBACKUP;
+	if (ldev->mode == MLX5_LAG_MODE_MPESW)
+		take_max = false;
+
+	*max_speed = 0;
+	mlx5_ldev_for_each(pf_idx, 0, ldev) {
+		fn = mlx5_lag_fn(ldev, pf_idx);
+		if (!fn)
+			continue;
+		pf_mdev = fn->dev;
+		if (!pf_mdev)
+			continue;
+
+		ret = mlx5_port_max_linkspeed(pf_mdev, &speed);
+		if (ret) {
+			mlx5_core_dbg(pf_mdev,
+				      "Failed to get device %s max speed (err=%d)\n",
+				      dev_name(pf_mdev->device), ret);
+			return ret;
+		}
+
+		pci_bw = mlx5_pcie_bandwidth(pf_mdev);
+		if (pci_bw)
+			speed = min(speed, pci_bw);
+		*max_speed = take_max ?
+			max(*max_speed, speed) : *max_speed + speed;
+	}
+
+	return 0;
 }
 
-static int mlx5_lag_sum_devices_oper_speed(struct mlx5_lag *ldev,
-					   u32 *oper_speed)
+void mlx5_lag_notify_speed_change(struct mlx5_lag *ldev)
 {
-	return mlx5_lag_sum_devices_speed(ldev, oper_speed,
-					  mlx5_port_oper_linkspeed);
+	struct lag_fn *fn;
+	int idx;
+
+	idx = mlx5_lag_get_dev_index_by_seq(ldev, MLX5_LAG_P1);
+	if (idx < 0)
+		return;
+	fn = mlx5_lag_fn(ldev, idx);
+	if (!fn)
+		return;
+	blocking_notifier_call_chain(&fn->dev->priv.lag_nh,
+				     MLX5_DRIVER_EVENT_LAG_SPEED_CHANGE, NULL);
 }
 
+void mlx5_lag_update_agg_speed(struct mlx5_lag *ldev)
+{
+	u32 old_speed;
+	u32 speed;
+
+	lockdep_assert_held(&ldev->lock);
+
+	if (mlx5_lag_get_devices_oper_speed(ldev, &speed))
+		return;
+
+	/* If speed is not set, use the sum of max speeds of all PFs */
+	if (!speed && mlx5_lag_get_devices_max_speed(ldev, &speed))
+		return;
+
+	old_speed = ldev->agg_speed_mbps;
+	ldev->agg_speed_mbps = speed;
+
+	if (mlx5_lag_is_roce_lag(ldev) && speed != old_speed)
+		mlx5_lag_notify_speed_change(ldev);
+}
+
+void mlx5_lag_reset_agg_speed(struct mlx5_lag *ldev)
+{
+	lockdep_assert_held(&ldev->lock);
+
+	ldev->agg_speed_mbps = 0;
+}
+
+#ifdef CONFIG_MLX5_ESWITCH
 static void mlx5_lag_modify_device_vports_speed(struct mlx5_core_dev *mdev,
 						u32 speed)
 {
 	u16 op_mod = MLX5_VPORT_STATE_OP_MOD_ESW_VPORT;
 	struct mlx5_eswitch *esw = mdev->priv.eswitch;
+	struct mlx5_vport_tx_speed tx_speed = {
+		.max_tx_speed = speed,
+		.flags = MLX5_VPORT_TX_SPEED_MAX,
+	};
 	struct mlx5_vport *vport;
 	unsigned long i;
 	int ret;
@@ -1622,17 +1724,19 @@ static void mlx5_lag_modify_device_vports_speed(struct mlx5_core_dev *mdev,
 		if (vport->vport == MLX5_VPORT_UPLINK)
 			continue;
 
-		vport->agg_max_tx_speed = speed;
-
-		if (!vport->enabled)
+		if (!vport->enabled) {
+			vport->agg_max_tx_speed = speed;
 			continue;
+		}
 
-		ret = mlx5_modify_vport_max_tx_speed(mdev, op_mod,
-						     vport->vport, true, speed);
+		ret = mlx5_modify_vport_tx_speed(mdev, op_mod,
+						 vport->vport, true, &tx_speed);
 		if (ret)
 			mlx5_core_dbg(mdev,
 				      "Failed to set vport %d speed %d, err=%d\n",
 				      vport->vport, speed, ret);
+		else
+			vport->agg_max_tx_speed = 0;
 	}
 	mutex_unlock(&esw->state_lock);
 }
@@ -1644,17 +1748,10 @@ void mlx5_lag_set_vports_agg_speed(struct mlx5_lag *ldev)
 	u32 speed;
 	int pf_idx;
 
-	if (ldev->mode == MLX5_LAG_MODE_MPESW) {
-		if (mlx5_lag_sum_devices_oper_speed(ldev, &speed))
-			return;
-	} else {
-		speed = ldev->tracker.bond_speed_mbps;
-		if (speed == SPEED_UNKNOWN)
-			return;
-	}
+	mlx5_lag_update_agg_speed(ldev);
+	speed = ldev->agg_speed_mbps;
 
-	/* If speed is not set, use the sum of max speeds of all PFs */
-	if (!speed && mlx5_lag_sum_devices_max_speed(ldev, &speed))
+	if (!speed)
 		return;
 
 	speed = speed / MLX5_MAX_TX_SPEED_UNIT;
@@ -1675,10 +1772,12 @@ void mlx5_lag_reset_vports_speed(struct mlx5_lag *ldev)
 {
 	struct mlx5_core_dev *mdev;
 	struct lag_fn *fn;
+	u32 pci_bw;
 	u32 speed;
 	int pf_idx;
 	int ret;
 
+	mlx5_lag_reset_agg_speed(ldev);
 	mlx5_ldev_for_each(pf_idx, 0, ldev) {
 		fn = mlx5_lag_fn(ldev, pf_idx);
 		if (!fn)
@@ -1694,6 +1793,20 @@ void mlx5_lag_reset_vports_speed(struct mlx5_lag *ldev)
 				      dev_name(mdev->device), ret);
 			continue;
 		}
+
+		if (!speed) {
+			ret = mlx5_port_max_linkspeed(mdev, &speed);
+			if (ret) {
+				mlx5_core_dbg(mdev,
+					      "Failed to reset vports speed for device %s. Max speed is not available (err=%d)\n",
+					      dev_name(mdev->device), ret);
+				continue;
+			}
+		}
+
+		pci_bw = mlx5_pcie_bandwidth(mdev);
+		if (pci_bw)
+			speed = min(speed, pci_bw);
 
 		speed = speed / MLX5_MAX_TX_SPEED_UNIT;
 		mlx5_lag_modify_device_vports_speed(mdev, speed);
@@ -1781,7 +1894,6 @@ static void mlx5_do_bond(struct mlx5_lag *ldev)
 		mlx5_modify_lag(ldev, &tracker);
 		mlx5_lag_set_vports_agg_speed(ldev);
 	} else if (mlx5_lag_should_disable_lag(ldev, do_bond)) {
-		mlx5_lag_reset_vports_speed(ldev);
 		mlx5_disable_lag(ldev);
 	}
 }
@@ -2174,6 +2286,28 @@ static int mlx5_handle_changeinfodata_event(struct mlx5_lag *ldev,
 
 	return 1;
 }
+
+/* Returns speed in Mbps. */
+int mlx5_lag_query_aggregated_speed(struct mlx5_core_dev *mdev, u32 *speed)
+{
+	struct mlx5_lag *ldev;
+	int ret = 0;
+
+	ldev = mlx5_lag_dev(mdev);
+	if (!ldev)
+		return -ENODEV;
+
+	mutex_lock(&ldev->lock);
+	*speed = ldev->agg_speed_mbps;
+	if (*speed == 0)
+		ret = -EINVAL;
+	mutex_unlock(&ldev->lock);
+
+	if (ret == -EINVAL)
+		mlx5_core_dbg(mdev, "aggregated speed is unknown\n");
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mlx5_lag_query_aggregated_speed);
 
 static void mlx5_lag_update_tracker_speed(struct lag_tracker *tracker,
 					  struct net_device *ndev)
