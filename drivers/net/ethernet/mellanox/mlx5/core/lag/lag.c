@@ -1432,10 +1432,55 @@ static bool mlx5_lag_should_disable_lag(struct mlx5_lag *ldev, bool do_bond)
 	       ldev->mode != MLX5_LAG_MODE_MPESW;
 }
 
+static int mlx5_lag_dev_pcie_bw(struct mlx5_core_dev *dev, u32 *bw)
+{
+	if (pci_pcie_type(dev->pdev) == PCI_EXP_TYPE_RC_END) {
+		*bw = U32_MAX;
+		return 0;
+	}
+
+	*bw = pcie_bandwidth_mbps(dev->pdev);
+	return *bw ? 0 : -EIO;
+}
+
+static int mlx5_lag_port_pcie_bw(struct mlx5_lag *ldev, struct lag_func *port,
+				 u32 *bw)
+{
+	struct lag_func *member;
+	bool unlimited = false;
+	u32 member_bw;
+	int idx;
+	int err;
+
+	if (!port->group_id)
+		return mlx5_lag_dev_pcie_bw(port->dev, bw);
+
+	*bw = 0;
+	mlx5_lag_for_each(idx, 0, ldev, port->group_id) {
+		member = mlx5_lag_pf(ldev, idx);
+		if (!member)
+			continue;
+
+		err = mlx5_lag_dev_pcie_bw(member->dev, &member_bw);
+		if (err)
+			return err;
+
+		if (member_bw == U32_MAX)
+			unlimited = true;
+		else
+			*bw += member_bw;
+	}
+
+	if (unlimited)
+		*bw = U32_MAX;
+	return 0;
+}
+
 static int mlx5_lag_get_devices_oper_speed(struct mlx5_lag *ldev,
 					   u32 *sum_speed)
 {
 	bool mpesw = ldev->mode == MLX5_LAG_MODE_MPESW;
+	u32 pci_bw = U32_MAX;
 	int pf_idx;
 
 	*sum_speed = 0;
@@ -1443,6 +1488,7 @@ static int mlx5_lag_get_devices_oper_speed(struct mlx5_lag *ldev,
 		u8 opmod = MLX5_VPORT_STATE_OP_MOD_VNIC_VPORT;
 		struct mlx5_core_dev *pf_mdev;
 		struct lag_func *pf;
+		u32 dev_pci_bw;
 		u32 speed;
 		u8 state;
 		int ret;
@@ -1477,8 +1523,19 @@ static int mlx5_lag_get_devices_oper_speed(struct mlx5_lag *ldev,
 			return ret;
 		}
 
+		ret = mlx5_lag_port_pcie_bw(ldev, pf, &dev_pci_bw);
+		if (ret) {
+			mlx5_core_dbg(pf_mdev,
+				      "Failed to get PCIe bandwidth (err=%d)\n",
+				      ret);
+			return ret;
+		}
+
+		pci_bw = min(pci_bw, dev_pci_bw);
 		*sum_speed += speed;
 	}
+
+	*sum_speed = min(*sum_speed, pci_bw);
 
 	return 0;
 }
@@ -1510,6 +1567,7 @@ void mlx5_lag_reset_agg_speed(struct mlx5_lag *ldev)
 #ifdef CONFIG_MLX5_ESWITCH
 static int mlx5_lag_get_devices_max_speed(struct mlx5_lag *ldev, u32 *max_speed)
 {
+	u32 pci_bw = U32_MAX;
 	bool take_max;
 	int pf_idx;
 
@@ -1521,6 +1579,7 @@ static int mlx5_lag_get_devices_max_speed(struct mlx5_lag *ldev, u32 *max_speed)
 	mlx5_ldev_for_each(pf_idx, 0, ldev) {
 		struct mlx5_core_dev *pf_mdev;
 		struct lag_func *pf;
+		u32 dev_pci_bw;
 		u32 speed;
 		int ret;
 
@@ -1539,9 +1598,25 @@ static int mlx5_lag_get_devices_max_speed(struct mlx5_lag *ldev, u32 *max_speed)
 			return ret;
 		}
 
-		*max_speed = take_max ?
-			max(*max_speed, speed) : *max_speed + speed;
+		ret = mlx5_lag_port_pcie_bw(ldev, pf, &dev_pci_bw);
+		if (ret) {
+			mlx5_core_dbg(pf_mdev,
+				      "Failed to get PCIe bandwidth (err=%d)\n",
+				      ret);
+			return ret;
+		}
+
+		if (take_max) {
+			speed = min(speed, dev_pci_bw);
+			*max_speed = max(*max_speed, speed);
+		} else {
+			pci_bw = min(pci_bw, dev_pci_bw);
+			*max_speed += speed;
+		}
 	}
+
+	if (!take_max)
+		*max_speed = min(*max_speed, pci_bw);
 
 	return 0;
 }
