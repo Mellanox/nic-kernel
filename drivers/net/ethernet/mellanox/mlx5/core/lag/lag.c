@@ -1228,6 +1228,20 @@ int mlx5_deactivate_lag(struct mlx5_lag *ldev)
 	return err;
 }
 
+/* SD capable port whose group isn't combined, e.g. a secondary is unprobed */
+static bool mlx5_lag_has_uncombined_sd_port(struct mlx5_lag *ldev)
+{
+	struct lag_func *pf;
+	int i;
+
+	mlx5_ldev_for_each(i, 0, ldev) {
+		pf = mlx5_lag_pf(ldev, i);
+		if (!pf->group_id && mlx5_sd_is_supported(pf->dev))
+			return true;
+	}
+	return false;
+}
+
 bool mlx5_lag_check_prereq(struct mlx5_lag *ldev)
 {
 	int master_idx = mlx5_lag_get_dev_index_by_seq(ldev, MLX5_LAG_P1);
@@ -1240,6 +1254,9 @@ bool mlx5_lag_check_prereq(struct mlx5_lag *ldev)
 	int i;
 
 	if (master_idx < 0 || mlx5_lag_num_devs(ldev) != ldev->ports)
+		return false;
+
+	if (mlx5_lag_has_uncombined_sd_port(ldev))
 		return false;
 
 #ifdef CONFIG_MLX5_ESWITCH
