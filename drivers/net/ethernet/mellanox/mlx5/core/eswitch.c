@@ -935,6 +935,27 @@ static void esw_vport_cleanup(struct mlx5_eswitch *esw, struct mlx5_vport *vport
 	esw_vport_cleanup_acl(esw, vport);
 }
 
+static void mlx5_esw_vport_save_max_tx_speed(struct mlx5_eswitch *esw,
+					     struct mlx5_vport *vport)
+{
+	u16 op_mod = MLX5_VPORT_STATE_OP_MOD_ESW_VPORT;
+	int ret;
+
+	if (!MLX5_CAP_ESW(esw->dev, esw_vport_state_max_tx_speed) ||
+	    vport->vport == MLX5_VPORT_UPLINK || vport->max_tx_speed)
+		return;
+
+	if (mlx5_lag_is_active(esw->dev) && !vport->agg_max_tx_speed)
+		return;
+
+	ret = mlx5_query_vport_max_tx_speed(esw->dev, op_mod, vport->vport,
+					    true, &vport->max_tx_speed, NULL);
+	if (ret)
+		mlx5_core_dbg(esw->dev,
+			      "Failed to save vport %d max tx speed, err=%d\n",
+			      vport->vport, ret);
+}
+
 static void mlx5_esw_vport_set_max_tx_speed(struct mlx5_eswitch *esw,
 					    struct mlx5_vport *vport)
 {
@@ -999,6 +1020,7 @@ int mlx5_esw_vport_enable(struct mlx5_eswitch *esw, struct mlx5_vport *vport,
 	esw->enabled_vports++;
 	esw_debug(esw->dev, "Enabled VPORT(%d)\n", vport_num);
 
+	mlx5_esw_vport_save_max_tx_speed(esw, vport);
 	if (vport->agg_max_tx_speed)
 		mlx5_esw_vport_set_max_tx_speed(esw, vport);
 done:
