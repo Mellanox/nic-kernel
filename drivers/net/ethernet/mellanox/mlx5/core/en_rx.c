@@ -2266,8 +2266,9 @@ static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cq
 	}
 
 	if (*skb &&
-	    !(match && mlx5e_hw_gro_skb_has_enough_space(*skb, data_bcnt,
-							 page_size))) {
+	    !(match && mlx5e_ktls_shampo_can_merge(rq, cqe) &&
+	      mlx5e_hw_gro_skb_has_enough_space(*skb, data_bcnt,
+						page_size))) {
 		match = false;
 		mlx5e_shampo_flush_skb(rq, cqe, match);
 	}
@@ -2295,6 +2296,7 @@ static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cq
 
 		NAPI_GRO_CB(*skb)->count = 1;
 		skb_shinfo(*skb)->gso_size = cqe_bcnt - head_size;
+		mlx5e_ktls_shampo_init_session(rq, cqe);
 	} else {
 		NAPI_GRO_CB(*skb)->count++;
 
