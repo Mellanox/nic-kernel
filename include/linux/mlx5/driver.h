@@ -707,6 +707,7 @@ struct mlx5_rsvd_gids {
 
 struct mlx5_clock;
 struct mlx5_clock_dev_state;
+struct mlx5_data_direct;
 struct mlx5_dm;
 struct mlx5_fw_tracer;
 struct mlx5_vxlan;
@@ -801,6 +802,7 @@ struct mlx5_core_dev {
 	/* sync write combining state */
 	struct mutex wc_state_lock;
 	struct devlink *shd;
+	struct mlx5_data_direct *data_direct;
 };
 
 struct mlx5_db {
@@ -1035,6 +1037,7 @@ void mlx5_trigger_health_work(struct mlx5_core_dev *dev);
 int mlx5_frag_buf_alloc_node(struct mlx5_core_dev *dev, int size,
 			     struct mlx5_frag_buf *buf, int node);
 void mlx5_frag_buf_free(struct mlx5_core_dev *dev, struct mlx5_frag_buf *buf);
+void mlx5_core_mkey_set_relaxed_ordering(struct mlx5_core_dev *dev, void *mkc);
 int mlx5_core_create_mkey(struct mlx5_core_dev *dev, u32 *mkey, u32 *in,
 			  int inlen);
 int mlx5_core_destroy_mkey(struct mlx5_core_dev *dev, u32 mkey);
@@ -1394,5 +1397,11 @@ static inline struct net *mlx5_core_net(struct mlx5_core_dev *dev)
 }
 
 #define MLX5_SW_IMAGE_GUID_MAX_BYTES 9
+
+static inline bool mlx5_data_direct_supported(struct mlx5_core_dev *mdev)
+{
+	return MLX5_CAP_GEN(mdev, data_direct) &&
+	       MLX5_CAP_GEN_2(mdev, query_vuid);
+}
 
 #endif /* MLX5_DRIVER_H */

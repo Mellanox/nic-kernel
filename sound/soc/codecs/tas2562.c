@@ -483,7 +483,6 @@ static int tas2562_volume_control_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	reg_val = float_vol_db_lookup[index];
-
 	/*
 	 * The device applies the 32-bit coefficient to the playback path on
 	 * the write to DVC_CFG4 (the LSB, book 0 page 2 reg 0x0F), so the

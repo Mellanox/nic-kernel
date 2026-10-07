@@ -982,6 +982,7 @@ static int mlx5_cmd_modify_header_alloc(struct mlx5_flow_root_namespace *ns,
 					void *modify_actions,
 					struct mlx5_modify_hdr *modify_hdr)
 {
+	const struct mlx5_modify_header_attr *attr = &modify_hdr->attr;
 	u32 out[MLX5_ST_SZ_DW(alloc_modify_header_context_out)] = {};
 	int max_actions, actions_size, inlen, err;
 	struct mlx5_core_dev *dev = ns->dev;
@@ -1016,8 +1017,23 @@ static int mlx5_cmd_modify_header_alloc(struct mlx5_flow_root_namespace *ns,
 		max_actions = MLX5_CAP_FLOWTABLE_RDMA_TX(dev, max_modify_header_actions);
 		table_type = FS_FT_RDMA_TX;
 		break;
+	case MLX5_FLOW_NAMESPACE_NIC_RX_CLASS:
+		max_actions = MLX5_CAP_FLOWTABLE_NIC_RX_CLASS(dev, max_modify_header_actions);
+		table_type = FS_FT_NIC_RX_CLASS;
+		break;
 	default:
 		return -EOPNOTSUPP;
+	}
+
+	switch (attr->vport_mode) {
+	case MLX5_FLOW_STEERING_VPORT_MODE_VPORT_NUM:
+		break;
+	case MLX5_FLOW_STEERING_VPORT_MODE_VHCA_ID:
+		if (attr->other_vport || attr->other_eswitch)
+			return -EINVAL;
+		break;
+	default:
+		return -EINVAL;
 	}
 
 	if (num_actions > max_actions) {
@@ -1036,6 +1052,22 @@ static int mlx5_cmd_modify_header_alloc(struct mlx5_flow_root_namespace *ns,
 	MLX5_SET(alloc_modify_header_context_in, in, opcode,
 		 MLX5_CMD_OP_ALLOC_MODIFY_HEADER_CONTEXT);
 	MLX5_SET(alloc_modify_header_context_in, in, table_type, table_type);
+	MLX5_SET(alloc_modify_header_context_in, in, vport_mode,
+		 attr->vport_mode);
+	if (attr->vport_mode == MLX5_FLOW_STEERING_VPORT_MODE_VPORT_NUM) {
+		MLX5_SET(alloc_modify_header_context_in, in, vport_handle,
+			 attr->vport);
+		MLX5_SET(alloc_modify_header_context_in, in, other_vport,
+			 !!attr->other_vport);
+		if (attr->other_eswitch) {
+			MLX5_SET(alloc_modify_header_context_in, in, other_eswitch, 1);
+			MLX5_SET(alloc_modify_header_context_in, in,
+				 eswitch_owner_vhca_id, attr->esw_owner_vhca_id);
+		}
+	} else {
+		MLX5_SET(alloc_modify_header_context_in, in, vport_handle,
+			 attr->vhca_id);
+	}
 	MLX5_SET(alloc_modify_header_context_in, in, num_of_actions, num_actions);
 
 	actions_in = MLX5_ADDR_OF(alloc_modify_header_context_in, in, actions);
@@ -1177,6 +1209,7 @@ const struct mlx5_flow_cmds *mlx5_fs_cmd_get_default(enum fs_flow_table_type typ
 	case FS_FT_PORT_SEL:
 	case FS_FT_RDMA_TRANSPORT_RX:
 	case FS_FT_RDMA_TRANSPORT_TX:
+	case FS_FT_NIC_RX_CLASS:
 		return mlx5_fs_cmd_get_fw_cmds();
 	default:
 		return mlx5_fs_cmd_get_stub_cmds();

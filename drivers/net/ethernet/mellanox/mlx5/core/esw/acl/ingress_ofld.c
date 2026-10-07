@@ -66,6 +66,7 @@ static int esw_acl_ingress_mod_metadata_create(struct mlx5_eswitch *esw,
 					       struct mlx5_vport *vport)
 {
 	u8 action[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_flow_act flow_act = {};
 	int err = 0;
 	u32 key;
@@ -84,7 +85,7 @@ static int esw_acl_ingress_mod_metadata_create(struct mlx5_eswitch *esw,
 
 	vport->ingress.offloads.modify_metadata =
 		mlx5_modify_header_alloc(esw->dev, MLX5_FLOW_NAMESPACE_ESW_INGRESS,
-					 1, action);
+					 1, action, &mh_attr);
 	if (IS_ERR(vport->ingress.offloads.modify_metadata)) {
 		err = PTR_ERR(vport->ingress.offloads.modify_metadata);
 		esw_warn(esw->dev,
