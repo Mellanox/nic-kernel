@@ -840,52 +840,15 @@ out:
 static int pagefault_dmabuf_mr(struct mlx5_ib_mr *mr, size_t bcnt,
 			       u32 *bytes_mapped, u32 flags, u32 pdn)
 {
-	struct ib_umem_dmabuf *umem_dmabuf = to_ib_umem_dmabuf(mr->umem);
-	int access_mode = mr->data_direct ? MLX5_MKC_ACCESS_MODE_KSM :
-					    MLX5_MKC_ACCESS_MODE_MTT;
-	unsigned int old_page_shift = mr->page_shift;
-	unsigned int page_shift;
-	unsigned long page_size;
 	u32 xlt_flags = 0;
 	int err;
 
 	if (flags & MLX5_PF_FLAGS_ENABLE)
 		xlt_flags |= MLX5_IB_UPD_XLT_ENABLE;
 
-	dma_resv_lock(umem_dmabuf->attach->dmabuf->resv, NULL);
-	err = ib_umem_dmabuf_map_pages(umem_dmabuf);
-	if (err) {
-		dma_resv_unlock(umem_dmabuf->attach->dmabuf->resv);
+	err = mlx5_ib_dmabuf_mr_update_pas(mr, pdn, xlt_flags);
+	if (err)
 		return err;
-	}
-
-	page_size = mlx5_umem_dmabuf_find_best_pgsz(umem_dmabuf, access_mode);
-	if (!page_size) {
-		ib_umem_dmabuf_unmap_pages(umem_dmabuf);
-		err = -EINVAL;
-	} else {
-		page_shift = order_base_2(page_size);
-		if (page_shift != mr->page_shift && mr->dmabuf_faulted) {
-			err = mlx5r_umr_dmabuf_update_pgsz(mr, xlt_flags, pdn,
-							   page_shift);
-		} else {
-			mr->page_shift = page_shift;
-			if (mr->data_direct)
-				err = mlx5r_umr_update_data_direct_ksm_pas(
-					mr, xlt_flags);
-			else
-				err = mlx5r_umr_update_mr_pas(mr, xlt_flags,
-							      pdn);
-		}
-	}
-	dma_resv_unlock(umem_dmabuf->attach->dmabuf->resv);
-
-	if (err) {
-		mr->page_shift = old_page_shift;
-		return err;
-	}
-
-	mr->dmabuf_faulted = 1;
 
 	if (bytes_mapped)
 		*bytes_mapped += bcnt;
@@ -944,23 +907,6 @@ int mlx5_ib_init_odp_mr(struct mlx5_ib_mr *mr, struct ib_pd *pd)
 				mr->umem->length, NULL,
 				MLX5_PF_FLAGS_SNAPSHOT | MLX5_PF_FLAGS_ENABLE,
 				to_mpd(pd)->pdn);
-	return ret >= 0 ? 0 : ret;
-}
-
-int mlx5_ib_init_dmabuf_mr(struct mlx5_ib_mr *mr, struct ib_pd *pd)
-{
-	struct mlx5_ib_dev *dev = mr_to_mdev(mr);
-	u32 pdn;
-	int ret;
-
-	if (mr->data_direct)
-		pdn = dev->mdev->data_direct->pdn;
-	else
-		pdn = to_mpd(pd)->pdn;
-
-	ret = pagefault_dmabuf_mr(mr, mr->umem->length, NULL,
-				  MLX5_PF_FLAGS_ENABLE, pdn);
-
 	return ret >= 0 ? 0 : ret;
 }
 
