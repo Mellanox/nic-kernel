@@ -64,6 +64,7 @@ enum mlx5_flow_resource_owner {
 struct mlx5_modify_hdr {
 	enum mlx5_flow_namespace_type ns_type;
 	enum mlx5_flow_resource_owner owner;
+	struct mlx5_modify_header_attr attr;
 	union {
 		struct mlx5_fs_dr_action fs_dr_action;
 		struct mlx5_fs_hws_action fs_hws_action;

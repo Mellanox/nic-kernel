@@ -150,6 +150,23 @@ enum fs_flow_table_type {
 	FS_FT_MAX_TYPE = FS_FT_NIC_RX_CLASS,
 };
 
+enum mlx5_flow_steering_vport_mode {
+	MLX5_FLOW_STEERING_VPORT_MODE_VPORT_NUM,
+	MLX5_FLOW_STEERING_VPORT_MODE_VHCA_ID,
+};
+
+struct mlx5_modify_header_attr {
+	enum mlx5_flow_steering_vport_mode vport_mode;
+	bool other_vport;
+	bool other_eswitch;
+	union {
+		u16 vport_handle;
+		u16 vport;
+		u16 vhca_id;
+	};
+	u16 esw_owner_vhca_id;
+};
+
 struct mlx5_pkt_reformat;
 struct mlx5_modify_hdr;
 struct mlx5_flow_definer;
@@ -351,7 +368,8 @@ int mlx5_fs_remove_rx_underlay_qpn(struct mlx5_core_dev *dev, u32 underlay_qpn);
 
 struct mlx5_modify_hdr *mlx5_modify_header_alloc(struct mlx5_core_dev *dev,
 						 u8 ns_type, u8 num_actions,
-						 void *modify_actions);
+						 void *modify_actions,
+						 const struct mlx5_modify_header_attr *attr);
 void mlx5_modify_header_dealloc(struct mlx5_core_dev *dev,
 				struct mlx5_modify_hdr *modify_hdr);
 struct mlx5_flow_definer *

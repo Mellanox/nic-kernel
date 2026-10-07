@@ -1320,6 +1320,7 @@ static int macsec_fs_rx_roce_jump_to_rdma_rules_create(struct mlx5_macsec_fs *ma
 {
 	u8 action[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
 	struct mlx5_core_dev *mdev = macsec_fs->mdev;
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_flow_destination dst = {};
 	struct mlx5_modify_hdr *modify_hdr;
 	MLX5_DECLARE_FLOW_ACT(flow_act);
@@ -1345,7 +1346,7 @@ static int macsec_fs_rx_roce_jump_to_rdma_rules_create(struct mlx5_macsec_fs *ma
 	MLX5_SET(copy_action_in, action, dst_offset, 0);
 
 	modify_hdr = mlx5_modify_header_alloc(macsec_fs->mdev, MLX5_FLOW_NAMESPACE_KERNEL_RX_MACSEC,
-					      1, action);
+					      1, action, &mh_attr);
 
 	if (IS_ERR(modify_hdr)) {
 		err = PTR_ERR(modify_hdr);
@@ -1728,6 +1729,7 @@ macsec_fs_rx_add_rule(struct mlx5_macsec_fs *macsec_fs,
 	u8 action[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
 	struct mlx5_macsec_rx *rx_fs = macsec_fs->rx_fs;
 	struct mlx5_core_dev *mdev = macsec_fs->mdev;
+	struct mlx5_modify_header_attr mh_attr = {};
 	union mlx5_macsec_rule *macsec_rule = NULL;
 	struct mlx5_modify_hdr *modify_hdr = NULL;
 	struct mlx5_macsec_flow_table *ft_crypto;
@@ -1766,7 +1768,7 @@ macsec_fs_rx_add_rule(struct mlx5_macsec_fs *macsec_fs,
 	MLX5_SET(set_action_in, action, length, 32);
 
 	modify_hdr = mlx5_modify_header_alloc(mdev, MLX5_FLOW_NAMESPACE_KERNEL_RX_MACSEC,
-					      1, action);
+					      1, action, &mh_attr);
 	if (IS_ERR(modify_hdr)) {
 		err = PTR_ERR(modify_hdr);
 		mlx5_core_err(mdev, "Fail to alloc MACsec set modify_header_id err=%d\n", err);
@@ -2193,6 +2195,7 @@ static int mlx5_macsec_fs_add_roce_rule_tx(struct mlx5_macsec_fs *macsec_fs, u32
 	u8 action[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
 	struct mlx5_macsec_tx *tx_fs = macsec_fs->tx_fs;
 	struct mlx5_core_dev *mdev = macsec_fs->mdev;
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_modify_hdr *modify_hdr = NULL;
 	struct mlx5_roce_macsec_tx_rule *tx_rule;
 	struct mlx5_flow_destination dest = {};
@@ -2222,7 +2225,7 @@ static int mlx5_macsec_fs_add_roce_rule_tx(struct mlx5_macsec_fs *macsec_fs, u32
 	MLX5_SET(set_action_in, action, length, 8);
 
 	modify_hdr = mlx5_modify_header_alloc(mdev, MLX5_FLOW_NAMESPACE_RDMA_TX_MACSEC,
-					      1, action);
+					      1, action, &mh_attr);
 	if (IS_ERR(modify_hdr)) {
 		err = PTR_ERR(modify_hdr);
 		mlx5_core_err(mdev, "Fail to alloc ROCE MACsec set modify_header_id err=%d\n",

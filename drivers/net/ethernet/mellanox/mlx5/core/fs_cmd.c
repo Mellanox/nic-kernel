@@ -982,6 +982,7 @@ static int mlx5_cmd_modify_header_alloc(struct mlx5_flow_root_namespace *ns,
 					void *modify_actions,
 					struct mlx5_modify_hdr *modify_hdr)
 {
+	const struct mlx5_modify_header_attr *attr = &modify_hdr->attr;
 	u32 out[MLX5_ST_SZ_DW(alloc_modify_header_context_out)] = {};
 	int max_actions, actions_size, inlen, err;
 	struct mlx5_core_dev *dev = ns->dev;
@@ -1024,6 +1025,17 @@ static int mlx5_cmd_modify_header_alloc(struct mlx5_flow_root_namespace *ns,
 		return -EOPNOTSUPP;
 	}
 
+	switch (attr->vport_mode) {
+	case MLX5_FLOW_STEERING_VPORT_MODE_VPORT_NUM:
+		break;
+	case MLX5_FLOW_STEERING_VPORT_MODE_VHCA_ID:
+		if (attr->other_vport || attr->other_eswitch)
+			return -EINVAL;
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	if (num_actions > max_actions) {
 		mlx5_core_warn(dev, "too many modify header actions %d, max supported %d\n",
 			       num_actions, max_actions);
@@ -1040,6 +1052,22 @@ static int mlx5_cmd_modify_header_alloc(struct mlx5_flow_root_namespace *ns,
 	MLX5_SET(alloc_modify_header_context_in, in, opcode,
 		 MLX5_CMD_OP_ALLOC_MODIFY_HEADER_CONTEXT);
 	MLX5_SET(alloc_modify_header_context_in, in, table_type, table_type);
+	MLX5_SET(alloc_modify_header_context_in, in, vport_mode,
+		 attr->vport_mode);
+	if (attr->vport_mode == MLX5_FLOW_STEERING_VPORT_MODE_VPORT_NUM) {
+		MLX5_SET(alloc_modify_header_context_in, in, vport_handle,
+			 attr->vport);
+		MLX5_SET(alloc_modify_header_context_in, in, other_vport,
+			 !!attr->other_vport);
+		if (attr->other_eswitch) {
+			MLX5_SET(alloc_modify_header_context_in, in, other_eswitch, 1);
+			MLX5_SET(alloc_modify_header_context_in, in,
+				 eswitch_owner_vhca_id, attr->esw_owner_vhca_id);
+		}
+	} else {
+		MLX5_SET(alloc_modify_header_context_in, in, vport_handle,
+			 attr->vhca_id);
+	}
 	MLX5_SET(alloc_modify_header_context_in, in, num_of_actions, num_actions);
 
 	actions_in = MLX5_ADDR_OF(alloc_modify_header_context_in, in, actions);

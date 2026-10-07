@@ -4082,7 +4082,8 @@ mlx5_get_root_namespace(struct mlx5_core_dev *dev, enum mlx5_flow_namespace_type
 
 struct mlx5_modify_hdr *mlx5_modify_header_alloc(struct mlx5_core_dev *dev,
 						 u8 ns_type, u8 num_actions,
-						 void *modify_actions)
+						 void *modify_actions,
+						 const struct mlx5_modify_header_attr *attr)
 {
 	struct mlx5_flow_root_namespace *root;
 	struct mlx5_modify_hdr *modify_hdr;
@@ -4097,6 +4098,7 @@ struct mlx5_modify_hdr *mlx5_modify_header_alloc(struct mlx5_core_dev *dev,
 		return ERR_PTR(-ENOMEM);
 
 	modify_hdr->ns_type = ns_type;
+	modify_hdr->attr = *attr;
 	err = root->cmds->modify_header_alloc(root, ns_type, num_actions,
 					      modify_actions, modify_hdr);
 	if (err) {

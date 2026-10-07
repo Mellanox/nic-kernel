@@ -98,6 +98,7 @@ static int mlx5_esw_indir_table_rule_get(struct mlx5_eswitch *esw,
 {
 	struct mlx5_esw_flow_attr *esw_attr = attr->esw_attr;
 	struct mlx5_fs_chains *chains = esw_chains(esw);
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5e_tc_mod_hdr_acts mod_acts = {};
 	struct mlx5_flow_destination dest = {};
 	struct mlx5_esw_indir_table_rule *rule;
@@ -128,7 +129,8 @@ static int mlx5_esw_indir_table_rule_get(struct mlx5_eswitch *esw,
 		goto err_mod_hdr_regc1;
 
 	flow_act.modify_hdr = mlx5_modify_header_alloc(esw->dev, MLX5_FLOW_NAMESPACE_FDB,
-						       mod_acts.num_actions, mod_acts.actions);
+						       mod_acts.num_actions, mod_acts.actions,
+						       &mh_attr);
 	if (IS_ERR(flow_act.modify_hdr)) {
 		err = PTR_ERR(flow_act.modify_hdr);
 		goto err_mod_hdr_alloc;
