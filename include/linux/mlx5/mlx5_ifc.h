@@ -7414,10 +7414,14 @@ struct mlx5_ifc_alloc_modify_header_context_in_bits {
 	u8         reserved_at_20[0x10];
 	u8         op_mod[0x10];
 
-	u8         reserved_at_40[0x20];
+	u8         eswitch_owner_vhca_id[0x10];
+	u8         vport_handle[0x10];
 
 	u8         table_type[0x8];
-	u8         reserved_at_68[0x10];
+	u8         other_vport[0x1];
+	u8         other_eswitch[0x1];
+	u8         vport_mode[0x1];
+	u8         reserved_at_6b[0xd];
 	u8         num_of_actions[0x8];
 
 	union mlx5_ifc_set_add_copy_action_in_auto_bits actions[];
