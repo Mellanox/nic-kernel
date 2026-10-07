@@ -3069,6 +3069,7 @@ mlx5_ib_create_modify_header(struct mlx5_ib_dev *dev,
 			     enum mlx5_ib_uapi_flow_table_type ft_type,
 			     u8 num_actions, void *in)
 {
+	struct mlx5_modify_header_attr mh_attr = {};
 	enum mlx5_flow_namespace_type namespace;
 	struct mlx5_ib_flow_action *maction;
 	int ret;
@@ -3082,7 +3083,8 @@ mlx5_ib_create_modify_header(struct mlx5_ib_dev *dev,
 		return ERR_PTR(-ENOMEM);
 
 	maction->flow_action_raw.modify_hdr =
-		mlx5_modify_header_alloc(dev->mdev, namespace, num_actions, in);
+		mlx5_modify_header_alloc(dev->mdev, namespace, num_actions, in,
+					 &mh_attr);
 
 	if (IS_ERR(maction->flow_action_raw.modify_hdr)) {
 		ret = PTR_ERR(maction->flow_action_raw.modify_hdr);

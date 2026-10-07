@@ -2348,6 +2348,7 @@ static int esw_create_restore_table(struct mlx5_eswitch *esw)
 {
 	u8 modact[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
 	int inlen = MLX5_ST_SZ_BYTES(create_flow_group_in);
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_flow_table_attr ft_attr = {};
 	struct mlx5_core_dev *dev = esw->dev;
 	struct mlx5_flow_namespace *ns;
@@ -2409,7 +2410,7 @@ static int esw_create_restore_table(struct mlx5_eswitch *esw)
 		 MLX5_ACTION_IN_FIELD_METADATA_REG_B);
 	mod_hdr = mlx5_modify_header_alloc(esw->dev,
 					   MLX5_FLOW_NAMESPACE_KERNEL, 1,
-					   modact);
+					   modact, &mh_attr);
 	if (IS_ERR(mod_hdr)) {
 		err = PTR_ERR(mod_hdr);
 		esw_warn(dev, "Failed to create restore mod header, err: %d\n",
