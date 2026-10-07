@@ -2299,6 +2299,7 @@ static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cq
 
 		NAPI_GRO_CB(*skb)->count = 1;
 		skb_shinfo(*skb)->gso_size = cqe_bcnt - head_size;
+		mlx5e_ktls_shampo_init_session(rq, cqe);
 	} else {
 		NAPI_GRO_CB(*skb)->count++;
 
