@@ -894,6 +894,66 @@ static const struct dma_buf_attach_ops mlx5_ib_dmabuf_attach_ops = {
 	.invalidate_mappings = mlx5_ib_dmabuf_invalidate_cb,
 };
 
+int mlx5_ib_dmabuf_mr_update_pas(struct mlx5_ib_mr *mr, u32 pdn, u32 flags)
+{
+	struct ib_umem_dmabuf *umem_dmabuf = to_ib_umem_dmabuf(mr->umem);
+	int access_mode = mr->data_direct ? MLX5_MKC_ACCESS_MODE_KSM :
+					    MLX5_MKC_ACCESS_MODE_MTT;
+	unsigned int old_page_shift = mr->page_shift;
+	unsigned int page_shift;
+	unsigned long page_size;
+	int err;
+
+	dma_resv_lock(umem_dmabuf->attach->dmabuf->resv, NULL);
+	err = ib_umem_dmabuf_map_pages(umem_dmabuf);
+	if (err) {
+		dma_resv_unlock(umem_dmabuf->attach->dmabuf->resv);
+		return err;
+	}
+
+	page_size = mlx5_umem_dmabuf_find_best_pgsz(umem_dmabuf, access_mode);
+	if (!page_size) {
+		ib_umem_dmabuf_unmap_pages(umem_dmabuf);
+		err = -EINVAL;
+	} else {
+		page_shift = order_base_2(page_size);
+		if (page_shift != mr->page_shift && mr->dmabuf_faulted) {
+			err = mlx5r_umr_dmabuf_update_pgsz(mr, flags, pdn,
+							   page_shift);
+		} else {
+			mr->page_shift = page_shift;
+			if (mr->data_direct)
+				err = mlx5r_umr_update_data_direct_ksm_pas(
+					mr, flags);
+			else
+				err = mlx5r_umr_update_mr_pas(mr, flags,
+							      pdn);
+		}
+	}
+	dma_resv_unlock(umem_dmabuf->attach->dmabuf->resv);
+
+	if (err) {
+		mr->page_shift = old_page_shift;
+		return err;
+	}
+
+	mr->dmabuf_faulted = 1;
+	return 0;
+}
+
+int mlx5_ib_init_dmabuf_mr(struct mlx5_ib_mr *mr, struct ib_pd *pd)
+{
+	struct mlx5_ib_dev *dev = mr_to_mdev(mr);
+	u32 pdn;
+
+	if (mr->data_direct)
+		pdn = dev->mdev->data_direct->pdn;
+	else
+		pdn = to_mpd(pd)->pdn;
+
+	return mlx5_ib_dmabuf_mr_update_pas(mr, pdn, MLX5_IB_UPD_XLT_ENABLE);
+}
+
 static struct ib_mr *
 reg_user_mr_dmabuf(struct ib_pd *pd, struct device *dma_device,
 		   u64 offset, u64 length, u64 virt_addr,
