@@ -659,6 +659,9 @@ struct mlx5e_hw_gro_data {
 	struct sk_buff *skb;
 	struct flow_keys fk;
 	int second_ip_id;
+#ifdef CONFIG_MLX5_EN_TLS
+	u8 tls_offload;
+#endif
 };
 
 enum mlx5e_mpwrq_umr_mode {
