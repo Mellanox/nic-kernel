@@ -89,7 +89,7 @@ int mlx5_nodnic_open_sq(struct mlx5_nodnic_core_dev *dev);
 int mlx5_nodnic_open_cq(struct mlx5_nodnic_core_dev *dev);
 int mlx5_nodnic_init_working_buffer(struct mlx5_nodnic_core_dev *dev);
 int mlx5_nodnic_enable_port(struct mlx5_nodnic_core_dev *dev);
-void mlx5_nodnic_disable_port(struct mlx5_nodnic_core_dev *dev);
+int mlx5_nodnic_disable_port(struct mlx5_nodnic_core_dev *dev);
 int mlx5_nodnic_get_fw_initializing(struct mlx5_nodnic_core_dev *dev,
 				    u8 *initializing);
 int mlx5_nodnic_set_nic_interface(struct mlx5_nodnic_core_dev *dev);
