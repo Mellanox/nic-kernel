@@ -12,6 +12,7 @@
 #include <linux/skbuff.h>
 #include <linux/timer.h>
 #include <linux/types.h>
+#include <linux/u64_stats_sync.h>
 
 #define MLX5_NODNIC_RING_ENTRIES	1024
 #define MLX5_NODNIC_CQE_SIZE_B		64
@@ -42,6 +43,20 @@ enum mlx5_nodnic_cqe_opcode {
 	OPCODE_CQ_SEND_ERR = 0xD,
 	OPCODE_CQ_RECV_ERR,
 	OPCODE_CQ_INVALID,
+};
+
+struct mlx5_nodnic_sq_stats {
+	struct u64_stats_sync syncp; /* NAPI */
+	u64_stats_t packets;
+	u64_stats_t bytes;
+	struct u64_stats_sync xmit_syncp; /* ndo_start_xmit */
+	u64_stats_t dropped;
+};
+
+struct mlx5_nodnic_rq_stats {
+	struct u64_stats_sync syncp;
+	u64_stats_t packets;
+	u64_stats_t bytes;
 };
 
 struct mlx5_nodnic_ring {
@@ -108,6 +123,9 @@ struct mlx5_nodnic_priv {
 
 	struct mutex state_lock; /* protects Interface state */
 	unsigned long state;
+
+	struct mlx5_nodnic_sq_stats sq_stats;
+	struct mlx5_nodnic_rq_stats rq_stats;
 
 	struct mlx5_nodnic_sq	sq;
 	struct mlx5_nodnic_rq	rq;
