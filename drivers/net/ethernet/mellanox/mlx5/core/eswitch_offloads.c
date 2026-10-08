@@ -3809,7 +3809,7 @@ static void esw_offloads_vport_metadata_cleanup(struct mlx5_eswitch *esw,
 	vport->default_metadata = 0;
 }
 
-static void esw_offloads_metadata_uninit(struct mlx5_eswitch *esw)
+void mlx5_esw_offloads_metadata_uninit(struct mlx5_eswitch *esw)
 {
 	struct mlx5_vport *vport;
 	unsigned long i;
@@ -3839,20 +3839,21 @@ static int esw_offloads_metadata_init(struct mlx5_eswitch *esw)
 	return 0;
 
 metadata_err:
-	esw_offloads_metadata_uninit(esw);
+	mlx5_esw_offloads_metadata_uninit(esw);
 	return err;
 }
 
-/* Deferred metadata init for SD devices: allocate vport metadata and
- * refresh the ingress ACL for every vport whose ACL was created with
- * metadata=0 in esw_create_offloads_acl_tables() / esw_vport_setup().
+/* Metadata init for SD devices: allocate vport metadata and, if switchdev
+ * was enabled before the SD group was ready, refresh the ingress ACL for
+ * every vport whose ACL was created with metadata=0 in
+ * esw_create_offloads_acl_tables() / esw_vport_setup().
  *
  * No Rep is loaded at this point ==> no Rep net-dev exists, so no need
  * to take rtnl lock.
  *
  * Safe to call multiple times - subsequent calls are no-ops.
  */
-int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw)
+int mlx5_esw_offloads_sd_metadata_init(struct mlx5_eswitch *esw)
 {
 	struct mlx5_vport *manager, *vport;
 	unsigned long i;
@@ -3865,13 +3866,17 @@ int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw)
 	if (IS_ERR(manager))
 		return PTR_ERR(manager);
 
+	down_write(&esw->mode_lock);
 	/* Sanity check: skip if metadata was already initialized */
 	if (manager->default_metadata)
-		return 0;
+		goto out;
 
 	err = esw_offloads_metadata_init(esw);
 	if (err)
-		return err;
+		goto err_meta_init;
+
+	if (esw->mode != MLX5_ESWITCH_OFFLOADS)
+		goto out;
 
 	mutex_lock(&esw->state_lock);
 	/* Manager vport doesn't have a rep/netdev loaded but its ingress ACL
@@ -3902,11 +3907,15 @@ int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw)
 	}
 
 	mutex_unlock(&esw->state_lock);
+out:
+	up_write(&esw->mode_lock);
 	return 0;
 
 err_acl:
-	esw_offloads_metadata_uninit(esw);
+	mlx5_esw_offloads_metadata_uninit(esw);
 	mutex_unlock(&esw->state_lock);
+err_meta_init:
+	up_write(&esw->mode_lock);
 	return err;
 }
 
@@ -4275,8 +4284,8 @@ int esw_offloads_enable(struct mlx5_eswitch *esw)
 	if (err)
 		goto err_roce;
 
-	/* SD devices defer metadata init until SD is ready and
-	 * mlx5_sd_pf_num_get() can return the correct pf_num.
+	/* SD devices' metadata is initialized by SD once the group is ready
+	 * and mlx5_sd_pf_num_get() can return the correct pf_num.
 	 */
 	if (!mlx5_get_sd(esw->dev)) {
 		err = esw_offloads_metadata_init(esw);
@@ -4344,7 +4353,8 @@ err_steering_init:
 err_pool:
 	esw_set_passing_vport_metadata(esw, false);
 err_vport_metadata:
-	esw_offloads_metadata_uninit(esw);
+	if (!mlx5_get_sd(esw->dev))
+		mlx5_esw_offloads_metadata_uninit(esw);
 err_metadata:
 	mlx5_rdma_disable_roce(esw->dev);
 err_roce:
@@ -4381,7 +4391,8 @@ void esw_offloads_disable(struct mlx5_eswitch *esw)
 	esw_set_passing_vport_metadata(esw, false);
 	esw_offloads_steering_cleanup(esw);
 	mapping_destroy(esw->offloads.reg_c0_obj_pool);
-	esw_offloads_metadata_uninit(esw);
+	if (!mlx5_get_sd(esw->dev))
+		mlx5_esw_offloads_metadata_uninit(esw);
 	mlx5_rdma_disable_roce(esw->dev);
 	mlx5_esw_adjacent_vhcas_cleanup(esw);
 	/* must be done after vhcas cleanup to avoid adjacent vports connect */
@@ -4564,15 +4575,36 @@ static bool mlx5_devlink_switchdev_active_mode_change(struct mlx5_eswitch *esw,
 #define MLX5_ESW_HOLD_TIMEOUT_MS 7000
 #define MLX5_ESW_HOLD_RETRY_DELAY_MS 500
 
+/* Unlike mlx5_esw_try_lock(), don't refuse the lock over eswitch users.
+ * Teardown must run even with TC flows still offloaded, as those are only
+ * flushed once the REPs are removed.
+ */
+static bool esw_try_lock_ignore_users(struct mlx5_eswitch *esw)
+{
+	if (!down_write_trylock(&esw->mode_lock))
+		return false;
+
+	if (esw->eswitch_operation_in_progress) {
+		up_write(&esw->mode_lock);
+		return false;
+	}
+
+	return true;
+}
+
 void mlx5_eswitch_safe_aux_devs_remove(struct mlx5_core_dev *dev)
 {
+	struct mlx5_eswitch *esw = dev->priv.eswitch;
 	unsigned long timeout;
 	bool hold_esw = true;
 
+	if (!mlx5_esw_allowed(esw))
+		return;
+
 	/* Wait for any concurrent eswitch mode transition to complete. */
-	if (!mlx5_esw_hold(dev)) {
+	if (!esw_try_lock_ignore_users(esw)) {
 		timeout = jiffies + msecs_to_jiffies(MLX5_ESW_HOLD_TIMEOUT_MS);
-		while (!mlx5_esw_hold(dev)) {
+		while (!esw_try_lock_ignore_users(esw)) {
 			if (!time_before(jiffies, timeout)) {
 				hold_esw = false;
 				break;
@@ -4581,9 +4613,19 @@ void mlx5_eswitch_safe_aux_devs_remove(struct mlx5_core_dev *dev)
 		}
 	}
 	if (hold_esw) {
+		/* Keep mode_lock and reps_lock unnested. The operation flag
+		 * excludes mode users while mode_lock is dropped before the
+		 * REPs removal takes reps_lock.
+		 */
+		esw->eswitch_operation_in_progress = true;
+		mlx5_esw_unlock(esw);
+
 		if (mlx5_eswitch_mode(dev) == MLX5_ESWITCH_OFFLOADS)
 			mlx5_core_reps_aux_devs_remove(dev);
-		mlx5_esw_release(dev);
+
+		down_write(&esw->mode_lock);
+		esw->eswitch_operation_in_progress = false;
+		mlx5_esw_unlock(esw);
 	}
 }
 
@@ -4968,6 +5010,29 @@ mlx5_eswitch_register_vport_reps_blocked(struct mlx5_eswitch *esw,
 	}
 }
 
+static void mlx5_eswitch_attach_uplink_netdev(struct mlx5_eswitch *esw,
+					      struct mlx5_eswitch_rep *uplink)
+{
+	const struct mlx5_eswitch_rep_ops *ops;
+	int type;
+	int err;
+
+	for (type = 0; type < NUM_REP_TYPES; type++) {
+		if (atomic_read(&uplink->rep_data[type].state) != REP_LOADED)
+			continue;
+
+		ops = esw->offloads.rep_ops[type];
+		if (!ops || !ops->attach_uplink_netdev)
+			continue;
+
+		err = ops->attach_uplink_netdev(esw->dev, uplink);
+		if (err)
+			esw_warn(esw->dev,
+				 "Failed to attach uplink netdev to rep type %d, err(%d)\n",
+				 type, err);
+	}
+}
+
 static void mlx5_eswitch_reload_reps_blocked(struct mlx5_eswitch *esw)
 {
 	struct mlx5_eswitch_rep *uplink;
@@ -4987,6 +5052,8 @@ static void mlx5_eswitch_reload_reps_blocked(struct mlx5_eswitch *esw)
 			__esw_offloads_unload_rep(esw, uplink, REP_ETH);
 		return;
 	}
+
+	mlx5_eswitch_attach_uplink_netdev(esw, uplink);
 
 	if (mlx5_get_sd(esw->dev) && !mlx5_lag_is_active(esw->dev))
 		return;
@@ -5010,6 +5077,16 @@ static void mlx5_eswitch_reload_reps(struct mlx5_eswitch *esw)
 	mlx5_esw_reps_block(esw);
 	mlx5_eswitch_reload_reps_blocked(esw);
 	mlx5_esw_reps_unblock(esw);
+}
+
+void mlx5_esw_offloads_uplink_netdev_attach(struct mlx5_core_dev *dev)
+{
+	struct mlx5_eswitch *esw = dev->priv.eswitch;
+
+	if (!mlx5_esw_allowed(esw))
+		return;
+
+	mlx5_esw_add_work(esw, mlx5_eswitch_reload_reps, GFP_KERNEL);
 }
 
 static void

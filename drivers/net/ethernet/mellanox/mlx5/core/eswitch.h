@@ -445,7 +445,8 @@ struct mlx5_eswitch {
 
 void esw_offloads_disable(struct mlx5_eswitch *esw);
 int esw_offloads_enable(struct mlx5_eswitch *esw);
-int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw);
+int mlx5_esw_offloads_sd_metadata_init(struct mlx5_eswitch *esw);
+void mlx5_esw_offloads_metadata_uninit(struct mlx5_eswitch *esw);
 void esw_offloads_cleanup(struct mlx5_eswitch *esw);
 int esw_offloads_init(struct mlx5_eswitch *esw);
 
@@ -1013,6 +1014,7 @@ mlx5_esw_lag_demux_rule_create(struct mlx5_eswitch *esw, u16 vport_num,
 			       struct mlx5_flow_table *lag_ft);
 void mlx5_esw_reps_block(struct mlx5_eswitch *esw);
 void mlx5_esw_reps_unblock(struct mlx5_eswitch *esw);
+void mlx5_esw_offloads_uplink_netdev_attach(struct mlx5_core_dev *dev);
 #else  /* CONFIG_MLX5_ESWITCH */
 /* eswitch API stubs */
 static inline int  mlx5_eswitch_init(struct mlx5_core_dev *dev) { return 0; }
@@ -1103,6 +1105,8 @@ mlx5_esw_host_functions_enabled(const struct mlx5_core_dev *dev)
 
 static inline void mlx5_esw_reps_block(struct mlx5_eswitch *esw) {}
 static inline void mlx5_esw_reps_unblock(struct mlx5_eswitch *esw) {}
+static inline void
+mlx5_esw_offloads_uplink_netdev_attach(struct mlx5_core_dev *dev) {}
 
 static inline bool
 mlx5_esw_vport_vhca_id(struct mlx5_eswitch *esw, u16 vportn, u16 *vhca_id)
@@ -1125,6 +1129,14 @@ mlx5_esw_lag_demux_rule_create(struct mlx5_eswitch *esw, u16 vport_num,
 	return ERR_PTR(-EOPNOTSUPP);
 }
 
+static inline int
+mlx5_esw_offloads_sd_metadata_init(struct mlx5_eswitch *esw)
+{
+	return 0;
+}
+
+static inline void
+mlx5_esw_offloads_metadata_uninit(struct mlx5_eswitch *esw) {}
 #endif /* CONFIG_MLX5_ESWITCH */
 
 #endif /* __MLX5_ESWITCH_H__ */
