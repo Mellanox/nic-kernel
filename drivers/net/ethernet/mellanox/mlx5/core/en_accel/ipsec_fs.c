@@ -1755,6 +1755,7 @@ static int setup_modify_header(struct mlx5e_ipsec *ipsec, int type, u32 val, u8 
 {
 	enum mlx5_flow_namespace_type ns_type = ipsec_fs_get_ns(ipsec, type, dir);
 	u8 action[3][MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_core_dev *mdev = ipsec->mdev;
 	struct mlx5_modify_hdr *modify_hdr;
 	u8 num_of_actions = 1;
@@ -1796,7 +1797,8 @@ static int setup_modify_header(struct mlx5e_ipsec *ipsec, int type, u32 val, u8 
 	MLX5_SET(set_action_in, action[0], offset, 0);
 	MLX5_SET(set_action_in, action[0], length, 32);
 
-	modify_hdr = mlx5_modify_header_alloc(mdev, ns_type, num_of_actions, action);
+	modify_hdr = mlx5_modify_header_alloc(mdev, ns_type, num_of_actions,
+					      action, &mh_attr);
 	if (IS_ERR(modify_hdr)) {
 		mlx5_core_err(mdev, "Failed to allocate modify_header %pe\n",
 			      modify_hdr);

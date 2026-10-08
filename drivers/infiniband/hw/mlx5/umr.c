@@ -59,10 +59,10 @@ static __be64 get_umr_update_access_mask(struct mlx5_ib_dev *dev)
 	if (MLX5_CAP_GEN(dev->mdev, atomic))
 		result |= MLX5_MKEY_MASK_A;
 
-	if (MLX5_CAP_GEN(dev->mdev, relaxed_ordering_write_umr))
+	if (MLX5_CAP_GEN(dev->mdev, order_write_after_write_umr))
 		result |= MLX5_MKEY_MASK_RELAXED_ORDERING_WRITE;
 
-	if (MLX5_CAP_GEN(dev->mdev, relaxed_ordering_read_umr))
+	if (MLX5_CAP_GEN(dev->mdev, pci_relaxed_ordered_read_umr))
 		result |= MLX5_MKEY_MASK_RELAXED_ORDERING_READ;
 
 	return cpu_to_be64(result);
@@ -88,11 +88,11 @@ static int umr_check_mkey_mask(struct mlx5_ib_dev *dev, u64 mask)
 		return -EPERM;
 
 	if (mask & MLX5_MKEY_MASK_RELAXED_ORDERING_WRITE &&
-	    !MLX5_CAP_GEN(dev->mdev, relaxed_ordering_write_umr))
+	    !MLX5_CAP_GEN(dev->mdev, order_write_after_write_umr))
 		return -EPERM;
 
 	if (mask & MLX5_MKEY_MASK_RELAXED_ORDERING_READ &&
-	    !MLX5_CAP_GEN(dev->mdev, relaxed_ordering_read_umr))
+	    !MLX5_CAP_GEN(dev->mdev, pci_relaxed_ordered_read_umr))
 		return -EPERM;
 
 	return 0;
@@ -339,8 +339,8 @@ err:
 
 static void mlx5r_umr_done(struct ib_cq *cq, struct ib_wc *wc)
 {
-	struct mlx5_ib_umr_context *context =
-		container_of(wc->wr_cqe, struct mlx5_ib_umr_context, cqe);
+	struct mlx5r_umr_context *context =
+		container_of(wc->wr_cqe, struct mlx5r_umr_context, cqe);
 
 	context->status = wc->status;
 	complete(&context->done);
@@ -445,18 +445,14 @@ static void mlx5r_umr_set_access_flags(struct mlx5_ib_dev *dev,
 				       struct mlx5_mkey_seg *seg,
 				       unsigned int access_flags)
 {
-	bool ro_read = (access_flags & IB_ACCESS_RELAXED_ORDERING) &&
-		       (MLX5_CAP_GEN(dev->mdev, relaxed_ordering_read) ||
-			pcie_relaxed_ordering_enabled(dev->mdev->pdev));
-
 	MLX5_SET(mkc, seg, a, !!(access_flags & IB_ACCESS_REMOTE_ATOMIC));
 	MLX5_SET(mkc, seg, rw, !!(access_flags & IB_ACCESS_REMOTE_WRITE));
 	MLX5_SET(mkc, seg, rr, !!(access_flags & IB_ACCESS_REMOTE_READ));
 	MLX5_SET(mkc, seg, lw, !!(access_flags & IB_ACCESS_LOCAL_WRITE));
 	MLX5_SET(mkc, seg, lr, 1);
-	MLX5_SET(mkc, seg, relaxed_ordering_write,
-		 !!(access_flags & IB_ACCESS_RELAXED_ORDERING));
-	MLX5_SET(mkc, seg, relaxed_ordering_read, ro_read);
+
+	if (access_flags & (IB_ACCESS_RELAXED_ORDERING | IB_ACCESS_UNORDERED))
+		mlx5_core_mkey_set_relaxed_ordering(dev->mdev, seg);
 }
 
 int mlx5r_umr_rereg_pd_access(struct mlx5_ib_mr *mr, struct ib_pd *pd,

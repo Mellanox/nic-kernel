@@ -721,6 +721,7 @@ mlx5_tc_ct_entry_create_mod_hdr(struct mlx5_tc_ct_priv *ct_priv,
 {
 	DECLARE_MOD_HDR_ACTS_ACTIONS(actions_arr, MLX5_CT_MIN_MOD_ACTS);
 	DECLARE_MOD_HDR_ACTS(mod_acts, actions_arr);
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct flow_action_entry *meta;
 	enum ip_conntrack_info ctinfo;
 	u16 ct_state = 0;
@@ -759,7 +760,8 @@ mlx5_tc_ct_entry_create_mod_hdr(struct mlx5_tc_ct_priv *ct_priv,
 	if (nat_table && has_nat) {
 		attr->modify_hdr = mlx5_modify_header_alloc(ct_priv->dev, ct_priv->ns_type,
 							    mod_acts.num_actions,
-							    mod_acts.actions);
+							    mod_acts.actions,
+							    &mh_attr);
 		if (IS_ERR(attr->modify_hdr)) {
 			err = PTR_ERR(attr->modify_hdr);
 			goto err_mapping;
@@ -1612,6 +1614,7 @@ static int tc_ct_pre_ct_add_rules(struct mlx5_ct_ft *ct_ft,
 {
 	struct mlx5_tc_ct_priv *ct_priv = ct_ft->ct_priv;
 	struct mlx5e_tc_mod_hdr_acts pre_mod_acts = {};
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_core_dev *dev = ct_priv->dev;
 	struct mlx5_flow_table *ft = pre_ct->ft;
 	struct mlx5_flow_destination dest = {};
@@ -1637,7 +1640,8 @@ static int tc_ct_pre_ct_add_rules(struct mlx5_ct_ft *ct_ft,
 
 	mod_hdr = mlx5_modify_header_alloc(dev, ct_priv->ns_type,
 					   pre_mod_acts.num_actions,
-					   pre_mod_acts.actions);
+					   pre_mod_acts.actions,
+					   &mh_attr);
 
 	if (IS_ERR(mod_hdr)) {
 		err = PTR_ERR(mod_hdr);

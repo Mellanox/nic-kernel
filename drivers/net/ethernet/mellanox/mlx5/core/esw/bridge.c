@@ -1097,6 +1097,7 @@ static int
 mlx5_esw_bridge_vlan_push_mark_create(struct mlx5_esw_bridge_vlan *vlan, struct mlx5_eswitch *esw)
 {
 	u8 action[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_modify_hdr *pkt_mod_hdr;
 
 	MLX5_SET(set_action_in, action, action_type, MLX5_ACTION_TYPE_SET);
@@ -1105,7 +1106,9 @@ mlx5_esw_bridge_vlan_push_mark_create(struct mlx5_esw_bridge_vlan *vlan, struct 
 	MLX5_SET(set_action_in, action, length, ESW_TUN_OPTS_BITS + ESW_TUN_ID_BITS);
 	MLX5_SET(set_action_in, action, data, ESW_TUN_BRIDGE_INGRESS_PUSH_VLAN);
 
-	pkt_mod_hdr = mlx5_modify_header_alloc(esw->dev, MLX5_FLOW_NAMESPACE_FDB, 1, action);
+	pkt_mod_hdr = mlx5_modify_header_alloc(esw->dev,
+					       MLX5_FLOW_NAMESPACE_FDB, 1, action,
+					       &mh_attr);
 	if (IS_ERR(pkt_mod_hdr))
 		return PTR_ERR(pkt_mod_hdr);
 

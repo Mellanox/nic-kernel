@@ -5620,7 +5620,8 @@ static int r8169_mdio_register(struct rtl8169_private *tp)
 	}
 
 	/* Keep EEE off but the version stays EEE-capable so that link-up
-	 * still clears the MAC TX-LPI bits.
+	 * still clears the MAC TX-LPI bits. phylink owns the rest of the
+	 * EEE/pause policy via phylink_config.
 	 */
 	if (tp->mac_version == RTL_GIGA_MAC_VER_46)
 		phy_disable_eee(tp->phydev);
@@ -5765,6 +5766,13 @@ static void rtl_mac_link_up(struct phylink_config *config,
 
 	tp->speed = speed;
 	rtl_link_chg_patch(tp, speed);
+
+	/* rtl_hw_start_8168h_1() does not clear MAC TX-LPI. EEE is forced
+	 * off for this version, and phylink will not call mac_disable_tx_lpi()
+	 * on link-up unless LPI was previously enabled in software.
+	 */
+	if (tp->mac_version == RTL_GIGA_MAC_VER_46)
+		rtl_enable_tx_lpi(tp, false);
 
 	/*
 	 * Note: This hardware does not support forcing flow control.
@@ -5951,7 +5959,12 @@ static int rtl_init_phylink(struct rtl8169_private *tp)
 	tp->phylink_config.type = PHYLINK_NETDEV;
 	tp->phylink_config.mac_managed_pm = true;
 	tp->phylink_config.lpi_capabilities = rtl8169_get_lpi_caps(tp);
-	tp->phylink_config.eee_enabled_default = !!tp->phylink_config.lpi_capabilities;
+	/* VER_46 stays LPI-capable so the MAC clear path remains, but EEE
+	 * must not be enabled. See phy_disable_eee() in r8169_mdio_register().
+	 */
+	tp->phylink_config.eee_enabled_default =
+		!!tp->phylink_config.lpi_capabilities &&
+		tp->mac_version != RTL_GIGA_MAC_VER_46;
 	tp->phylink_config.mac_capabilities |= MAC_ASYM_PAUSE | MAC_SYM_PAUSE;
 
 	switch (tp->sfp_mode) {
