@@ -152,6 +152,11 @@ void mlx5_nodnic_handle_recv_cqe(struct mlx5_nodnic_cq *cq,
 	skb->protocol = eth_type_trans(skb, priv->netdev);
 	nodnic_handle_rx_csum(priv->netdev, cqe, skb);
 
+	u64_stats_update_begin(&priv->rq_stats.syncp);
+	u64_stats_inc(&priv->rq_stats.packets);
+	u64_stats_add(&priv->rq_stats.bytes, byte_count);
+	u64_stats_update_end(&priv->rq_stats.syncp);
+
 	napi_gro_receive(&cq->napi, skb);
 	rq->cc++;
 

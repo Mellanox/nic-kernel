@@ -143,6 +143,9 @@ netdev_tx_t mlx5_nodnic_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	err = mlx5_nodnic_tx_write_wqe(sq, skb, wqe);
 	if (err) {
+		u64_stats_update_begin(&priv->sq_stats.xmit_syncp);
+		u64_stats_inc(&priv->sq_stats.dropped);
+		u64_stats_update_end(&priv->sq_stats.xmit_syncp);
 		dev_kfree_skb_any(skb);
 
 		return NETDEV_TX_OK;
@@ -178,6 +181,11 @@ void mlx5_nodnic_handle_send_cqe(struct mlx5_nodnic_cq *cq,
 
 	pi = mlx5_nodnic_sq_get_pi(sq, be16_to_cpu(cqe->wqe_counter));
 	wi = &sq->wqe_info[pi];
+
+	u64_stats_update_begin(&priv->sq_stats.syncp);
+	u64_stats_inc(&priv->sq_stats.packets);
+	u64_stats_add(&priv->sq_stats.bytes, wi->num_bytes);
+	u64_stats_update_end(&priv->sq_stats.syncp);
 
 	mlx5_nodnic_complete_send_wqe(sq, wi, napi_budget);
 }
