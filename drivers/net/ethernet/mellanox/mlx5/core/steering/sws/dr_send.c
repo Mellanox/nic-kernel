@@ -294,7 +294,7 @@ static struct mlx5dr_qp *dr_create_rc_qp(struct mlx5_core_dev *mdev,
 
 	inlen = MLX5_ST_SZ_BYTES(create_qp_in) +
 		MLX5_FLD_SZ_BYTES(create_qp_in, pas[0]) *
-		dr_qp->wq_ctrl.buf.npages;
+		dr_qp->wq_ctrl.buf.num_frags;
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in) {
 		err = -ENOMEM;
@@ -308,7 +308,7 @@ static struct mlx5dr_qp *dr_create_rc_qp(struct mlx5_core_dev *mdev,
 	MLX5_SET(qpc, qpc, pd, attr->pdn);
 	MLX5_SET(qpc, qpc, uar_page, attr->uar->index);
 	MLX5_SET(qpc, qpc, log_page_size,
-		 dr_qp->wq_ctrl.buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
+		 dr_qp->wq_ctrl.buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET(qpc, qpc, fre, 1);
 	MLX5_SET(qpc, qpc, rlky, 1);
 	MLX5_SET(qpc, qpc, cqn_snd, attr->cqn);
@@ -1091,7 +1091,7 @@ static struct mlx5dr_cq *dr_create_cq(struct mlx5_core_dev *mdev,
 	cq->mdev = mdev;
 
 	inlen = MLX5_ST_SZ_BYTES(create_cq_in) +
-		sizeof(u64) * cq->wq_ctrl.buf.npages;
+		sizeof(u64) * cq->wq_ctrl.buf.num_frags;
 	in = kvzalloc(inlen, GFP_KERNEL);
 	if (!in)
 		goto err_cqwq;
@@ -1106,7 +1106,7 @@ static struct mlx5dr_cq *dr_create_cq(struct mlx5_core_dev *mdev,
 	MLX5_SET(cqc, cqc, log_cq_size, ilog2(ncqe));
 	MLX5_SET(cqc, cqc, c_eqn_or_apu_element, eqn);
 	MLX5_SET(cqc, cqc, uar_page, uar->index);
-	MLX5_SET(cqc, cqc, log_page_size, cq->wq_ctrl.buf.page_shift -
+	MLX5_SET(cqc, cqc, log_page_size, cq->wq_ctrl.buf.log_frag_sz -
 		 MLX5_ADAPTER_PAGE_SHIFT);
 	MLX5_SET64(cqc, cqc, dbr_addr, cq->wq_ctrl.db.dma);
 
