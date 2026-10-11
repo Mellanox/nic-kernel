@@ -335,6 +335,23 @@ out:
 	return err;
 }
 
+/*
+ * Move the UMR state from @from to @to. In adversarial_mode ERR is a final
+ * state: it can be set concurrently by the CQ poller, so the move is atomic
+ * and does not replace it. Returns false if ERR was found, and true
+ * otherwise. Outside adversarial_mode this is the plain store it always was.
+ */
+static bool mlx5r_umr_move_state(struct umr_common *umrc, unsigned int from,
+				 unsigned int to)
+{
+	if (!mlx5_ib_adversarial_mode) {
+		umrc->state = to;
+		return true;
+	}
+
+	return cmpxchg(&umrc->state, from, to) != MLX5_UMR_STATE_ERR;
+}
+
 static int mlx5r_umr_recover(struct mlx5_ib_dev *dev, u32 mkey,
 			     struct mlx5r_umr_context *umr_context,
 			     struct mlx5r_umr_wqe *wqe, bool with_data)
@@ -353,7 +370,11 @@ static int mlx5r_umr_recover(struct mlx5_ib_dev *dev, u32 mkey,
 	if (umrc->state != MLX5_UMR_STATE_RECOVER) {
 		mlx5_ib_warn(dev, "UMR recovery encountered an unexpected state=%d\n",
 			     umrc->state);
-		umrc->state = MLX5_UMR_STATE_RECOVER;
+		if (!mlx5r_umr_move_state(umrc, MLX5_UMR_STATE_ACTIVE,
+					  MLX5_UMR_STATE_RECOVER)) {
+			mutex_unlock(&umrc->lock);
+			return -EFAULT;
+		}
 	}
 	mutex_unlock(&umrc->lock);
 
@@ -387,7 +408,9 @@ static int mlx5r_umr_recover(struct mlx5_ib_dev *dev, u32 mkey,
 		goto err;
 	}
 
-	umrc->state = MLX5_UMR_STATE_ACTIVE;
+	if (!mlx5r_umr_move_state(umrc, MLX5_UMR_STATE_RECOVER,
+				  MLX5_UMR_STATE_ACTIVE))
+		return -EFAULT;
 	return 0;
 
 err:
