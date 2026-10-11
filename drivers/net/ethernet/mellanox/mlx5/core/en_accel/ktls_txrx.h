@@ -60,6 +60,26 @@ mlx5e_ktls_handle_tx_wqe(struct mlx5_wqe_ctrl_seg *cseg,
 {
 	cseg->tis_tir_num = cpu_to_be32(state->tls_tisn << 8);
 }
+
+static inline void
+mlx5e_ktls_shampo_init_session(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
+{
+	rq->hw_gro_data->tls_offload = get_cqe_tls_offload(cqe);
+}
+
+/* HW does not break a SHAMPO session when the kTLS RX offload state
+ * changes, while SW applies the TLS state (skb->decrypted, resync
+ * request) of the first packet only. Allow merging only between packets
+ * that are all decrypted or all not decrypted.
+ */
+static inline bool
+mlx5e_ktls_shampo_can_merge(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
+{
+	u8 tls_offload = get_cqe_tls_offload(cqe);
+
+	return tls_offload == rq->hw_gro_data->tls_offload &&
+	       tls_offload <= CQE_TLS_OFFLOAD_DECRYPTED;
+}
 #else
 static inline bool
 mlx5e_ktls_tx_try_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
@@ -92,6 +112,17 @@ static inline void mlx5e_ktls_handle_rx_skb(struct mlx5e_rq *rq,
 					    struct mlx5_cqe64 *cqe,
 					    u32 *cqe_bcnt)
 {
+}
+
+static inline void
+mlx5e_ktls_shampo_init_session(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
+{
+}
+
+static inline bool
+mlx5e_ktls_shampo_can_merge(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
+{
+	return true;
 }
 #endif /* CONFIG_MLX5_EN_TLS */
 
