@@ -3682,7 +3682,7 @@ static void esw_offloads_vport_metadata_cleanup(struct mlx5_eswitch *esw,
 	vport->default_metadata = 0;
 }
 
-static void esw_offloads_metadata_uninit(struct mlx5_eswitch *esw)
+void mlx5_esw_offloads_metadata_uninit(struct mlx5_eswitch *esw)
 {
 	struct mlx5_vport *vport;
 	unsigned long i;
@@ -3712,20 +3712,21 @@ static int esw_offloads_metadata_init(struct mlx5_eswitch *esw)
 	return 0;
 
 metadata_err:
-	esw_offloads_metadata_uninit(esw);
+	mlx5_esw_offloads_metadata_uninit(esw);
 	return err;
 }
 
-/* Deferred metadata init for SD devices: allocate vport metadata and
- * refresh the ingress ACL for every vport whose ACL was created with
- * metadata=0 in esw_create_offloads_acl_tables() / esw_vport_setup().
+/* Metadata init for SD devices: allocate vport metadata and, if switchdev
+ * was enabled before the SD group was ready, refresh the ingress ACL for
+ * every vport whose ACL was created with metadata=0 in
+ * esw_create_offloads_acl_tables() / esw_vport_setup().
  *
  * No Rep is loaded at this point ==> no Rep net-dev exists, so no need
  * to take rtnl lock.
  *
  * Safe to call multiple times - subsequent calls are no-ops.
  */
-int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw)
+int mlx5_esw_offloads_sd_metadata_init(struct mlx5_eswitch *esw)
 {
 	struct mlx5_vport *manager, *vport;
 	unsigned long i;
@@ -3738,13 +3739,17 @@ int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw)
 	if (IS_ERR(manager))
 		return PTR_ERR(manager);
 
+	down_write(&esw->mode_lock);
 	/* Sanity check: skip if metadata was already initialized */
 	if (manager->default_metadata)
-		return 0;
+		goto out;
 
 	err = esw_offloads_metadata_init(esw);
 	if (err)
-		return err;
+		goto err_meta_init;
+
+	if (esw->mode != MLX5_ESWITCH_OFFLOADS)
+		goto out;
 
 	mutex_lock(&esw->state_lock);
 	/* Manager vport doesn't have a rep/netdev loaded but its ingress ACL
@@ -3775,11 +3780,15 @@ int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw)
 	}
 
 	mutex_unlock(&esw->state_lock);
+out:
+	up_write(&esw->mode_lock);
 	return 0;
 
 err_acl:
-	esw_offloads_metadata_uninit(esw);
+	mlx5_esw_offloads_metadata_uninit(esw);
 	mutex_unlock(&esw->state_lock);
+err_meta_init:
+	up_write(&esw->mode_lock);
 	return err;
 }
 
@@ -4148,8 +4157,8 @@ int esw_offloads_enable(struct mlx5_eswitch *esw)
 	if (err)
 		goto err_roce;
 
-	/* SD devices defer metadata init until SD is ready and
-	 * mlx5_sd_pf_num_get() can return the correct pf_num.
+	/* SD devices' metadata is initialized by SD once the group is ready
+	 * and mlx5_sd_pf_num_get() can return the correct pf_num.
 	 */
 	if (!mlx5_get_sd(esw->dev)) {
 		err = esw_offloads_metadata_init(esw);
@@ -4217,7 +4226,8 @@ err_steering_init:
 err_pool:
 	esw_set_passing_vport_metadata(esw, false);
 err_vport_metadata:
-	esw_offloads_metadata_uninit(esw);
+	if (!mlx5_get_sd(esw->dev))
+		mlx5_esw_offloads_metadata_uninit(esw);
 err_metadata:
 	mlx5_rdma_disable_roce(esw->dev);
 err_roce:
@@ -4254,7 +4264,8 @@ void esw_offloads_disable(struct mlx5_eswitch *esw)
 	esw_set_passing_vport_metadata(esw, false);
 	esw_offloads_steering_cleanup(esw);
 	mapping_destroy(esw->offloads.reg_c0_obj_pool);
-	esw_offloads_metadata_uninit(esw);
+	if (!mlx5_get_sd(esw->dev))
+		mlx5_esw_offloads_metadata_uninit(esw);
 	mlx5_rdma_disable_roce(esw->dev);
 	mlx5_esw_adjacent_vhcas_cleanup(esw);
 	/* must be done after vhcas cleanup to avoid adjacent vports connect */

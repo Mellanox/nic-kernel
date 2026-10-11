@@ -445,7 +445,8 @@ struct mlx5_eswitch {
 
 void esw_offloads_disable(struct mlx5_eswitch *esw);
 int esw_offloads_enable(struct mlx5_eswitch *esw);
-int mlx5_esw_offloads_init_deferred_metadata(struct mlx5_eswitch *esw);
+int mlx5_esw_offloads_sd_metadata_init(struct mlx5_eswitch *esw);
+void mlx5_esw_offloads_metadata_uninit(struct mlx5_eswitch *esw);
 void esw_offloads_cleanup(struct mlx5_eswitch *esw);
 int esw_offloads_init(struct mlx5_eswitch *esw);
 
@@ -1123,6 +1124,14 @@ mlx5_esw_lag_demux_rule_create(struct mlx5_eswitch *esw, u16 vport_num,
 	return ERR_PTR(-EOPNOTSUPP);
 }
 
+static inline int
+mlx5_esw_offloads_sd_metadata_init(struct mlx5_eswitch *esw)
+{
+	return 0;
+}
+
+static inline void
+mlx5_esw_offloads_metadata_uninit(struct mlx5_eswitch *esw) {}
 #endif /* CONFIG_MLX5_ESWITCH */
 
 #endif /* __MLX5_ESWITCH_H__ */
