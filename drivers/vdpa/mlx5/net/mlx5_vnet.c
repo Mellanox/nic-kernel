@@ -161,6 +161,8 @@ static void mvqs_set_defaults(struct mlx5_vdpa_net *ndev);
 static int setup_vq_resources(struct mlx5_vdpa_net *ndev, bool filled);
 static void teardown_vq_resources(struct mlx5_vdpa_net *ndev);
 static int resume_vq(struct mlx5_vdpa_net *ndev, struct mlx5_vdpa_virtqueue *mvq);
+static void mlx5_vdpa_dev_del(struct vdpa_mgmt_dev *v_mdev,
+			      struct vdpa_device *dev);
 
 static bool mlx5_vdpa_debug;
 
@@ -4030,7 +4032,10 @@ static int mlx5_vdpa_dev_add(struct vdpa_mgmt_dev *v_mdev, const char *name,
 	return 0;
 
 err_setup_vq_res:
-	_vdpa_unregister_device(&mvdev->vdev);
+	get_device(&mvdev->vdev.dev);
+	mlx5_vdpa_dev_del(&mgtdev->mgtdev, &mvdev->vdev);
+	put_device(&mvdev->vdev.dev);
+	return err;
 err_reg:
 	destroy_workqueue(mvdev->wq);
 err_alloc:
