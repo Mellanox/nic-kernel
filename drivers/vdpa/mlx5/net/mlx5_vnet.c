@@ -2960,7 +2960,7 @@ static void mlx5_vdpa_set_config_cb(struct vdpa_device *vdev, struct vdpa_callba
 	ndev->config_cb = *cb;
 }
 
-#define MLX5_VDPA_MAX_VQ_ENTRIES 256
+#define MLX5_VDPA_MAX_VQ_ENTRIES 1024
 static u16 mlx5_vdpa_get_vq_num_max(struct vdpa_device *vdev)
 {
 	return MLX5_VDPA_MAX_VQ_ENTRIES;
