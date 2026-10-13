@@ -1084,7 +1084,7 @@ static int rx_create(struct mlx5_core_dev *mdev, struct mlx5e_ipsec *ipsec,
 	ft = ipsec_ft_create(attr.ns, attr.sa_level, attr.prio, 1, 2, flags);
 	if (IS_ERR(ft)) {
 		err = PTR_ERR(ft);
-		goto err_fs_ft;
+		goto err_sa_ft;
 	}
 	rx->ft.sa = ft;
 
@@ -1115,6 +1115,7 @@ err_policy:
 	mlx5_destroy_flow_group(rx->sa.group);
 err_fs:
 	mlx5_destroy_flow_table(rx->ft.sa);
+err_sa_ft:
 	if (rx->allow_tunnel_mode)
 		mlx5_eswitch_unblock_encap(mdev);
 err_fs_ft:
