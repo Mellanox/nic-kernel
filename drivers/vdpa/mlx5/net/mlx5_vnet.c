@@ -2902,6 +2902,8 @@ static void unregister_link_notifier(struct mlx5_vdpa_net *ndev)
 
 	ndev->nb_registered = false;
 	mlx5_notifier_unregister(ndev->mvdev.mdev, &ndev->nb);
+	/* mlx5_cvq_kick_handler() work needs the reslock. */
+	lockdep_assert_not_held(&ndev->reslock);
 	if (ndev->mvdev.wq)
 		flush_workqueue(ndev->mvdev.wq);
 }
@@ -3202,6 +3204,7 @@ static void mlx5_vdpa_set_status(struct vdpa_device *vdev, u8 status)
 {
 	struct mlx5_vdpa_dev *mvdev = to_mvdev(vdev);
 	struct mlx5_vdpa_net *ndev = to_mlx5_vdpa_ndev(mvdev);
+	bool unregister_nb = false;
 	int err;
 
 	print_status(mvdev, status, true);
@@ -3244,12 +3247,14 @@ static void mlx5_vdpa_set_status(struct vdpa_device *vdev, u8 status)
 	return;
 
 err_driver:
-	unregister_link_notifier(ndev);
+	unregister_nb = true;
 err_setup:
 	mlx5_vdpa_clean_mrs(&ndev->mvdev);
 	ndev->mvdev.status |= VIRTIO_CONFIG_S_FAILED;
 err_clear:
 	up_write(&ndev->reslock);
+	if (unregister_nb)
+		unregister_link_notifier(ndev);
 }
 
 static void init_group_to_asid_map(struct mlx5_vdpa_dev *mvdev)
@@ -3288,9 +3293,9 @@ static int mlx5_vdpa_compat_reset(struct vdpa_device *vdev, u32 flags)
 
 	print_status(mvdev, 0, true);
 	mlx5_vdpa_info(mvdev, "performing device reset\n");
+	unregister_link_notifier(ndev);
 
 	down_write(&ndev->reslock);
-	unregister_link_notifier(ndev);
 	vq_reset = needs_vqs_reset(mvdev);
 	if (vq_reset) {
 		teardown_vq_resources(ndev);
