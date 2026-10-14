@@ -118,6 +118,11 @@ struct mlx5_accel_esp_xfrm_attrs {
 		u8 dmac[ETH_ALEN];
 		__be16 dport;
 	};
+	struct {
+		const struct neigh_table *tbl;
+		int ifindex;
+		u8 key[sizeof(struct in6_addr)];
+	} nh;
 };
 
 enum mlx5_ipsec_cap {
