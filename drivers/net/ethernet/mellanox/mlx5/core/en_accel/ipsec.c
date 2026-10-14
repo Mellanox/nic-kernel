@@ -258,6 +258,17 @@ static void mlx5e_ipsec_init_limits(struct mlx5e_ipsec_sa_entry *sa_entry,
 	attrs->lft.numb_rounds_soft = (u64)n;
 }
 
+static void mlx5e_ipsec_set_tnl_nh(struct mlx5e_ipsec_sa_entry *sa_entry,
+				   struct mlx5_accel_esp_xfrm_attrs *attrs,
+				   const struct neigh_table *tbl,
+				   const struct net_device *dev,
+				   const void *pkey)
+{
+	attrs->nh.tbl = tbl;
+	attrs->nh.ifindex = dev == sa_entry->x->xso.dev ? dev->ifindex : 0;
+	memcpy(attrs->nh.key, pkey, tbl->key_len);
+}
+
 static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 				  struct mlx5_accel_esp_xfrm_attrs *attrs)
 {
@@ -363,6 +374,8 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	if (attrs->dir == XFRM_DEV_OFFLOAD_OUT &&
 	    is_zero_ether_addr(addr))
 		neigh_event_send(n, NULL);
+	mlx5e_ipsec_set_tnl_nh(sa_entry, attrs, n->tbl, n->dev,
+			       n->primary_key);
 	dst_release(rt_dst_entry);
 	neigh_release(n);
 	return;
@@ -378,20 +391,29 @@ neigh:
 		return;
 
 	if (!n) {
+		const struct neigh_table *tbl = arp_table(dev_net(netdev));
+
 		if (addrs->family == AF_INET)
 			n = ipv4_neigh_create(netdev, pkey);
 #if IS_ENABLED(CONFIG_IPV6)
 		else
 			n = ipv6_neigh_create(netdev, pkey);
+		if (addrs->family == AF_INET6)
+			tbl = nd_table(dev_net(netdev));
 #endif
-		if (IS_ERR(n))
+		if (IS_ERR(n)) {
+			mlx5e_ipsec_set_tnl_nh(sa_entry, attrs, tbl, netdev,
+					       pkey);
 			return;
+		}
 		neigh_event_send(n, NULL);
 		attrs->drop = true;
 	} else {
 		neigh_ha_snapshot(addr, n, netdev);
 		ether_addr_copy(dst, addr);
 	}
+	mlx5e_ipsec_set_tnl_nh(sa_entry, attrs, n->tbl, n->dev,
+			       n->primary_key);
 	neigh_release(n);
 }
 
@@ -984,10 +1006,21 @@ sa_entry_free:
 	kfree(sa_entry);
 }
 
+static bool
+mlx5e_ipsec_neigh_matches(const struct mlx5e_ipsec_sa_entry *sa_entry,
+			  const struct neighbour *n)
+{
+	const struct mlx5_accel_esp_xfrm_attrs *attrs = &sa_entry->attrs;
+
+	return attrs->nh.tbl == n->tbl &&
+	       (!attrs->nh.ifindex || attrs->nh.ifindex == n->dev->ifindex) &&
+	       net_eq(dev_net(n->dev), dev_net(sa_entry->dev)) &&
+	       !memcmp(attrs->nh.key, n->primary_key, n->tbl->key_len);
+}
+
 static int mlx5e_ipsec_netevent_event(struct notifier_block *nb,
 				      unsigned long event, void *ptr)
 {
-	struct mlx5_accel_esp_xfrm_attrs *attrs;
 	struct mlx5e_ipsec_netevent_data *data;
 	struct mlx5e_ipsec_sa_entry *sa_entry;
 	struct mlx5e_ipsec *ipsec;
@@ -999,20 +1032,8 @@ static int mlx5e_ipsec_netevent_event(struct notifier_block *nb,
 
 	ipsec = container_of(nb, struct mlx5e_ipsec, netevent_nb);
 	xa_for_each_marked(&ipsec->sadb, idx, sa_entry, MLX5E_IPSEC_TUNNEL_SA) {
-		attrs = &sa_entry->attrs;
-
-		if (attrs->addrs.family != n->tbl->family)
+		if (!mlx5e_ipsec_neigh_matches(sa_entry, n))
 			continue;
-
-		if (attrs->addrs.family == AF_INET) {
-			if (!neigh_key_eq32(n, &attrs->addrs.saddr.a4) &&
-			    !neigh_key_eq32(n, &attrs->addrs.daddr.a4))
-				continue;
-		} else {
-			if (!neigh_key_eq128(n, &attrs->addrs.saddr.a4) &&
-			    !neigh_key_eq128(n, &attrs->addrs.daddr.a4))
-				continue;
-		}
 
 		data = sa_entry->work->data;
 
