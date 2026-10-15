@@ -300,7 +300,7 @@ static bool mlx5_ib_invalidate_range(struct mmu_interval_notifier *mni,
 	/*
 	 * Iteration one - zap the HW's MTTs. The notifiers_count ensures that
 	 * while we are doing the invalidation, no page fault will attempt to
-	 * overwrite the same MTTs.  Concurent invalidations might race us,
+	 * overwrite the same MTTs.  Concurrent invalidations might race us,
 	 * but they will write 0s as well, so no difference in the end result.
 	 */
 	for (addr = start; addr < end; addr += BIT(umem_odp->page_shift)) {
@@ -579,6 +579,7 @@ static int alloc_implicit_mr_null_mkey(struct mlx5_ib_dev *dev,
 	MLX5_SET(mkc, mkc, rr, 1);
 	MLX5_SET(mkc, mkc, lw, 1);
 	MLX5_SET(mkc, mkc, lr, 1);
+	mlx5_core_mkey_set_relaxed_ordering(dev->mdev, mkc);
 	MLX5_SET(mkc, mkc, free, 0);
 	MLX5_SET(mkc, mkc, umr_en, 0);
 	MLX5_SET(mkc, mkc, access_mode_1_0, MLX5_MKC_ACCESS_MODE_MTT);

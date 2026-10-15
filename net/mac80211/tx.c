@@ -2585,6 +2585,8 @@ static inline bool ieee80211_is_tdls_setup(struct sk_buff *skb)
  *  - valid sta pointer: frame goes to that station
  *  - NULL: frame will be unicast to a yet unknown station
  *  - ERR_PTR(-ENOENT): frame will be group addressed
+ *
+ * When bss is set, AP/OCB/IBSS lookup spans the whole BSS.
  */
 static int ieee80211_lookup_ra_sta(struct ieee80211_sub_if_data *sdata,
 				   struct sk_buff *skb,

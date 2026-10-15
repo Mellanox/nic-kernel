@@ -478,6 +478,7 @@ int accel_psp_fs_rx_decap_ft_create(struct mlx5e_psp_fs *fs,
 				    struct mlx5e_psp_rx_decap_table *decap)
 {
 	u8 action[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_pkt_reformat_params reformat_params = {};
 	struct mlx5_flow_table_attr ft_attr = {};
 	struct mlx5_flow_destination dest = {};
@@ -535,7 +536,7 @@ int accel_psp_fs_rx_decap_ft_create(struct mlx5e_psp_fs *fs,
 	MLX5_SET(copy_action_in, action, dst_offset, 0);
 
 	modify_hdr = mlx5_modify_header_alloc(mdev, MLX5_FLOW_NAMESPACE_KERNEL,
-					      1, action);
+					      1, action, &mh_attr);
 	if (IS_ERR(modify_hdr)) {
 		err = PTR_ERR(modify_hdr);
 		mlx5_core_err(mdev,
@@ -628,6 +629,7 @@ accel_psp_fs_rx_decrypt_ft_create(struct mlx5e_psp_fs *fs,
 				  struct mlx5_flow_destination *default_dest)
 {
 	u8 action[MLX5_UN_SZ_BYTES(set_add_copy_action_in_auto)] = {};
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_flow_table_attr ft_attr = {};
 	struct mlx5_flow_destination dest = {};
 	struct mlx5_core_dev *mdev = fs->mdev;
@@ -687,7 +689,7 @@ accel_psp_fs_rx_decrypt_ft_create(struct mlx5e_psp_fs *fs,
 	MLX5_SET(copy_action_in, action, dst_offset, 0);
 
 	modhdr = mlx5_modify_header_alloc(mdev, MLX5_FLOW_NAMESPACE_KERNEL, 1,
-					  action);
+					  action, &mh_attr);
 	if (IS_ERR(modhdr)) {
 		err = PTR_ERR(modhdr);
 		mlx5_core_err(mdev,

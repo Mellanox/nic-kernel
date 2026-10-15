@@ -233,6 +233,7 @@ static struct mlx5_modify_hdr *
 sample_modify_hdr_get(struct mlx5_core_dev *mdev, u32 obj_id,
 		      struct mlx5e_tc_mod_hdr_acts *mod_acts)
 {
+	struct mlx5_modify_header_attr mh_attr = {};
 	struct mlx5_modify_hdr *modify_hdr;
 	int err;
 
@@ -243,7 +244,8 @@ sample_modify_hdr_get(struct mlx5_core_dev *mdev, u32 obj_id,
 
 	modify_hdr = mlx5_modify_header_alloc(mdev, MLX5_FLOW_NAMESPACE_FDB,
 					      mod_acts->num_actions,
-					      mod_acts->actions);
+					      mod_acts->actions,
+					      &mh_attr);
 	if (IS_ERR(modify_hdr)) {
 		err = PTR_ERR(modify_hdr);
 		goto err_modify_hdr;
