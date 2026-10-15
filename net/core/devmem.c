@@ -509,6 +509,64 @@ bool netdev_has_dmabuf_binding(struct net_device *dev, struct device *dma_dev)
 }
 EXPORT_SYMBOL_GPL(netdev_has_dmabuf_binding);
 
+/* Uninstall keeps the binding of a leased queue mapped for the physical
+ * queue. The physical netdev is closed here, and the binding belongs to
+ * the virtual netdev, so the per-netdev unbind below does not reach it.
+ */
+void net_devmem_rxq_unbind_dma_dev(struct netdev_rx_queue *rxq,
+				   struct device *dma_dev)
+{
+	struct net_devmem_dmabuf_binding *binding = rxq->mp_params.mp_priv;
+
+	if (rxq->mp_params.mp_ops != &dmabuf_devmem_ops)
+		return;
+
+	mutex_lock(&binding->lock);
+	if (net_devmem_binding_mapped_to(binding, dma_dev)) {
+		WRITE_ONCE(binding->dev, NULL);
+		net_devmem_dmabuf_binding_unmap(binding);
+	}
+	mutex_unlock(&binding->lock);
+}
+
+/* Unmap the bindings of a closed @dev that use @dma_dev, the way netdev
+ * unregister does. Senders that raced the detach drop their skbs at xmit.
+ */
+void net_devmem_unbind_dma_dev(struct net_device *dev, struct device *dma_dev)
+{
+	struct net_devmem_dmabuf_binding *binding;
+	unsigned long xa_idx;
+	bool match;
+
+	netdev_assert_locked(dev);
+
+	/* The instance lock keeps bindings found under @dev alive while the
+	 * xarray lock is dropped.
+	 */
+	xa_lock(&net_devmem_dmabuf_bindings);
+	xa_for_each(&net_devmem_dmabuf_bindings, xa_idx, binding) {
+		if (READ_ONCE(binding->dev) != dev)
+			continue;
+
+		xa_unlock(&net_devmem_dmabuf_bindings);
+		mutex_lock(&binding->lock);
+		match = net_devmem_binding_mapped_to(binding, dma_dev);
+		if (match) {
+			WRITE_ONCE(binding->dev, NULL);
+			WRITE_ONCE(binding->vdev, NULL);
+			net_devmem_dmabuf_binding_unmap(binding);
+		}
+		mutex_unlock(&binding->lock);
+		xa_lock(&net_devmem_dmabuf_bindings);
+
+		/* Hide detached TX bindings from new senders. */
+		if (match)
+			__xa_clear_mark(&net_devmem_dmabuf_bindings, xa_idx,
+					NET_DEVMEM_BINDING_LIVE);
+	}
+	xa_unlock(&net_devmem_dmabuf_bindings);
+}
+
 void net_devmem_get_net_iov(struct net_iov *niov)
 {
 	net_devmem_dmabuf_binding_get(net_devmem_iov_binding(niov));
