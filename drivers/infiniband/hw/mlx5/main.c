@@ -3044,10 +3044,15 @@ static void delay_drop_handler(struct work_struct *work)
 	mutex_unlock(&delay_drop->lock);
 }
 
+static u32 mlx5_ib_eqe_port_num(struct mlx5_eqe *eqe)
+{
+	return (eqe->data.port.port >> 4) & 0xf;
+}
+
 static void handle_general_event(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 				 struct ib_event *ibev)
 {
-	u32 port = (eqe->data.port.port >> 4) & 0xf;
+	u32 port = mlx5_ib_eqe_port_num(eqe);
 
 	switch (eqe->sub_type) {
 	case MLX5_GENERAL_SUBTYPE_DELAY_DROP_TIMEOUT:
@@ -3060,11 +3065,9 @@ static void handle_general_event(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe
 	}
 }
 
-static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
+static int handle_port_change(struct mlx5_ib_dev *ibdev, u32 port, u8 sub_type,
 			      struct ib_event *ibev)
 {
-	u32 port = (eqe->data.port.port >> 4) & 0xf;
-
 	if (!rdma_is_port_valid(&ibdev->ib_dev, port)) {
 		mlx5_ib_warn(ibdev, "warning: event on port %d\n", port);
 		return -EINVAL;
@@ -3072,7 +3075,7 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 
 	ibev->element.port_num = port;
 
-	switch (eqe->sub_type) {
+	switch (sub_type) {
 	case MLX5_PORT_CHANGE_SUBTYPE_ACTIVE:
 	case MLX5_PORT_CHANGE_SUBTYPE_DOWN:
 	case MLX5_PORT_CHANGE_SUBTYPE_INITIALIZED:
@@ -3091,7 +3094,7 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 					    IB_LINK_LAYER_ETHERNET)
 			return -EINVAL;
 
-		ibev->event = (eqe->sub_type == MLX5_PORT_CHANGE_SUBTYPE_ACTIVE) ?
+		ibev->event = (sub_type == MLX5_PORT_CHANGE_SUBTYPE_ACTIVE) ?
 				IB_EVENT_PORT_ACTIVE : IB_EVENT_PORT_ERR;
 		break;
 
@@ -3125,6 +3128,90 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 	return 0;
 }
 
+/* Both of these dispatch IB_EVENT_PORT_ERR */
+#define MLX5_IB_PORT_ERROR_SUBTYPES			\
+	(BIT(MLX5_PORT_CHANGE_SUBTYPE_DOWN) |		\
+	 BIT(MLX5_PORT_CHANGE_SUBTYPE_INITIALIZED))
+
+/*
+ * Remember an event that cannot be forwarded to ib_core yet. Runs in the
+ * notifier, so it must not allocate or sleep. Caller holds
+ * pending_events_lock.
+ */
+static void record_port_event(struct mlx5_ib_dev *dev, u32 port, u8 sub_type)
+{
+	unsigned long *pending;
+
+	if (!rdma_is_port_valid(&dev->ib_dev, port) ||
+	    sub_type >= BITS_PER_LONG)
+		return;
+
+	pending = &dev->port[port - 1].pending_port_events;
+
+	/*
+	 * A port that went down supersedes whatever it was before, while a
+	 * port that came up does not erase the error that preceded it: a
+	 * consumer that drops state on IB_EVENT_PORT_ERR, multicast group
+	 * membership for one, has to see it even if the port is up again by
+	 * the time the records are replayed. Keep the error in the lowest
+	 * bit, replay walks the records in ascending order.
+	 */
+	if (BIT(sub_type) & MLX5_IB_PORT_ERROR_SUBTYPES) {
+		*pending &= ~BIT(MLX5_PORT_CHANGE_SUBTYPE_ACTIVE);
+		sub_type = MLX5_PORT_CHANGE_SUBTYPE_DOWN;
+	}
+
+	*pending |= BIT(sub_type);
+}
+
+/*
+ * ib_register_device() lets ib_core and its clients snapshot the port tables,
+ * and they re-read them only when the matching event is dispatched. Events
+ * that arrive before the device is active are recorded instead of being
+ * forwarded, so replay them here to resync every consumer.
+ *
+ * Queued on mlx5_ib_event_wq while ib_active is published, so that the
+ * ordered workqueue puts this replay ahead of every event received from then
+ * on, and a system error that got there first has already cleared ib_active.
+ */
+static void mlx5_ib_replay_port_events(struct work_struct *_work)
+{
+	struct mlx5_ib_dev *dev = container_of(_work, struct mlx5_ib_dev,
+					       pending_events_work);
+	struct ib_event ibev = { .device = &dev->ib_dev };
+	unsigned long pending;
+	u32 port, sub_type;
+
+	rdma_for_each_port(&dev->ib_dev, port) {
+		spin_lock_irq(&dev->pending_events_lock);
+		/*
+		 * Sampled under the lock that publishes it, as it is a
+		 * bitfield written from another thread. Only
+		 * __mlx5_ib_remove() can clear it while this work runs, the
+		 * system error handler shares this ordered workqueue and so
+		 * cannot overlap it. The records already taken for a port
+		 * are dispatched to completion even then, which is safe:
+		 * removal is waiting in cancel_work_sync() on this work and
+		 * has torn nothing down.
+		 */
+		if (!dev->ib_active) {
+			spin_unlock_irq(&dev->pending_events_lock);
+			return;
+		}
+
+		pending = dev->port[port - 1].pending_port_events;
+		dev->port[port - 1].pending_port_events = 0;
+		spin_unlock_irq(&dev->pending_events_lock);
+
+		for_each_set_bit(sub_type, &pending, BITS_PER_LONG) {
+			if (handle_port_change(dev, port, sub_type, &ibev))
+				continue;
+
+			ib_dispatch_event(&ibev);
+		}
+	}
+}
+
 static void mlx5_ib_handle_event(struct work_struct *_work)
 {
 	struct mlx5_ib_event_work *work =
@@ -3141,10 +3228,14 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 	}
 
 	switch (work->event) {
-	case MLX5_EVENT_TYPE_PORT_CHANGE:
-		if (handle_port_change(ibdev, work->param, &ibev))
+	case MLX5_EVENT_TYPE_PORT_CHANGE: {
+		struct mlx5_eqe *eqe = work->param;
+
+		if (handle_port_change(ibdev, mlx5_ib_eqe_port_num(eqe),
+				       eqe->sub_type, &ibev))
 			goto out;
 		break;
+	}
 	case MLX5_EVENT_TYPE_GENERAL_EVENT:
 		handle_general_event(ibdev, work->param, &ibev);
 		fallthrough;
@@ -3164,14 +3255,35 @@ out:
 static int mlx5_ib_event(struct notifier_block *nb,
 			 unsigned long event, void *param)
 {
+	struct mlx5_ib_dev *dev =
+		container_of(nb, struct mlx5_ib_dev, mdev_events);
 	struct mlx5_ib_event_work *work;
+	unsigned long flags;
+
+	/*
+	 * Events cannot be forwarded to ib_core before the device is active.
+	 * Record them, which needs no allocation and therefore cannot fail,
+	 * and let __mlx5_ib_add() replay them.
+	 */
+	spin_lock_irqsave(&dev->pending_events_lock, flags);
+	if (!dev->ib_active) {
+		if (event == MLX5_EVENT_TYPE_PORT_CHANGE) {
+			struct mlx5_eqe *eqe = param;
+
+			record_port_event(dev, mlx5_ib_eqe_port_num(eqe),
+					  eqe->sub_type);
+		}
+		spin_unlock_irqrestore(&dev->pending_events_lock, flags);
+		return NOTIFY_OK;
+	}
+	spin_unlock_irqrestore(&dev->pending_events_lock, flags);
 
 	work = kmalloc_obj(*work, GFP_ATOMIC);
 	if (!work)
 		return NOTIFY_DONE;
 
 	INIT_WORK(&work->work, mlx5_ib_handle_event);
-	work->dev = container_of(nb, struct mlx5_ib_dev, mdev_events);
+	work->dev = dev;
 	work->is_slave = false;
 	work->param = param;
 	work->event = event;
@@ -3220,7 +3332,9 @@ static void mlx5_ib_handle_sys_error_event(struct work_struct *_work)
 	if (ibdev->ib_active)
 		ib_dispatch_event(&ibev);
 
+	spin_lock_irq(&ibdev->pending_events_lock);
 	ibdev->ib_active = false;
+	spin_unlock_irq(&ibdev->pending_events_lock);
 out:
 	kfree(work);
 }
@@ -4461,6 +4575,8 @@ static int mlx5_ib_stage_init_init(struct mlx5_ib_dev *dev)
 	}
 
 	mutex_init(&dev->lb.mutex);
+	spin_lock_init(&dev->pending_events_lock);
+	INIT_WORK(&dev->pending_events_work, mlx5_ib_replay_port_events);
 
 	err = mlx5r_cmd_query_special_mkeys(dev);
 	if (err)
@@ -5050,7 +5166,11 @@ void __mlx5_ib_remove(struct mlx5_ib_dev *dev,
 		      const struct mlx5_ib_profile *profile,
 		      int stage)
 {
+	spin_lock_irq(&dev->pending_events_lock);
 	dev->ib_active = false;
+	spin_unlock_irq(&dev->pending_events_lock);
+
+	cancel_work_sync(&dev->pending_events_work);
 	mlx5_ib_unregister_dev_notifier(dev);
 
 	/* Number of stages to cleanup */
@@ -5080,7 +5200,16 @@ int __mlx5_ib_add(struct mlx5_ib_dev *dev,
 		}
 	}
 
+	/*
+	 * Queued under the lock that publishes ib_active, so that it is on the
+	 * ordered event workqueue before anything the notifier queues once it
+	 * sees the device active.
+	 */
+	spin_lock_irq(&dev->pending_events_lock);
 	dev->ib_active = true;
+	queue_work(mlx5_ib_event_wq, &dev->pending_events_work);
+	spin_unlock_irq(&dev->pending_events_lock);
+
 	return 0;
 
 err_out:
@@ -5339,7 +5468,19 @@ static int mlx5r_mp_probe(struct auxiliary_device *adev,
 
 		if (bound) {
 			rdma_roce_rescan_device(&dev->ib_dev);
+			/*
+			 * Publishing this early stops recording as well, so on
+			 * a master that is still inside __mlx5_ib_add() an
+			 * event from here on is neither recorded nor delivered,
+			 * as ib_core has no handlers registered for it yet.
+			 * Left as is: these are Ethernet ports, whose tables do
+			 * not change behind the driver's back the way an IB
+			 * P_Key table does. Replaying here is not the answer,
+			 * the device is not registered yet.
+			 */
+			spin_lock_irq(&mpi->ibdev->pending_events_lock);
 			mpi->ibdev->ib_active = true;
+			spin_unlock_irq(&mpi->ibdev->pending_events_lock);
 			break;
 		}
 	}
