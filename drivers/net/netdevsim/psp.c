@@ -79,6 +79,11 @@ nsim_do_psp(struct sk_buff *skb, struct netdevsim *ns,
 		__wsum csum;
 		int udplen;
 
+		if (!skb_frags_readable(skb)) {
+			rc = SKB_DROP_REASON_PSP_OUTPUT;
+			goto out_unlock;
+		}
+
 		/* Do not decapsulate. Receive the skb with the udp and psp
 		 * headers still there as if this is a normal udp packet.
 		 * psp_dev_encapsulate() sets udp checksum to 0, so we need to
