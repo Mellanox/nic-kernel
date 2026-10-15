@@ -1107,6 +1107,22 @@ static int mlx5e_alloc_rq(struct mlx5e_params *params,
 		pp_params.nid       = node;
 		pp_params.dev       = rq->pdev;
 		pp_params.napi      = rq->cq.napi;
+
+		/* The memory provider of a data direct RQ mapped its buffers
+		 * against the data direct device, see
+		 * mlx5e_queue_get_dma_dev(). The page pool only syncs them,
+		 * and io_uring zcrx insists on being given the same device.
+		 */
+		if (data_direct) {
+			struct mlx5_data_direct_dev *dd_dev;
+
+			dd_dev = mlx5_data_direct_get_dev(mdev->data_direct);
+			if (!dd_dev) {
+				err = -ENODEV;
+				goto err_free_by_rq_type;
+			}
+			pp_params.dev = dd_dev->device;
+		}
 		pp_params.netdev    = rq->netdev;
 		pp_params.dma_dir   = rq->buff.map_dir;
 		pp_params.max_len   = BIT(PAGE_SHIFT + pool_order);
