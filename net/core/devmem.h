@@ -87,6 +87,7 @@ struct net_devmem_dmabuf_binding {
 	unsigned int niov_shift;
 
 	struct work_struct unbind_w;
+	struct rcu_head rcu;
 };
 
 #if defined(CONFIG_NET_DEVMEM)

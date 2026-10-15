@@ -168,7 +168,7 @@ void __net_devmem_dmabuf_binding_free(struct work_struct *wq)
 	percpu_ref_exit(&binding->ref);
 	kvfree(binding->freelist);
 	kvfree(binding->tx_vec);
-	kfree(binding);
+	kfree_rcu(binding, rcu);
 }
 
 static unsigned int
@@ -234,8 +234,17 @@ void net_devmem_unbind_dmabuf(struct net_devmem_dmabuf_binding *binding)
 				busy = true;
 		}
 
-		if (binding->direction == DMA_FROM_DEVICE && !busy)
+		if (binding->direction == DMA_FROM_DEVICE && !busy) {
+			struct net_device *map_dev = NULL;
+			netdevice_tracker dev_tracker;
+
+			/* Leased queue: attachment readers hold map_dev's lock. */
+			if (READ_ONCE(binding->map_dev) != binding->bind_dev)
+				map_dev = net_devmem_lock_dev(&binding->map_dev,
+							      &dev_tracker);
 			net_devmem_dmabuf_binding_unmap(binding);
+			net_devmem_unlock_dev(map_dev, &dev_tracker);
+		}
 		WRITE_ONCE(binding->bind_dev, NULL);
 	}
 
@@ -543,6 +552,37 @@ err_put_dmabuf:
 	dma_buf_put(dmabuf);
 	return ERR_PTR(err);
 }
+
+/* binding->attachment is stable under the instance lock of map_dev. */
+static bool
+net_devmem_binding_mapped_to(struct net_devmem_dmabuf_binding *binding,
+			     struct device *dma_dev)
+{
+	return binding->attachment &&
+	       (!dma_dev || binding->attachment->dev == dma_dev);
+}
+
+bool netdev_has_dmabuf_binding(struct net_device *dev, struct device *dma_dev)
+{
+	struct net_devmem_dmabuf_binding *binding;
+	unsigned long xa_idx;
+	bool found = false;
+
+	netdev_assert_locked(dev);
+
+	rcu_read_lock();
+	xa_for_each(&net_devmem_dmabuf_bindings, xa_idx, binding) {
+		if (READ_ONCE(binding->map_dev) == dev &&
+		    net_devmem_binding_mapped_to(binding, dma_dev)) {
+			found = true;
+			break;
+		}
+	}
+	rcu_read_unlock();
+
+	return found;
+}
+EXPORT_SYMBOL_GPL(netdev_has_dmabuf_binding);
 
 void net_devmem_net_iov_inc_ref(struct net_iov *niov)
 {

@@ -236,6 +236,28 @@ void netdev_queue_config(struct net_device *dev, int rxq,
 
 bool netif_rxq_has_unreadable_mp(struct net_device *dev, unsigned int rxq_idx);
 
+#if IS_ENABLED(CONFIG_NET_DEVMEM)
+/**
+ * netdev_has_dmabuf_binding() - check if a netdev has mapped dmabuf bindings
+ * @dev: netdev to check
+ * @dma_dev: only consider bindings mapped against this DMA device,
+ *	     NULL for any
+ *
+ * TX bindings stay mapped after unbind until in-flight skbs release them.
+ *
+ * Context: Caller must hold the instance lock of @dev.
+ *
+ * Return: true if a matching binding exists.
+ */
+bool netdev_has_dmabuf_binding(struct net_device *dev, struct device *dma_dev);
+#else
+static inline bool netdev_has_dmabuf_binding(struct net_device *dev,
+					     struct device *dma_dev)
+{
+	return false;
+}
+#endif
+
 /**
  * DOC: Lockless queue stopping / waking helpers.
  *
