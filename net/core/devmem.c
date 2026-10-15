@@ -94,9 +94,9 @@ net_devmem_dmabuf_binding_unmap(struct net_devmem_dmabuf_binding *binding)
  *
  * Invariant: *@dev_ptr is set once at bind time and is only ever cleared to
  * NULL while holding netdev_lock() on that device (in
- * mp_dmabuf_devmem_uninstall(), net_devmem_unbind_dmabuf(), or
- * net_devmem_dev_unregister(), all before synchronize_net() and
- * netdev_run_todo() free the net_device).
+ * mp_dmabuf_devmem_uninstall(), net_devmem_unbind_dmabuf(),
+ * net_devmem_unbind_dma_dev(), or net_devmem_dev_unregister(), all
+ * before synchronize_net() and netdev_run_todo() free the net_device).
  *
  * Taking rcu_read_lock() guarantees that a non-NULL device read from
  * *@dev_ptr has not yet completed unregister_netdevice_many_notify()
@@ -583,6 +583,62 @@ bool netdev_has_dmabuf_binding(struct net_device *dev, struct device *dma_dev)
 	return found;
 }
 EXPORT_SYMBOL_GPL(netdev_has_dmabuf_binding);
+
+/* RX bindings still on a queue are released through the queue.
+ * bind_dev is cleared once the binding is off all queues of map_dev.
+ */
+static bool
+net_devmem_binding_on(struct net_devmem_dmabuf_binding *binding,
+		      struct net_device *dev, struct device *dma_dev)
+{
+	return READ_ONCE(binding->map_dev) == dev &&
+	       (binding->direction == DMA_TO_DEVICE ||
+		!READ_ONCE(binding->bind_dev)) &&
+	       net_devmem_binding_mapped_to(binding, dma_dev);
+}
+
+void net_devmem_unbind_dma_dev(struct net_device *dev, struct device *dma_dev)
+{
+	struct net_devmem_dmabuf_binding *binding;
+	unsigned long xa_idx;
+	bool unmap = false;
+
+	netdev_assert_locked(dev);
+
+	rcu_read_lock();
+	xa_for_each(&net_devmem_dmabuf_bindings, xa_idx, binding) {
+		if (!net_devmem_binding_on(binding, dev, dma_dev))
+			continue;
+
+		xa_clear_mark(&net_devmem_dmabuf_bindings, xa_idx,
+			      NET_DEVMEM_BINDING_LIVE);
+		unmap = true;
+	}
+	rcu_read_unlock();
+
+	if (!unmap)
+		return;
+
+	/* Ensure no tx net_devmem_get_binding() are in flight after
+	 * NET_DEVMEM_BINDING_LIVE is cleared.
+	 */
+	synchronize_net();
+
+	rcu_read_lock();
+	xa_for_each(&net_devmem_dmabuf_bindings, xa_idx, binding) {
+		if (!net_devmem_binding_on(binding, dev, dma_dev))
+			continue;
+
+		/* Unmap sleeps. Dropping RCU is safe, the instance lock
+		 * keeps the binding alive until binding->map_dev is cleared.
+		 */
+		rcu_read_unlock();
+		net_devmem_dmabuf_binding_unmap(binding);
+		WRITE_ONCE(binding->map_dev, NULL);
+		rcu_read_lock();
+	}
+	rcu_read_unlock();
+}
 
 void net_devmem_net_iov_inc_ref(struct net_iov *niov)
 {

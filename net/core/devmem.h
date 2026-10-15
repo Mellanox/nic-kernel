@@ -47,7 +47,7 @@ struct net_devmem_dmabuf_binding {
 	 * use. RX bindings are unmapped earlier when their queues are closed or
 	 * uninstalled, unless a leased or busy queue may still use the binding.
 	 * Both RX and TX bindings are also unmapped earlier if map_dev is
-	 * unregistered.
+	 * unregistered or loses its DMA device.
 	 *
 	 * net_devmem_net_iov_inc_ref() on dmabuf net_iovs will increment this
 	 * reference, making sure that the binding remains alive until all the
@@ -108,6 +108,7 @@ void net_devmem_unlock_dev(struct net_device *dev,
 			   netdevice_tracker *dev_tracker);
 void net_devmem_unbind_dmabuf(struct net_devmem_dmabuf_binding *binding);
 void net_devmem_dev_unregister(struct net_device *dev);
+void net_devmem_unbind_dma_dev(struct net_device *dev, struct device *dma_dev);
 int net_devmem_bind_dmabuf_to_queue(struct net_device *dev, u32 rxq_idx,
 				    struct net_devmem_dmabuf_binding *binding,
 				    struct netlink_ext_ack *extack);
@@ -204,6 +205,11 @@ net_devmem_unbind_dmabuf(struct net_devmem_dmabuf_binding *binding)
 }
 
 static inline void net_devmem_dev_unregister(struct net_device *dev)
+{
+}
+
+static inline void net_devmem_unbind_dma_dev(struct net_device *dev,
+					     struct device *dma_dev)
 {
 }
 
