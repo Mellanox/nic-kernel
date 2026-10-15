@@ -2952,15 +2952,18 @@ static void pkey_change_handler(struct work_struct *work)
 	struct mlx5_ib_port_resources *ports =
 		container_of(work, struct mlx5_ib_port_resources,
 			     pkey_change_work);
+	struct mlx5_ib_gsi_qp *gsi;
 
-	if (!ports->gsi)
+	/* Pairs with the smp_store_release() in mlx5_ib_create_gsi() */
+	gsi = smp_load_acquire(&ports->gsi);
+	if (!gsi)
 		/*
 		 * We got this event before device was fully configured
 		 * and MAD registration code wasn't called/finished yet.
 		 */
 		return;
 
-	mlx5_ib_gsi_pkey_change(ports->gsi);
+	mlx5_ib_gsi_pkey_change(gsi);
 }
 
 static void mlx5_ib_handle_internal_error(struct mlx5_ib_dev *ibdev)
@@ -5006,21 +5009,41 @@ static int mlx5_ib_stage_dev_notifier_init(struct mlx5_ib_dev *dev)
 	dev->mdev_events.notifier_call = mlx5_ib_event;
 	mlx5_notifier_register(dev->mdev, &dev->mdev_events);
 
-	mlx5r_macsec_event_register(dev);
-
 	return 0;
 }
 
-static void mlx5_ib_stage_dev_notifier_cleanup(struct mlx5_ib_dev *dev)
+/*
+ * The event handlers use resources that later stages own, the GSI QPs in
+ * particular, so the notifier has to be gone before those stages are torn
+ * down. Stage cleanup runs in reverse order and this notifier is registered
+ * before MLX5_IB_STAGE_IB_REG, so both unwind paths, __mlx5_ib_remove() and
+ * the error unwind in __mlx5_ib_add(), call this first. Safe to call more
+ * than once and on a device that never got here.
+ */
+static void mlx5_ib_unregister_dev_notifier(struct mlx5_ib_dev *dev)
 {
 	struct mlx5_ib_resources *devr = &dev->devr;
 	int port;
 
-	mlx5r_macsec_event_unregister(dev);
+	if (!dev->mdev_events.notifier_call)
+		return;
+
 	mlx5_notifier_unregister(dev->mdev, &dev->mdev_events);
+	dev->mdev_events.notifier_call = NULL;
 
 	for (port = 0; port < ARRAY_SIZE(devr->ports); ++port)
 		cancel_work_sync(&devr->ports[port].pkey_change_work);
+}
+
+static int mlx5_ib_stage_macsec_notifier_init(struct mlx5_ib_dev *dev)
+{
+	mlx5r_macsec_event_register(dev);
+	return 0;
+}
+
+static void mlx5_ib_stage_macsec_notifier_cleanup(struct mlx5_ib_dev *dev)
+{
+	mlx5r_macsec_event_unregister(dev);
 }
 
 void __mlx5_ib_remove(struct mlx5_ib_dev *dev,
@@ -5028,6 +5051,7 @@ void __mlx5_ib_remove(struct mlx5_ib_dev *dev,
 		      int stage)
 {
 	dev->ib_active = false;
+	mlx5_ib_unregister_dev_notifier(dev);
 
 	/* Number of stages to cleanup */
 	while (stage) {
@@ -5060,6 +5084,8 @@ int __mlx5_ib_add(struct mlx5_ib_dev *dev,
 	return 0;
 
 err_out:
+	mlx5_ib_unregister_dev_notifier(dev);
+
 	/* Clean up stages which were initialized */
 	while (i) {
 		i--;
@@ -5115,12 +5141,15 @@ static const struct mlx5_ib_profile pf_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_SYS_ERROR_NOTIFIER,
 		     mlx5_ib_stage_sys_error_notifier_init,
 		     mlx5_ib_stage_sys_error_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
+		     mlx5_ib_stage_dev_notifier_init,
+		     mlx5_ib_unregister_dev_notifier),
 	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
 		     mlx5_ib_stage_ib_reg_init,
 		     mlx5_ib_stage_ib_reg_cleanup),
-	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
-		     mlx5_ib_stage_dev_notifier_init,
-		     mlx5_ib_stage_dev_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_MACSEC_NOTIFIER,
+		     mlx5_ib_stage_macsec_notifier_init,
+		     mlx5_ib_stage_macsec_notifier_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_POST_IB_REG_UMR,
 		     mlx5_ib_stage_post_ib_reg_umr_init,
 		     NULL),
@@ -5175,12 +5204,15 @@ const struct mlx5_ib_profile raw_eth_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_SYS_ERROR_NOTIFIER,
 		     mlx5_ib_stage_sys_error_notifier_init,
 		     mlx5_ib_stage_sys_error_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
+		     mlx5_ib_stage_dev_notifier_init,
+		     mlx5_ib_unregister_dev_notifier),
 	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
 		     mlx5_ib_stage_ib_reg_init,
 		     mlx5_ib_stage_ib_reg_cleanup),
-	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
-		     mlx5_ib_stage_dev_notifier_init,
-		     mlx5_ib_stage_dev_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_MACSEC_NOTIFIER,
+		     mlx5_ib_stage_macsec_notifier_init,
+		     mlx5_ib_stage_macsec_notifier_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_POST_IB_REG_UMR,
 		     mlx5_ib_stage_post_ib_reg_umr_init,
 		     NULL),

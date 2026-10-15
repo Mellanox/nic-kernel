@@ -154,7 +154,8 @@ int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 		goto err_destroy_cq;
 	}
 
-	dev->devr.ports[attr->port_num - 1].gsi = gsi;
+	/* Pairs with the smp_load_acquire() in pkey_change_handler() */
+	smp_store_release(&dev->devr.ports[attr->port_num - 1].gsi, gsi);
 	return 0;
 
 err_destroy_cq:
@@ -174,13 +175,22 @@ int mlx5_ib_destroy_gsi(struct mlx5_ib_qp *mqp)
 	int qp_index;
 	int ret;
 
+	/*
+	 * pkey_change_handler() takes no reference on what it finds here, so
+	 * the pointer has to be withdrawn and a worker that already loaded it
+	 * waited for before this object is taken apart.
+	 */
+	smp_store_release(&dev->devr.ports[port_num - 1].gsi, NULL);
+	cancel_work_sync(&dev->devr.ports[port_num - 1].pkey_change_work);
+
 	ret = ib_destroy_qp(gsi->rx_qp);
 	if (ret) {
 		mlx5_ib_warn(dev, "unable to destroy hardware GSI QP. error %d\n",
 			     ret);
+		/* The object is still there, make it reachable again */
+		smp_store_release(&dev->devr.ports[port_num - 1].gsi, gsi);
 		return ret;
 	}
-	dev->devr.ports[port_num - 1].gsi = NULL;
 	gsi->rx_qp = NULL;
 
 	for (qp_index = 0; qp_index < gsi->num_qps; ++qp_index) {

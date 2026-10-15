@@ -929,8 +929,14 @@ enum mlx5_ib_stages {
 	MLX5_IB_STAGE_PRE_IB_REG_UMR,
 	MLX5_IB_STAGE_WHITELIST_UID,
 	MLX5_IB_STAGE_SYS_ERROR_NOTIFIER,
-	MLX5_IB_STAGE_IB_REG,
+	/*
+	 * Subscribe to device events before ib_register_device() lets ib_core
+	 * and its clients read the port tables, so that a change which races
+	 * with registration is reported rather than lost.
+	 */
 	MLX5_IB_STAGE_DEVICE_NOTIFIER,
+	MLX5_IB_STAGE_IB_REG,
+	MLX5_IB_STAGE_MACSEC_NOTIFIER,
 	MLX5_IB_STAGE_POST_IB_REG_UMR,
 	MLX5_IB_STAGE_DELAY_DROP,
 	MLX5_IB_STAGE_RESTRACK,
