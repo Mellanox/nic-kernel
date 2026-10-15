@@ -3218,6 +3218,7 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 		container_of(_work, struct mlx5_ib_event_work, work);
 	struct mlx5_ib_dev *ibdev;
 	struct ib_event ibev;
+	bool active;
 
 	if (work->is_slave) {
 		ibdev = mlx5_ib_get_ibdev_from_mpi(work->mpi);
@@ -3226,6 +3227,20 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 	} else {
 		ibdev = work->dev;
 	}
+
+	/*
+	 * This is the test that keeps an event queued just before the device
+	 * went inactive from reaching the handlers, which would rearm work
+	 * that the teardown has already cancelled. The test before the
+	 * dispatch below only narrows the window further, for a device that
+	 * goes inactive while this handler runs.
+	 */
+	spin_lock_irq(&ibdev->pending_events_lock);
+	active = ibdev->ib_active;
+	spin_unlock_irq(&ibdev->pending_events_lock);
+
+	if (!active)
+		goto out;
 
 	switch (work->event) {
 	case MLX5_EVENT_TYPE_PORT_CHANGE: {
@@ -5146,6 +5161,13 @@ static void mlx5_ib_unregister_dev_notifier(struct mlx5_ib_dev *dev)
 
 	mlx5_notifier_unregister(dev->mdev, &dev->mdev_events);
 	dev->mdev_events.notifier_call = NULL;
+
+	/*
+	 * Unregistering stops new events, but an event already queued still
+	 * dereferences this device and rearms work that this and later stage
+	 * cleanups cancel, so let the queued events run out first.
+	 */
+	flush_workqueue(mlx5_ib_event_wq);
 
 	for (port = 0; port < ARRAY_SIZE(devr->ports); ++port)
 		cancel_work_sync(&devr->ports[port].pkey_change_work);
