@@ -202,6 +202,7 @@ TEST_GEN_PROGS := \
 	tcp_port_share \
 	tls \
 	udp_splice_checksum \
+	tls_hw_offload \
 # end of TEST_GEN_PROGS
 
 TEST_FILES := \
