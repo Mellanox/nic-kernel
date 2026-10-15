@@ -203,11 +203,30 @@ net_devmem_dev_unregister_rx(struct net_devmem_dmabuf_binding *binding,
 			    NET_DEVMEM_BINDING_LIVE);
 }
 
+static bool
+net_devmem_dev_unregister_tx(struct net_devmem_dmabuf_binding *binding,
+			     unsigned long xa_idx, struct net_device *dev)
+{
+	if (binding->direction != DMA_TO_DEVICE)
+		return false;
+
+	if (READ_ONCE(binding->vdev) == dev)
+		WRITE_ONCE(binding->vdev, NULL);
+
+	if (READ_ONCE(binding->dev) != dev)
+		return false;
+
+	__xa_clear_mark(&net_devmem_dmabuf_bindings, xa_idx,
+			NET_DEVMEM_BINDING_LIVE);
+	return true;
+}
+
 static void net_devmem_dev_detach(struct net_devmem_dmabuf_binding *binding,
 				  struct net_device *dev)
 {
 	mutex_lock(&binding->lock);
 	WRITE_ONCE(binding->dev, NULL);
+	WRITE_ONCE(binding->vdev, NULL);
 	if (!netif_is_queue_leasee(dev))
 		net_devmem_dmabuf_binding_unmap(binding);
 	mutex_unlock(&binding->lock);
@@ -225,7 +244,8 @@ void net_devmem_dev_unregister(struct net_device *dev)
 
 	xa_lock(&net_devmem_dmabuf_bindings);
 	xa_for_each(&net_devmem_dmabuf_bindings, xa_idx, binding) {
-		if (!net_devmem_dev_unregister_rx(binding, xa_idx, dev))
+		if (!net_devmem_dev_unregister_rx(binding, xa_idx, dev) &&
+		    !net_devmem_dev_unregister_tx(binding, xa_idx, dev))
 			continue;
 
 		xa_unlock(&net_devmem_dmabuf_bindings);
