@@ -197,6 +197,7 @@ struct mlx5e_ipsec_ft {
 	struct mlx5_flow_table *sa;
 	struct mlx5_flow_table *sa_sel;
 	struct mlx5_flow_table *status;
+	struct mlx5_flow_table *tnl_packet_offload_drop;
 	u32 refcnt;
 };
 
@@ -296,6 +297,7 @@ struct mlx5_accel_pol_xfrm_attrs {
 	u8 action;
 	u8 type : 2;
 	u8 dir : 2;
+	u8 mode;
 	u32 reqid;
 	u32 prio;
 };
