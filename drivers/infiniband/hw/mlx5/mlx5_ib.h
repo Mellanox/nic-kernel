@@ -854,6 +854,10 @@ struct mlx5_ib_port {
 	struct mlx5_ib_dbg_cc_params *dbg_cc_params;
 	struct mlx5_roce roce;
 	struct mlx5_eswitch_rep		*rep;
+	/* MLX5_PORT_CHANGE_SUBTYPE_* seen while the device was not active,
+	 * protected by mlx5_ib_dev::pending_events_lock.
+	 */
+	unsigned long			pending_port_events;
 #ifdef CONFIG_MLX5_MACSEC
 	struct mlx5_reserved_gids *reserved_gids;
 #endif
@@ -1099,6 +1103,11 @@ struct mlx5_ib_dev {
 	 */
 	struct mutex			data_direct_lock;
 	struct notifier_block		mdev_events;
+	/* Serializes the ib_active test in the event path against publishing
+	 * ib_active and draining mlx5_ib_port::pending_port_events.
+	 */
+	spinlock_t			pending_events_lock;
+	struct work_struct		pending_events_work;
 	struct notifier_block		sys_error_events;
 	struct notifier_block           lag_events;
 	int				num_ports;
