@@ -3062,6 +3062,11 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 {
 	u32 port = (eqe->data.port.port >> 4) & 0xf;
 
+	if (!rdma_is_port_valid(&ibdev->ib_dev, port)) {
+		mlx5_ib_warn(ibdev, "warning: event on port %d\n", port);
+		return -EINVAL;
+	}
+
 	ibev->element.port_num = port;
 
 	switch (eqe->sub_type) {
@@ -3093,7 +3098,14 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 
 	case MLX5_PORT_CHANGE_SUBTYPE_PKEY:
 		ibev->event = IB_EVENT_PKEY_CHANGE;
-		schedule_work(&ibdev->devr.ports[port - 1].pkey_change_work);
+		/*
+		 * devr.ports[] has a bound of its own, as only the ports
+		 * that can carry a GSI QP have P_Key change work. A port
+		 * beyond it has no GSI machinery to rebuild, the event is
+		 * still dispatched so that ib_core invalidates its cache.
+		 */
+		if (port <= ARRAY_SIZE(ibdev->devr.ports))
+			schedule_work(&ibdev->devr.ports[port - 1].pkey_change_work);
 		break;
 
 	case MLX5_PORT_CHANGE_SUBTYPE_GUID:
@@ -3138,11 +3150,6 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 	}
 
 	ibev.device = &ibdev->ib_dev;
-
-	if (!rdma_is_port_valid(&ibdev->ib_dev, ibev.element.port_num)) {
-		mlx5_ib_warn(ibdev, "warning: event on port %d\n",  ibev.element.port_num);
-		goto out;
-	}
 
 	if (ibdev->ib_active)
 		ib_dispatch_event(&ibev);
