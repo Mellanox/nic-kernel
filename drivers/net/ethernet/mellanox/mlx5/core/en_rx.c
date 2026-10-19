@@ -1523,6 +1523,7 @@ static bool mlx5e_shampo_complete_rx_cqe(struct mlx5e_rq *rq,
 
 	skb_reset_network_header(skb);
 	if (!skb_flow_dissect_flow_keys(skb, &rq->hw_gro_data->fk, 0)) {
+		skb_shinfo(skb)->gso_size = 0;
 		napi_gro_receive(rq->cq.napi, skb);
 		rq->hw_gro_data->skb = NULL;
 	}
