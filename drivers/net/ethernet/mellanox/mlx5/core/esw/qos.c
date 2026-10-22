@@ -5,6 +5,7 @@
 #include "lib/mlx5.h"
 #include "esw/qos.h"
 #include "en/port.h"
+#include "lag/lag.h"
 #define CREATE_TRACE_POINTS
 #include "diag/qos_tracepoint.h"
 
