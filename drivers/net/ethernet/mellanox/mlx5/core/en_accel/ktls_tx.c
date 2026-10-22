@@ -11,6 +11,16 @@ struct mlx5e_dump_wqe {
 	struct mlx5_wqe_data_seg data;
 };
 
+struct mlx5_debug_info {
+	u64 skip_no_sync_data_c;
+	u32 offload_start_sn;
+	u32 record_start_seq;
+	u32 excepted_seq;
+	u64 record_sn;
+	u32 datalen;
+	u32 seq;
+};
+
 #define MLX5E_KTLS_DUMP_WQEBBS \
 	(DIV_ROUND_UP(sizeof(struct mlx5e_dump_wqe), MLX5_SEND_WQE_BB))
 
@@ -100,6 +110,7 @@ struct mlx5e_ktls_offload_context_tx {
 	struct mlx5e_tls_sw_stats *sw_stats;
 	struct mlx5_crypto_dek *dek;
 	u8 create_err : 1;
+	u32 start_offload_tcp_sn;
 };
 
 static void
@@ -469,6 +480,8 @@ int mlx5e_ktls_add_tx(struct net_device *netdev, struct sock *sk,
 	if (IS_ERR(priv_tx))
 		return PTR_ERR(priv_tx);
 
+	priv_tx->start_offload_tcp_sn = start_offload_tcp_sn;
+
 	switch (crypto_info->cipher_type) {
 	case TLS_CIPHER_AES_GCM_128:
 		priv_tx->crypto_info.crypto_info_128 =
@@ -620,7 +633,8 @@ enum mlx5e_ktls_sync_retval {
 
 static enum mlx5e_ktls_sync_retval
 tx_sync_info_get(struct mlx5e_ktls_offload_context_tx *priv_tx,
-		 u32 tcp_seq, int datalen, struct tx_sync_info *info)
+		 u32 tcp_seq, int datalen, struct tx_sync_info *info,
+		 struct mlx5_debug_info *debug_info)
 {
 	struct tls_offload_context_tx *tx_ctx = priv_tx->tx_ctx;
 	enum mlx5e_ktls_sync_retval ret = MLX5E_KTLS_SYNC_DONE;
@@ -631,6 +645,7 @@ tx_sync_info_get(struct mlx5e_ktls_offload_context_tx *priv_tx,
 
 	spin_lock_irqsave(&tx_ctx->lock, flags);
 	record = tls_get_record(tx_ctx, tcp_seq, &info->rcd_sn);
+	debug_info->record_sn = info->rcd_sn;
 
 	if (unlikely(!record)) {
 		ret = MLX5E_KTLS_SYNC_FAIL;
@@ -645,6 +660,7 @@ tx_sync_info_get(struct mlx5e_ktls_offload_context_tx *priv_tx,
 	 *    this packet was already acknowledged and its record info
 	 *    was released.
 	 */
+	debug_info->record_start_seq = tls_record_start_seq(record);
 	ends_before = before(tcp_seq + datalen - 1, tls_record_start_seq(record));
 
 	if (unlikely(tls_record_is_start_marker(record))) {
@@ -772,13 +788,13 @@ static enum mlx5e_ktls_sync_retval
 mlx5e_ktls_tx_handle_ooo(struct mlx5e_ktls_offload_context_tx *priv_tx,
 			 struct mlx5e_txqsq *sq,
 			 int datalen,
-			 u32 seq)
+			 u32 seq, struct mlx5_debug_info *debug_info)
 {
 	enum mlx5e_ktls_sync_retval ret;
 	struct tx_sync_info info = {};
 	int i;
 
-	ret = tx_sync_info_get(priv_tx, seq, datalen, &info);
+	ret = tx_sync_info_get(priv_tx, seq, datalen, &info, debug_info);
 	if (unlikely(ret != MLX5E_KTLS_SYNC_DONE))
 		/* We might get here with ret == FAIL if a retransmission
 		 * reaches the driver after the relevant record is acked.
@@ -826,6 +842,23 @@ err_out:
 	return MLX5E_KTLS_SYNC_FAIL;
 }
 
+static void print_debug_info(struct mlx5_core_dev *mdev, struct sk_buff *skb,
+			     struct mlx5_debug_info *info)
+{
+	if (!net_ratelimit())
+		return;
+
+	mlx5_core_warn(mdev, "\n************** DEBUG PATCH LOGGINGS **************\n");
+	skb_dump(KERN_WARNING, skb, true);
+	mlx5_core_warn(mdev, "tls_skip_no_sync_data counter: %llu\n", info->skip_no_sync_data_c);
+	mlx5_core_warn(mdev, "start offload seq: %u\n", info->offload_start_sn);
+	mlx5_core_warn(mdev, "record_start_seq: %u\n", info->record_start_seq);
+	mlx5_core_warn(mdev, "excepted seq: %u\n", info->excepted_seq);
+	mlx5_core_warn(mdev, "record_sn: %llu\n", info->record_sn);
+	mlx5_core_warn(mdev, "datalen: %u\n", info->datalen);
+	mlx5_core_warn(mdev, "seq: %u\n", info->seq);
+}
+
 bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state)
@@ -859,8 +892,13 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 
 	seq = ntohl(tcp_hdr(skb)->seq);
 	if (unlikely(priv_tx->expected_seq != seq)) {
+		struct mlx5_debug_info
+		debug_info = {.offload_start_sn = priv_tx->start_offload_tcp_sn,
+			      .datalen = datalen,
+			      .excepted_seq = priv_tx->expected_seq,
+			      .seq = seq};
 		enum mlx5e_ktls_sync_retval ret =
-			mlx5e_ktls_tx_handle_ooo(priv_tx, sq, datalen, seq);
+			mlx5e_ktls_tx_handle_ooo(priv_tx, sq, datalen, seq, &debug_info);
 
 		stats->tls_ooo++;
 
@@ -871,6 +909,8 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			stats->tls_skip_no_sync_data++;
 			if (likely(!skb->decrypted))
 				goto out;
+			debug_info.skip_no_sync_data_c = stats->tls_skip_no_sync_data;
+			print_debug_info(priv_tx->mdev, skb, &debug_info);
 			WARN_ON_ONCE(1);
 			goto err_out;
 		case MLX5E_KTLS_SYNC_FAIL:
