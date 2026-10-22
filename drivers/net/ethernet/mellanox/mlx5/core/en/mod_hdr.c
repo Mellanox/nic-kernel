@@ -74,6 +74,7 @@ mlx5e_mod_hdr_attach(struct mlx5_core_dev *mdev,
 		     enum mlx5_flow_namespace_type namespace,
 		     struct mlx5e_tc_mod_hdr_acts *mod_hdr_acts)
 {
+	struct mlx5_modify_header_attr mh_attr = {};
 	int num_actions, actions_size, err;
 	struct mlx5e_mod_hdr_handle *mh;
 	struct mod_hdr_key key;
@@ -117,7 +118,8 @@ mlx5e_mod_hdr_attach(struct mlx5_core_dev *mdev,
 
 	mh->modify_hdr = mlx5_modify_header_alloc(mdev, namespace,
 						  mh->key.num_actions,
-						  mh->key.actions);
+						  mh->key.actions,
+						  &mh_attr);
 	if (IS_ERR(mh->modify_hdr)) {
 		err = PTR_ERR(mh->modify_hdr);
 		mh->compl_result = err;

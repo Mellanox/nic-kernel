@@ -11870,7 +11870,7 @@ M:	Chengchang Tang <tangchengchang@huawei.com>
 M:	Junxian Huang <huangjunxian6@hisilicon.com>
 L:	linux-rdma@vger.kernel.org
 S:	Maintained
-F:	Documentation/devicetree/bindings/infiniband/hisilicon-hns-roce.txt
+F:	Documentation/devicetree/bindings/infiniband/hisilicon,hns-roce-v1.yaml
 F:	drivers/infiniband/hw/hns/
 
 HISILICON SAS Controller
@@ -18072,7 +18072,7 @@ F:	include/linux/cciss*.h
 F:	include/uapi/linux/cciss*.h
 
 MICROSOFT MANA RDMA DRIVER
-M:	Long Li <longli@microsoft.com>
+M:	Wei Hu <weh@microsoft.com>
 M:	Konstantin Taranov <kotaranov@microsoft.com>
 L:	linux-rdma@vger.kernel.org
 L:	linux-hyperv@vger.kernel.org
@@ -27831,7 +27831,9 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/trigger-source/*
 
 TRUSTED EXECUTION ENVIRONMENT SECURITY MANAGER (TSM)
-M:	Dan Williams <djbw@kernel.org>
+M:	Aneesh Kumar K.V <aneesh.kumar@kernel.org>
+M:	Jason Gunthorpe <jgg@nvidia.com>
+R:	Lukas Wunner <lukas@wunner.de>
 L:	linux-coco@lists.linux.dev
 S:	Maintained
 F:	Documentation/ABI/testing/configfs-tsm-report
@@ -28772,6 +28774,7 @@ VFIO SELFTESTS
 M:	David Matlack <dmatlack@google.com>
 L:	kvm@vger.kernel.org
 S:	Maintained
+F:	Documentation/driver-api/vfio-selftests.rst
 F:	tools/testing/selftests/vfio/
 
 VFIO VIRTIO PCI DRIVER
