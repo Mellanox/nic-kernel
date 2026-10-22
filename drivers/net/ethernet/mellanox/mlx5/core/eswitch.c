@@ -2700,7 +2700,8 @@ int mlx5_eswitch_init(struct mlx5_core_dev *dev)
 	xa_init_flags(&esw->offloads.vhca_map, XA_FLAGS_ALLOC);
 	xa_init(&esw->vhca_type_map);
 	mutex_init(&esw->state_lock);
-	init_rwsem(&esw->mode_lock);
+	init_rwsem(&esw->mode_change_lock);
+	mutex_init(&esw->mode_lock);
 	refcount_set(&esw->qos.refcnt, 0);
 	init_waitqueue_head(&esw->work_queue_wait);
 	atomic_set(&esw->generation, 0);
@@ -2745,6 +2746,7 @@ void mlx5_eswitch_cleanup(struct mlx5_eswitch *esw)
 	destroy_workqueue(esw->work_queue);
 	WARN_ON(refcount_read(&esw->qos.refcnt));
 	mutex_destroy(&esw->state_lock);
+	mutex_destroy(&esw->mode_lock);
 	WARN_ON(!xa_empty(&esw->offloads.vhca_map));
 	xa_destroy(&esw->offloads.vhca_map);
 	xa_destroy(&esw->vhca_type_map);
@@ -3073,7 +3075,7 @@ void mlx5_esw_event_notifier_unregister(struct mlx5_core_dev *dev,
 }
 
 /**
- * mlx5_esw_hold() - Try to take a read lock on esw mode lock.
+ * mlx5_esw_hold() - Try to take a read lock on esw mode_change_lock.
  * @mdev: mlx5 core device.
  *
  * Should be called by esw resources callers.
@@ -3088,9 +3090,9 @@ bool mlx5_esw_hold(struct mlx5_core_dev *mdev)
 	if (!mlx5_esw_allowed(esw))
 		return true;
 
-	if (down_read_trylock(&esw->mode_lock) != 0) {
+	if (down_read_trylock(&esw->mode_change_lock) != 0) {
 		if (esw->eswitch_operation_in_progress) {
-			up_read(&esw->mode_lock);
+			up_read(&esw->mode_change_lock);
 			return false;
 		}
 		return true;
@@ -3100,7 +3102,7 @@ bool mlx5_esw_hold(struct mlx5_core_dev *mdev)
 }
 
 /**
- * mlx5_esw_release() - Release a read lock on esw mode lock.
+ * mlx5_esw_release() - Release a read lock on esw mode_change_lock.
  * @mdev: mlx5 core device.
  */
 void mlx5_esw_release(struct mlx5_core_dev *mdev)
@@ -3108,7 +3110,7 @@ void mlx5_esw_release(struct mlx5_core_dev *mdev)
 	struct mlx5_eswitch *esw = mdev->priv.eswitch;
 
 	if (mlx5_esw_allowed(esw))
-		up_read(&esw->mode_lock);
+		up_read(&esw->mode_change_lock);
 }
 
 /**
@@ -3136,24 +3138,22 @@ void mlx5_esw_put(struct mlx5_core_dev *mdev)
 }
 
 /**
- * mlx5_esw_try_lock() - Take a write lock on esw mode lock.
+ * mlx5_esw_try_lock() - Try to take a write lock on esw mode_change_lock.
  * @esw: eswitch device.
- *
- * Should be called by esw mode change routine.
  *
  * Return:
  * * >= 0    - esw mode if successfully locked.
- * * -EBUSY  - mode change in progress or users exist.
+ * * -EBUSY  - eswitch operation in progress or eswitch users exist.
  * * -EINVAL - lock is already held.
  */
 int mlx5_esw_try_lock(struct mlx5_eswitch *esw)
 {
-	if (down_write_trylock(&esw->mode_lock) == 0)
+	if (down_write_trylock(&esw->mode_change_lock) == 0)
 		return -EINVAL;
 
 	if (esw->eswitch_operation_in_progress ||
 	    atomic64_read(&esw->user_count) > 0) {
-		up_write(&esw->mode_lock);
+		up_write(&esw->mode_change_lock);
 		return -EBUSY;
 	}
 
@@ -3162,11 +3162,11 @@ int mlx5_esw_try_lock(struct mlx5_eswitch *esw)
 
 int mlx5_esw_lock(struct mlx5_eswitch *esw, bool check_users)
 {
-	down_write(&esw->mode_lock);
+	down_write(&esw->mode_change_lock);
 
 	if (esw->eswitch_operation_in_progress ||
 	    (check_users && atomic64_read(&esw->user_count) > 0)) {
-		up_write(&esw->mode_lock);
+		up_write(&esw->mode_change_lock);
 		return -EBUSY;
 	}
 
@@ -3174,12 +3174,12 @@ int mlx5_esw_lock(struct mlx5_eswitch *esw, bool check_users)
 }
 
 /**
- * mlx5_esw_unlock() - Release write lock on esw mode lock
+ * mlx5_esw_unlock() - Release a write lock on esw mode_change_lock.
  * @esw: eswitch device.
  */
 void mlx5_esw_unlock(struct mlx5_eswitch *esw)
 {
-	up_write(&esw->mode_lock);
+	up_write(&esw->mode_change_lock);
 }
 
 /**

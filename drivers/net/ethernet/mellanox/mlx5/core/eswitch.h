@@ -410,10 +410,15 @@ struct mlx5_eswitch {
 	 */
 	struct mutex            state_lock;
 
-	/* Protects eswitch mode change that occurs via one or more
-	 * user commands, i.e. sriov state change, devlink commands.
+	/* Synchronizes eswitch reconfiguration with TC setup and auxiliary
+	 * device removal. Held across long operations.
 	 */
-	struct rw_semaphore mode_lock;
+	struct rw_semaphore mode_change_lock;
+	/* Protects num_block_mode and eswitch_operation_in_progress.
+	 * Take mode_change_lock first when both are needed.
+	 * Release this mutex before reconfiguration.
+	 */
+	struct mutex mode_lock;
 	atomic64_t user_count;
 	wait_queue_head_t work_queue_wait;
 
