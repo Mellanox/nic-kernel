@@ -49,6 +49,24 @@ static void mlx5_ib_cq_comp(struct mlx5_core_cq *cq, struct mlx5_eqe *eqe)
 	ibcq->comp_handler(ibcq, ibcq->cq_context);
 }
 
+/*
+ * A hostile NIC can raise an event for a kernel CQ before the core arms it,
+ * when its poll context and handler may not be visible yet. Ignore events
+ * until the core finished setting up the CQ.
+ */
+static void mlx5_ib_kernel_cq_comp(struct mlx5_core_cq *cq,
+				   struct mlx5_eqe *eqe)
+{
+	/*
+	 * Only the first events can find it unset. Pairs with the release in
+	 * mlx5_ib_arm_cq().
+	 */
+	if (!smp_load_acquire(&to_mibcq(cq)->ready))
+		return;
+
+	mlx5_ib_cq_comp(cq, eqe);
+}
+
 static void mlx5_ib_cq_event(struct mlx5_core_cq *mcq, enum mlx5_event type)
 {
 	struct mlx5_ib_cq *cq = container_of(mcq, struct mlx5_ib_cq, mcq);
@@ -835,6 +853,16 @@ int mlx5_ib_arm_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags)
 		ret = 1;
 	spin_unlock_irqrestore(&cq->lock, irq_flags);
 
+	/*
+	 * The core arms a kernel CQ only after its poll context and handler
+	 * are set. Mark it ready before the doorbell, so an event raised
+	 * right after it is not dropped.
+	 */
+	if (mlx5_ib_adversarial_mode && !cq->ready) {
+		/* Pairs with the acquire in mlx5_ib_kernel_cq_comp() */
+		smp_store_release(&cq->ready, true);
+	}
+
 	mlx5_cq_arm(&cq->mcq,
 		    (flags & IB_CQ_SOLICITED_MASK) == IB_CQ_SOLICITED ?
 		    MLX5_CQ_DB_REQ_NOT_SOL : MLX5_CQ_DB_REQ_NOT,
@@ -1280,7 +1308,8 @@ int mlx5_ib_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	MLX5_SET(cqc, cqc, c_eqn_or_apu_element, eqn);
 	MLX5_SET64(cqc, cqc, dbr_addr, cq->db.dma);
 
-	cq->mcq.comp = mlx5_ib_cq_comp;
+	cq->mcq.comp = mlx5_ib_adversarial_mode ? mlx5_ib_kernel_cq_comp :
+						  mlx5_ib_cq_comp;
 	/*
 	 * Set before mlx5_core_create_cq(). No real CQE can arrive before a
 	 * QP uses the CQ, but a forged one can make mlx5_ib_poll_cq() call it.
