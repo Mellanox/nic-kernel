@@ -46,7 +46,12 @@ static void mlx5_ib_cq_comp(struct mlx5_core_cq *cq, struct mlx5_eqe *eqe)
 {
 	struct ib_cq *ibcq = &to_mibcq(cq)->ibcq;
 
-	ibcq->comp_handler(ibcq, ibcq->cq_context);
+	/*
+	 * A CQ created without a handler (devr->c0) is never armed, but a
+	 * hostile NIC can still raise a completion event for it.
+	 */
+	if (ibcq->comp_handler)
+		ibcq->comp_handler(ibcq, ibcq->cq_context);
 }
 
 static void mlx5_ib_cq_event(struct mlx5_core_cq *mcq, enum mlx5_event type)
