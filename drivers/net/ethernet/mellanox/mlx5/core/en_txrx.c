@@ -85,6 +85,25 @@ void mlx5e_trigger_irq(struct mlx5e_icosq *sq)
 	mlx5e_notify_hw(wq, sq->pc, sq->uar_map, &nopwqe->ctrl);
 }
 
+/* The NOP CQE is newer than any reported event, so the armed CQ raises one. */
+static bool mlx5e_channel_force_irq(struct mlx5e_channel *c)
+{
+	struct mlx5e_icosq *icosq = &c->icosq;
+	bool sync_locked, posted = false;
+
+	sync_locked = mlx5e_icosq_sync_lock(icosq);
+	if (likely(test_bit(MLX5E_SQ_STATE_ENABLED, &icosq->state) &&
+		   !test_bit(MLX5E_SQ_STATE_RECOVERING, &icosq->state) &&
+		   mlx5e_wqc_has_room_for(&icosq->wq, icosq->cc,
+					  icosq->pc, 1))) {
+		mlx5e_trigger_irq(icosq);
+		posted = true;
+	}
+	mlx5e_icosq_sync_unlock(icosq, sync_locked);
+
+	return posted;
+}
+
 static bool mlx5e_napi_xsk_post(struct mlx5e_xdpsq *xsksq, struct mlx5e_rq *xskrq)
 {
 	bool need_wakeup = xsk_uses_need_wakeup(xskrq->xsk_pool);
@@ -131,7 +150,6 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 	struct mlx5e_txqsq __rcu **qos_sqs;
 	struct mlx5e_rq *xskrq = &c->xskrq;
 	struct mlx5e_rq *rq = &c->rq;
-	bool aff_change = false;
 	bool busy_xsk = false;
 	bool busy = false;
 	int work_done = 0;
@@ -207,12 +225,18 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 				rq);
 
 	if (busy) {
-		if (likely(mlx5e_channel_no_affinity_change(c))) {
+		/* napi_complete_done() fails under busy polling, don't exit. */
+		if (likely(test_bit(NAPI_STATE_IN_BUSY_POLL, &napi->state) ||
+			   mlx5e_channel_no_affinity_change(c))) {
 			work_done = budget;
 			goto out;
 		}
 		ch_stats->aff_change++;
-		aff_change = true;
+		if (unlikely(!mlx5e_channel_force_irq(c))) {
+			/* No guaranteed event; poll another round. */
+			work_done = budget;
+			goto out;
+		}
 		if (work_done == budget)
 			work_done--;
 	}
@@ -221,6 +245,8 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 		goto out;
 
 	ch_stats->arm++;
+	if (unlikely(busy))
+		ch_stats->force_irq++;
 
 	for (i = 0; i < c->num_tc; i++) {
 		mlx5e_handle_tx_dim(&c->sq[i]);
@@ -250,11 +276,6 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 		}
 		if (c->xdpsq)
 			mlx5e_cq_arm(&c->xdpsq->cq);
-	}
-
-	if (unlikely(aff_change && busy_xsk)) {
-		mlx5e_trigger_napi_async_icosq(c);
-		ch_stats->force_irq++;
 	}
 
 out:
