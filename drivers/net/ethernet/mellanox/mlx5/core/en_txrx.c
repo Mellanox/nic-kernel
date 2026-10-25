@@ -85,6 +85,30 @@ void mlx5e_trigger_irq(struct mlx5e_icosq *sq)
 	mlx5e_notify_hw(wq, sq->pc, sq->uar_map, &nopwqe->ctrl);
 }
 
+/* Arming a CQ raises an event only for CQEs no event has reported yet, so
+ * the CQEs the affinity path leaves behind may raise none. Post a NOP so
+ * that the ICOSQ CQ arm raises one. Call before napi_complete_done(), while
+ * NAPI still owns the ICOSQ.
+ */
+static bool mlx5e_channel_force_irq(struct mlx5e_channel *c)
+{
+	struct mlx5e_icosq *icosq = &c->icosq;
+
+	/* ICOSQ disabled for teardown/recovery, or full: it is sized exactly
+	 * for its UMR WQEs, which can all be outstanding right when the RQ
+	 * runs dry; and busy polling, which fails napi_complete_done(), can
+	 * post NOPs here faster than their CQEs are consumed.
+	 */
+	if (unlikely(!test_bit(MLX5E_SQ_STATE_ENABLED, &icosq->state) ||
+		     !mlx5e_wqc_has_room_for(&icosq->wq, icosq->cc, icosq->pc,
+					     1)))
+		return false;
+
+	mlx5e_trigger_irq(icosq);
+	c->stats->force_irq++;
+	return true;
+}
+
 static bool mlx5e_napi_xsk_post(struct mlx5e_xdpsq *xsksq, struct mlx5e_rq *xskrq)
 {
 	bool need_wakeup = xsk_uses_need_wakeup(xskrq->xsk_pool);
@@ -131,7 +155,6 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 	struct mlx5e_txqsq __rcu **qos_sqs;
 	struct mlx5e_rq *xskrq = &c->xskrq;
 	struct mlx5e_rq *rq = &c->rq;
-	bool aff_change = false;
 	bool busy_xsk = false;
 	bool busy = false;
 	int work_done = 0;
@@ -212,7 +235,11 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 			goto out;
 		}
 		ch_stats->aff_change++;
-		aff_change = true;
+		if (unlikely(!mlx5e_channel_force_irq(c))) {
+			/* No guaranteed event; poll another round. */
+			work_done = budget;
+			goto out;
+		}
 		if (work_done == budget)
 			work_done--;
 	}
@@ -250,11 +277,6 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 		}
 		if (c->xdpsq)
 			mlx5e_cq_arm(&c->xdpsq->cq);
-	}
-
-	if (unlikely(aff_change && busy_xsk)) {
-		mlx5e_trigger_napi_async_icosq(c);
-		ch_stats->force_irq++;
 	}
 
 out:
