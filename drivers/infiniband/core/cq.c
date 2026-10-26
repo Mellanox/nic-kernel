@@ -217,6 +217,7 @@ struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private, int nr_cqe,
 		.cqe		= nr_cqe,
 		.comp_vector	= comp_vector,
 	};
+	ib_comp_handler comp_handler;
 	struct ib_cq *cq;
 	int ret = -ENOMEM;
 
@@ -248,19 +249,16 @@ struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private, int nr_cqe,
 
 	switch (cq->poll_ctx) {
 	case IB_POLL_DIRECT:
-		cq->comp_handler = ib_cq_completion_direct;
+		comp_handler = ib_cq_completion_direct;
 		break;
 	case IB_POLL_SOFTIRQ:
-		cq->comp_handler = ib_cq_completion_softirq;
-
+		comp_handler = ib_cq_completion_softirq;
 		irq_poll_init(&cq->iop, IB_POLL_BUDGET_IRQ, ib_poll_handler);
-		ib_req_notify_cq(cq, IB_CQ_NEXT_COMP);
 		break;
 	case IB_POLL_WORKQUEUE:
 	case IB_POLL_UNBOUND_WORKQUEUE:
-		cq->comp_handler = ib_cq_completion_workqueue;
+		comp_handler = ib_cq_completion_workqueue;
 		INIT_WORK(&cq->work, ib_cq_poll_work);
-		ib_req_notify_cq(cq, IB_CQ_NEXT_COMP);
 		cq->comp_wq = (cq->poll_ctx == IB_POLL_WORKQUEUE) ?
 				ib_comp_wq : ib_comp_unbound_wq;
 		break;
@@ -268,6 +266,15 @@ struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private, int nr_cqe,
 		ret = -EINVAL;
 		goto out_destroy_cq;
 	}
+
+	/*
+	 * The CQ is reachable from the completion interrupt once created. Set
+	 * the handler only after the poll context it schedules is set up, and
+	 * arm the CQ only after that.
+	 */
+	cq->comp_handler = comp_handler;
+	if (cq->poll_ctx != IB_POLL_DIRECT)
+		ib_req_notify_cq(cq, IB_CQ_NEXT_COMP);
 
 	rdma_restrack_add(&cq->res);
 	trace_cq_alloc(cq, nr_cqe, comp_vector, poll_ctx);
