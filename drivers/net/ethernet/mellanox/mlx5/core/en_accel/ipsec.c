@@ -36,6 +36,9 @@
 #include <linux/inetdevice.h>
 #include <linux/netdevice.h>
 #include <net/netevent.h>
+#if IS_ENABLED(CONFIG_IPV6)
+#include <net/ndisc.h>
+#endif
 
 #include "en.h"
 #include "eswitch.h"
@@ -255,6 +258,17 @@ static void mlx5e_ipsec_init_limits(struct mlx5e_ipsec_sa_entry *sa_entry,
 	attrs->lft.numb_rounds_soft = (u64)n;
 }
 
+static void mlx5e_ipsec_set_tnl_nh(struct mlx5e_ipsec_sa_entry *sa_entry,
+				   struct mlx5_accel_esp_xfrm_attrs *attrs,
+				   const struct neigh_table *tbl,
+				   const struct net_device *dev,
+				   const void *pkey)
+{
+	attrs->nh.tbl = tbl;
+	attrs->nh.ifindex = dev == sa_entry->x->xso.dev ? dev->ifindex : 0;
+	memcpy(attrs->nh.key, pkey, tbl->key_len);
+}
+
 static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 				  struct mlx5_accel_esp_xfrm_attrs *attrs)
 {
@@ -264,6 +278,7 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	struct dst_entry *rt_dst_entry;
 	struct flowi4 fl4 = {};
 	struct flowi6 fl6 = {};
+	struct neigh_table *tbl;
 	struct neighbour *n;
 	u8 addr[ETH_ALEN];
 	struct rtable *rt;
@@ -329,6 +344,7 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	 */
 	switch (addrs->family) {
 	case AF_INET:
+		tbl = &arp_tbl;
 		rt = ip_route_output_key(dev_net(netdev), &fl4);
 		if (IS_ERR(rt))
 			goto neigh;
@@ -339,11 +355,13 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 		}
 		rt_dst_entry = &rt->dst;
 		break;
+#if IS_ENABLED(CONFIG_IPV6)
 	case AF_INET6:
-		if (!IS_ENABLED(CONFIG_IPV6) ||
-		    ip6_dst_lookup(dev_net(netdev), NULL, &rt_dst_entry, &fl6))
+		tbl = &nd_tbl;
+		if (ip6_dst_lookup(dev_net(netdev), NULL, &rt_dst_entry, &fl6))
 			goto neigh;
 		break;
+#endif
 	default:
 		return;
 	}
@@ -359,22 +377,29 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	if (attrs->dir == XFRM_DEV_OFFLOAD_OUT &&
 	    is_zero_ether_addr(addr))
 		neigh_event_send(n, NULL);
+	mlx5e_ipsec_set_tnl_nh(sa_entry, attrs, n->tbl, n->dev,
+			       n->primary_key);
 	dst_release(rt_dst_entry);
 	neigh_release(n);
 	return;
 
 neigh:
-	n = neigh_lookup(&arp_tbl, pkey, netdev);
+	n = neigh_lookup(tbl, pkey, netdev);
 	if (!n) {
-		n = neigh_create(&arp_tbl, pkey, netdev);
-		if (IS_ERR(n))
+		n = neigh_create(tbl, pkey, netdev);
+		if (IS_ERR(n)) {
+			mlx5e_ipsec_set_tnl_nh(sa_entry, attrs, tbl, netdev,
+					       pkey);
 			return;
+		}
 		neigh_event_send(n, NULL);
 		attrs->drop = true;
 	} else {
 		neigh_ha_snapshot(addr, n, netdev);
 		ether_addr_copy(dst, addr);
 	}
+	mlx5e_ipsec_set_tnl_nh(sa_entry, attrs, n->tbl, n->dev,
+			       n->primary_key);
 	neigh_release(n);
 }
 
@@ -592,6 +617,12 @@ static int mlx5e_xfrm_validate_state(struct mlx5_core_dev *mdev,
 		    !(mlx5_ipsec_device_caps(mdev) & MLX5_IPSEC_CAP_TUNNEL)) {
 			NL_SET_ERR_MSG_MOD(extack, "Packet offload is not supported for tunnel mode");
 			return -EINVAL;
+		}
+		if (x->props.family == AF_INET6 &&
+		    x->props.mode == XFRM_MODE_TUNNEL &&
+		    !IS_ENABLED(CONFIG_IPV6)) {
+			NL_SET_ERR_MSG_MOD(extack, "IPv6 is not enabled");
+			return -EOPNOTSUPP;
 		}
 
 		if (x->replay_esn && x->xso.dir == XFRM_DEV_OFFLOAD_IN &&
@@ -941,10 +972,21 @@ sa_entry_free:
 	kfree(sa_entry);
 }
 
+static bool
+mlx5e_ipsec_neigh_matches(const struct mlx5e_ipsec_sa_entry *sa_entry,
+			  const struct neighbour *n)
+{
+	const struct mlx5_accel_esp_xfrm_attrs *attrs = &sa_entry->attrs;
+
+	return attrs->nh.tbl == n->tbl &&
+	       (!attrs->nh.ifindex || attrs->nh.ifindex == n->dev->ifindex) &&
+	       net_eq(dev_net(n->dev), dev_net(sa_entry->dev)) &&
+	       !memcmp(attrs->nh.key, n->primary_key, n->tbl->key_len);
+}
+
 static int mlx5e_ipsec_netevent_event(struct notifier_block *nb,
 				      unsigned long event, void *ptr)
 {
-	struct mlx5_accel_esp_xfrm_attrs *attrs;
 	struct mlx5e_ipsec_netevent_data *data;
 	struct mlx5e_ipsec_sa_entry *sa_entry;
 	struct mlx5e_ipsec *ipsec;
@@ -956,17 +998,8 @@ static int mlx5e_ipsec_netevent_event(struct notifier_block *nb,
 
 	ipsec = container_of(nb, struct mlx5e_ipsec, netevent_nb);
 	xa_for_each_marked(&ipsec->sadb, idx, sa_entry, MLX5E_IPSEC_TUNNEL_SA) {
-		attrs = &sa_entry->attrs;
-
-		if (attrs->addrs.family == AF_INET) {
-			if (!neigh_key_eq32(n, &attrs->addrs.saddr.a4) &&
-			    !neigh_key_eq32(n, &attrs->addrs.daddr.a4))
-				continue;
-		} else {
-			if (!neigh_key_eq128(n, &attrs->addrs.saddr.a4) &&
-			    !neigh_key_eq128(n, &attrs->addrs.daddr.a4))
-				continue;
-		}
+		if (!mlx5e_ipsec_neigh_matches(sa_entry, n))
+			continue;
 
 		data = sa_entry->work->data;
 
