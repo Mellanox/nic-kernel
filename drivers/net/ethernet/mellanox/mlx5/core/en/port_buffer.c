@@ -264,7 +264,7 @@ static int port_update_shared_buffer(struct mlx5_core_dev *mdev,
 			    lossless_ipool.size;
 	shared_buffer_size = total_buffer_size - new_headroom_size;
 
-	if (shared_buffer_size < 4) {
+	if (new_headroom_size > total_buffer_size || shared_buffer_size < 4) {
 		pr_err("Requested port buffer is too large, not enough space left for shared buffer\n");
 		return -EINVAL;
 	}
