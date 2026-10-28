@@ -1017,9 +1017,10 @@ unwind:
 				ctx->sg, ctx->nents, dir);
 		target_free_sgl(ctx->sg, ctx->nents);
 	}
-	if (ioctx->rw_ctxs != &ioctx->s_rw_ctx)
+	if (ioctx->rw_ctxs != &ioctx->s_rw_ctx) {
 		kfree(ioctx->rw_ctxs);
-	ioctx->rw_ctxs = NULL;
+		ioctx->rw_ctxs = NULL;
+	}
 	ioctx->n_rw_ctx = n_rw_ctx;
 	ioctx->n_rdma = n_rdma;
 	return ret;
@@ -1888,7 +1889,7 @@ retry:
 	 * We divide up our send queue size into half SEND WRs to send the
 	 * completions, and half R/W contexts to actually do the RDMA
 	 * READ/WRITE transfers.  Note that we need to allocate CQ slots for
-	 * both both, as RDMA contexts will also post completions for the
+	 * both, as RDMA contexts will also post completions for the
 	 * RDMA READ case.
 	 */
 	qp_init->cap.max_send_wr = min(sq_size / 2, attrs->max_qp_wr);

@@ -215,6 +215,8 @@ static inline int mlx5_flexible_inlen(struct mlx5_core_dev *dev, size_t fixed,
 	mlx5_flexible_inlen(dev, fixed, item_size, num_items, __func__, __LINE__)
 
 int mlx5_core_get_caps(struct mlx5_core_dev *dev, enum mlx5_cap_type cap_type);
+int mlx5_store_caps(struct mlx5_core_dev *dev, enum mlx5_cap_type cap_type,
+		    void *dst, void *src);
 int mlx5_core_get_caps_mode(struct mlx5_core_dev *dev, enum mlx5_cap_type cap_type,
 			    enum mlx5_cap_mode cap_mode);
 int mlx5_query_hca_caps(struct mlx5_core_dev *dev);
@@ -532,4 +534,9 @@ static inline bool mlx5_pcie_cong_event_supported(struct mlx5_core_dev *dev)
 
 	return true;
 }
+
+int mlx5_data_direct_init(struct mlx5_core_dev *mdev);
+void mlx5_data_direct_cleanup(struct mlx5_core_dev *mdev);
+int mlx5_data_direct_driver_register(void);
+void mlx5_data_direct_driver_unregister(void);
 #endif /* __MLX5_CORE_H__ */

@@ -25,6 +25,7 @@
 #include <linux/mlx5/vport.h>
 #include <linux/mlx5/fs.h>
 #include <linux/mlx5/eswitch.h>
+#include <linux/mlx5/data_direct.h>
 #include <linux/mlx5/driver.h>
 #include <linux/mlx5/lag.h>
 #include <linux/list.h>
@@ -51,7 +52,6 @@
 #include <rdma/mlx5_user_ioctl_cmds.h>
 #include <rdma/ib_ucaps.h>
 #include "macsec.h"
-#include "data_direct.h"
 #include "dmah.h"
 
 #define UVERBS_MODULE_NAME mlx5_ib
@@ -76,6 +76,7 @@ enum {
 	MLX5_ATOMIC_SIZE_QP_8BYTES = 1 << 3,
 };
 
+bool mlx5_ib_adversarial_mode;
 static struct workqueue_struct *mlx5_ib_event_wq;
 static LIST_HEAD(mlx5_ib_unaffiliated_port_list);
 static LIST_HEAD(mlx5_ib_dev_list);
@@ -598,7 +599,7 @@ static int mlx5_query_port_roce(struct ib_device *device, u32 port_num,
 		props->qkey_viol_cntr = qkey_viol_cntr;
 	}
 	props->max_mtu          = IB_MTU_4096;
-	props->max_msg_sz       = 1 << MLX5_CAP_GEN(dev->mdev, log_max_msg);
+	props->max_msg_sz       = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_msg);
 	props->pkey_tbl_len     = 1;
 	props->state            = IB_PORT_DOWN;
 	props->phys_state       = IB_PORT_PHYS_STATE_DISABLED;
@@ -929,7 +930,7 @@ static u32 mlx5_ib_calc_max_sq_overhead(void)
 static u32 mlx5_ib_calc_max_qp_wr(struct mlx5_ib_dev *dev)
 {
 	struct mlx5_core_dev *mdev = dev->mdev;
-	u32 max_wqe_bb_units = 1 << MLX5_CAP_GEN(mdev, log_max_qp_sz);
+	u64 max_wqe_bb_units = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_qp_sz);
 	u32 max_wqe_size;
 	/* max QP overhead + 1 SGE, no inline, no special features */
 	max_wqe_size = mlx5_ib_calc_max_sq_overhead() +
@@ -939,7 +940,8 @@ static u32 mlx5_ib_calc_max_qp_wr(struct mlx5_ib_dev *dev)
 
 	max_wqe_size = ALIGN(max_wqe_size, MLX5_SEND_WQE_BB);
 
-	return (max_wqe_bb_units * MLX5_SEND_WQE_BB) / max_wqe_size;
+	/* Up to 2^31 units, so the product needs 64 bits */
+	return div_u64(max_wqe_bb_units * MLX5_SEND_WQE_BB, max_wqe_size);
 }
 
 static int mlx5_ib_query_device(struct ib_device *ibdev,
@@ -953,7 +955,7 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 	int max_sq_desc;
 	int max_rq_sg;
 	int max_sq_sg;
-	u64 min_page_size = 1ull << MLX5_CAP_GEN(mdev, log_pg_sz);
+	u64 min_page_size = MLX5_CAP_GEN_LOGSZ_U64(mdev, log_pg_sz);
 	bool raw_support = !mlx5_core_mp_enabled(mdev);
 	struct mlx5_ib_query_device_resp resp = {};
 	size_t resp_len;
@@ -999,7 +1001,7 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 	if (MLX5_CAP_GEN(mdev, imaicl)) {
 		props->device_cap_flags |= IB_DEVICE_MEM_WINDOW |
 					   IB_DEVICE_MEM_WINDOW_TYPE_2B;
-		props->max_mw = 1 << MLX5_CAP_GEN(mdev, log_max_mkey);
+		props->max_mw = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_mkey);
 		/* We support 'Gappy' memory registration too */
 		props->kernel_cap_flags |= IBK_SG_GAPS_REG;
 	}
@@ -1032,7 +1034,7 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 		if (offsetofend(typeof(resp), tso_caps) <= uhw_outlen) {
 			max_tso = MLX5_CAP_ETH(mdev, max_lso_cap);
 			if (max_tso) {
-				resp.tso_caps.max_tso = 1 << max_tso;
+				resp.tso_caps.max_tso = BIT(max_tso);
 				resp.tso_caps.supported_qpts |=
 					1 << IB_QPT_RAW_PACKET;
 				resp.response_length += sizeof(resp.tso_caps);
@@ -1099,7 +1101,7 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 
 	props->max_mr_size	   = ~0ull;
 	props->page_size_cap	   = ~(min_page_size - 1);
-	props->max_qp		   = 1 << MLX5_CAP_GEN(mdev, log_max_qp);
+	props->max_qp		   = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_qp);
 	props->max_qp_wr = mlx5_ib_calc_max_qp_wr(dev);
 	max_rq_sg =  MLX5_CAP_GEN(mdev, max_wqe_sz_rq) /
 		     sizeof(struct mlx5_wqe_data_seg);
@@ -1110,29 +1112,31 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 	props->max_send_sge = max_sq_sg;
 	props->max_recv_sge = max_rq_sg;
 	props->max_sge_rd	   = MLX5_MAX_SGE_RD;
-	props->max_cq		   = 1 << MLX5_CAP_GEN(mdev, log_max_cq);
-	props->max_cqe = (1 << MLX5_CAP_GEN(mdev, log_max_cq_sz)) - 1;
-	props->max_mr		   = 1 << MLX5_CAP_GEN(mdev, log_max_mkey);
-	props->max_pd		   = 1 << MLX5_CAP_GEN(mdev, log_max_pd);
-	props->max_qp_rd_atom	   = 1 << MLX5_CAP_GEN(mdev, log_max_ra_req_qp);
-	props->max_qp_init_rd_atom = 1 << MLX5_CAP_GEN(mdev, log_max_ra_res_qp);
-	props->max_srq		   = 1 << MLX5_CAP_GEN(mdev, log_max_srq);
-	props->max_srq_wr = (1 << MLX5_CAP_GEN(mdev, log_max_srq_sz)) - 1;
+	props->max_cq		   = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_cq);
+	props->max_cqe = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_cq_sz) - 1;
+	props->max_mr		   = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_mkey);
+	props->max_pd		   = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_pd);
+	props->max_qp_rd_atom	   = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_ra_req_qp);
+	props->max_qp_init_rd_atom = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_ra_res_qp);
+	props->max_srq		   = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_srq);
+	props->max_srq_wr = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_srq_sz) - 1;
 	props->local_ca_ack_delay  = MLX5_CAP_GEN(mdev, local_ca_ack_delay);
-	props->max_res_rd_atom	   = props->max_qp_rd_atom * props->max_qp;
+	props->max_res_rd_atom	   = min_t(u64, (u64)props->max_qp_rd_atom * props->max_qp,
+					   U32_MAX);
 	props->max_srq_sge	   = max_rq_sg - 1;
 	props->max_fast_reg_page_list_len =
-		1 << MLX5_CAP_GEN(mdev, log_max_klm_list_size);
+		MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_klm_list_size);
 	props->max_pi_fast_reg_page_list_len =
 		props->max_fast_reg_page_list_len / 2;
 	props->max_sgl_rd =
 		MLX5_CAP_GEN(mdev, max_sgl_for_optimized_performance);
 	get_atomic_caps_qp(dev, props);
 	props->masked_atomic_cap   = IB_ATOMIC_NONE;
-	props->max_mcast_grp	   = 1 << MLX5_CAP_GEN(mdev, log_max_mcg);
+	props->max_mcast_grp	   = MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_mcg);
 	props->max_mcast_qp_attach = MLX5_CAP_GEN(mdev, max_qp_mcg);
-	props->max_total_mcast_qp_attach = props->max_mcast_qp_attach *
-					   props->max_mcast_grp;
+	props->max_total_mcast_qp_attach =
+		min_t(u64, (u64)props->max_mcast_qp_attach * props->max_mcast_grp,
+		      U32_MAX);
 	props->max_ah = INT_MAX;
 	props->hca_core_clock = MLX5_CAP_GEN(mdev, device_frequency_khz);
 	props->timestamp_mask = 0x7FFFFFFFFFFFFFFFULL;
@@ -1166,19 +1170,19 @@ static int mlx5_ib_query_device(struct ib_device *ibdev,
 	if (mlx5_ib_port_link_layer(ibdev, 1) ==
 	    IB_LINK_LAYER_ETHERNET && raw_support) {
 		props->rss_caps.max_rwq_indirection_tables =
-			1 << MLX5_CAP_GEN(dev->mdev, log_max_rqt);
+			MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_rqt);
 		props->rss_caps.max_rwq_indirection_table_size =
-			1 << MLX5_CAP_GEN(dev->mdev, log_max_rqt_size);
+			MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_rqt_size);
 		props->rss_caps.supported_qpts = 1 << IB_QPT_RAW_PACKET;
 		props->max_wq_type_rq =
-			1 << MLX5_CAP_GEN(dev->mdev, log_max_rq);
+			MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_rq);
 	}
 
 	if (MLX5_CAP_GEN(mdev, tag_matching)) {
 		props->tm_caps.max_num_tags =
-			(1 << MLX5_CAP_GEN(mdev, log_tag_matching_list_sz)) - 1;
+			MLX5_CAP_GEN_LOGSZ_U32(mdev, log_tag_matching_list_sz) - 1;
 		props->tm_caps.max_ops =
-			1 << MLX5_CAP_GEN(mdev, log_max_qp_sz);
+			MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_qp_sz);
 		props->tm_caps.max_sge = MLX5_TM_MAX_SGE;
 	}
 
@@ -1502,7 +1506,7 @@ static int mlx5_query_hca_port(struct ib_device *ibdev, u32 port,
 		props->port_cap_flags &= ~IB_PORT_CM_SUP;
 
 	props->gid_tbl_len	= mlx5_get_gid_table_len(MLX5_CAP_GEN(mdev, gid_table_size));
-	props->max_msg_sz	= 1 << MLX5_CAP_GEN(mdev, log_max_msg);
+	props->max_msg_sz	= MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_msg);
 	props->pkey_tbl_len	= mlx5_to_sw_pkey_sz(MLX5_CAP_GEN(mdev, pkey_table_size));
 	props->bad_pkey_cntr	= rep->pkey_violation_counter;
 	props->qkey_viol_cntr	= rep->qkey_violation_counter;
@@ -2126,16 +2130,16 @@ static int set_ucontext_resp(struct ib_ucontext *uctx,
 			MLX5_IB_ALLOC_UCONTEXT_RESP_MASK_DUMP_FILL_MKEY;
 	}
 
-	resp->qp_tab_size = 1 << MLX5_CAP_GEN(dev->mdev, log_max_qp);
+	resp->qp_tab_size = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp);
 	if (mlx5_wc_support_get(dev->mdev))
 		resp->bf_reg_size = 1 << MLX5_CAP_GEN(dev->mdev,
 						      log_bf_reg_size);
 	resp->cache_line_size = cache_line_size();
 	resp->max_sq_desc_sz = MLX5_CAP_GEN(dev->mdev, max_wqe_sz_sq);
 	resp->max_rq_desc_sz = MLX5_CAP_GEN(dev->mdev, max_wqe_sz_rq);
-	resp->max_send_wqebb = 1 << MLX5_CAP_GEN(dev->mdev, log_max_qp_sz);
-	resp->max_recv_wr = 1 << MLX5_CAP_GEN(dev->mdev, log_max_qp_sz);
-	resp->max_srq_recv_wr = 1 << MLX5_CAP_GEN(dev->mdev, log_max_srq_sz);
+	resp->max_send_wqebb = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp_sz);
+	resp->max_recv_wr = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp_sz);
+	resp->max_srq_recv_wr = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_srq_sz);
 	resp->cqe_version = context->cqe_version;
 	resp->log_uar_size = MLX5_CAP_GEN(dev->mdev, uar_4k) ?
 				MLX5_ADAPTER_PAGE_SHIFT : PAGE_SHIFT;
@@ -2952,15 +2956,18 @@ static void pkey_change_handler(struct work_struct *work)
 	struct mlx5_ib_port_resources *ports =
 		container_of(work, struct mlx5_ib_port_resources,
 			     pkey_change_work);
+	struct mlx5_ib_gsi_qp *gsi;
 
-	if (!ports->gsi)
+	/* Pairs with the smp_store_release() in mlx5_ib_create_gsi() */
+	gsi = smp_load_acquire(&ports->gsi);
+	if (!gsi)
 		/*
 		 * We got this event before device was fully configured
 		 * and MAD registration code wasn't called/finished yet.
 		 */
 		return;
 
-	mlx5_ib_gsi_pkey_change(ports->gsi);
+	mlx5_ib_gsi_pkey_change(gsi);
 }
 
 static void mlx5_ib_handle_internal_error(struct mlx5_ib_dev *ibdev)
@@ -3041,10 +3048,15 @@ static void delay_drop_handler(struct work_struct *work)
 	mutex_unlock(&delay_drop->lock);
 }
 
+static u32 mlx5_ib_eqe_port_num(struct mlx5_eqe *eqe)
+{
+	return (eqe->data.port.port >> 4) & 0xf;
+}
+
 static void handle_general_event(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 				 struct ib_event *ibev)
 {
-	u32 port = (eqe->data.port.port >> 4) & 0xf;
+	u32 port = mlx5_ib_eqe_port_num(eqe);
 
 	switch (eqe->sub_type) {
 	case MLX5_GENERAL_SUBTYPE_DELAY_DROP_TIMEOUT:
@@ -3057,14 +3069,21 @@ static void handle_general_event(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe
 	}
 }
 
-static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
+static int handle_port_change(struct mlx5_ib_dev *ibdev, u32 port, u8 sub_type,
 			      struct ib_event *ibev)
 {
-	u32 port = (eqe->data.port.port >> 4) & 0xf;
+	if (!rdma_is_port_valid(&ibdev->ib_dev, port)) {
+		mlx5_ib_warn(ibdev, "warning: event on port %d\n", port);
+		return -EINVAL;
+	}
+
+	if (!rdma_is_port_valid(&ibdev->ib_dev, port) ||
+	    port > ARRAY_SIZE(ibdev->devr.ports))
+		return -EINVAL;
 
 	ibev->element.port_num = port;
 
-	switch (eqe->sub_type) {
+	switch (sub_type) {
 	case MLX5_PORT_CHANGE_SUBTYPE_ACTIVE:
 	case MLX5_PORT_CHANGE_SUBTYPE_DOWN:
 	case MLX5_PORT_CHANGE_SUBTYPE_INITIALIZED:
@@ -3083,7 +3102,7 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 					    IB_LINK_LAYER_ETHERNET)
 			return -EINVAL;
 
-		ibev->event = (eqe->sub_type == MLX5_PORT_CHANGE_SUBTYPE_ACTIVE) ?
+		ibev->event = (sub_type == MLX5_PORT_CHANGE_SUBTYPE_ACTIVE) ?
 				IB_EVENT_PORT_ACTIVE : IB_EVENT_PORT_ERR;
 		break;
 
@@ -3093,7 +3112,14 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 
 	case MLX5_PORT_CHANGE_SUBTYPE_PKEY:
 		ibev->event = IB_EVENT_PKEY_CHANGE;
-		schedule_work(&ibdev->devr.ports[port - 1].pkey_change_work);
+		/*
+		 * devr.ports[] has a bound of its own, as only the ports
+		 * that can carry a GSI QP have P_Key change work. A port
+		 * beyond it has no GSI machinery to rebuild, the event is
+		 * still dispatched so that ib_core invalidates its cache.
+		 */
+		if (port <= ARRAY_SIZE(ibdev->devr.ports))
+			schedule_work(&ibdev->devr.ports[port - 1].pkey_change_work);
 		break;
 
 	case MLX5_PORT_CHANGE_SUBTYPE_GUID:
@@ -3110,12 +3136,97 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 	return 0;
 }
 
+/* Both of these dispatch IB_EVENT_PORT_ERR */
+#define MLX5_IB_PORT_ERROR_SUBTYPES			\
+	(BIT(MLX5_PORT_CHANGE_SUBTYPE_DOWN) |		\
+	 BIT(MLX5_PORT_CHANGE_SUBTYPE_INITIALIZED))
+
+/*
+ * Remember an event that cannot be forwarded to ib_core yet. Runs in the
+ * notifier, so it must not allocate or sleep. Caller holds
+ * pending_events_lock.
+ */
+static void record_port_event(struct mlx5_ib_dev *dev, u32 port, u8 sub_type)
+{
+	unsigned long *pending;
+
+	if (!rdma_is_port_valid(&dev->ib_dev, port) ||
+	    sub_type >= BITS_PER_LONG)
+		return;
+
+	pending = &dev->port[port - 1].pending_port_events;
+
+	/*
+	 * A port that went down supersedes whatever it was before, while a
+	 * port that came up does not erase the error that preceded it: a
+	 * consumer that drops state on IB_EVENT_PORT_ERR, multicast group
+	 * membership for one, has to see it even if the port is up again by
+	 * the time the records are replayed. Keep the error in the lowest
+	 * bit, replay walks the records in ascending order.
+	 */
+	if (BIT(sub_type) & MLX5_IB_PORT_ERROR_SUBTYPES) {
+		*pending &= ~BIT(MLX5_PORT_CHANGE_SUBTYPE_ACTIVE);
+		sub_type = MLX5_PORT_CHANGE_SUBTYPE_DOWN;
+	}
+
+	*pending |= BIT(sub_type);
+}
+
+/*
+ * ib_register_device() lets ib_core and its clients snapshot the port tables,
+ * and they re-read them only when the matching event is dispatched. Events
+ * that arrive before the device is active are recorded instead of being
+ * forwarded, so replay them here to resync every consumer.
+ *
+ * Queued on mlx5_ib_event_wq while ib_active is published, so that the
+ * ordered workqueue puts this replay ahead of every event received from then
+ * on, and a system error that got there first has already cleared ib_active.
+ */
+static void mlx5_ib_replay_port_events(struct work_struct *_work)
+{
+	struct mlx5_ib_dev *dev = container_of(_work, struct mlx5_ib_dev,
+					       pending_events_work);
+	struct ib_event ibev = { .device = &dev->ib_dev };
+	unsigned long pending;
+	u32 port, sub_type;
+
+	rdma_for_each_port(&dev->ib_dev, port) {
+		spin_lock_irq(&dev->pending_events_lock);
+		/*
+		 * Sampled under the lock that publishes it, as it is a
+		 * bitfield written from another thread. Only
+		 * __mlx5_ib_remove() can clear it while this work runs, the
+		 * system error handler shares this ordered workqueue and so
+		 * cannot overlap it. The records already taken for a port
+		 * are dispatched to completion even then, which is safe:
+		 * removal is waiting in cancel_work_sync() on this work and
+		 * has torn nothing down.
+		 */
+		if (!dev->ib_active) {
+			spin_unlock_irq(&dev->pending_events_lock);
+			return;
+		}
+
+		pending = dev->port[port - 1].pending_port_events;
+		dev->port[port - 1].pending_port_events = 0;
+		spin_unlock_irq(&dev->pending_events_lock);
+
+		for_each_set_bit(sub_type, &pending, BITS_PER_LONG) {
+			if (handle_port_change(dev, port, sub_type, &ibev))
+				continue;
+
+			ib_dispatch_event(&ibev);
+		}
+	}
+}
+
 static void mlx5_ib_handle_event(struct work_struct *_work)
 {
 	struct mlx5_ib_event_work *work =
 		container_of(_work, struct mlx5_ib_event_work, work);
 	struct mlx5_ib_dev *ibdev;
 	struct ib_event ibev;
+	bool active;
 
 	if (work->is_slave) {
 		ibdev = mlx5_ib_get_ibdev_from_mpi(work->mpi);
@@ -3125,11 +3236,29 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 		ibdev = work->dev;
 	}
 
+	/*
+	 * This is the test that keeps an event queued just before the device
+	 * went inactive from reaching the handlers, which would rearm work
+	 * that the teardown has already cancelled. The test before the
+	 * dispatch below only narrows the window further, for a device that
+	 * goes inactive while this handler runs.
+	 */
+	spin_lock_irq(&ibdev->pending_events_lock);
+	active = ibdev->ib_active;
+	spin_unlock_irq(&ibdev->pending_events_lock);
+
+	if (!active)
+		goto out;
+
 	switch (work->event) {
-	case MLX5_EVENT_TYPE_PORT_CHANGE:
-		if (handle_port_change(ibdev, work->param, &ibev))
+	case MLX5_EVENT_TYPE_PORT_CHANGE: {
+		struct mlx5_eqe *eqe = work->param;
+
+		if (handle_port_change(ibdev, mlx5_ib_eqe_port_num(eqe),
+				       eqe->sub_type, &ibev))
 			goto out;
 		break;
+	}
 	case MLX5_EVENT_TYPE_GENERAL_EVENT:
 		handle_general_event(ibdev, work->param, &ibev);
 		fallthrough;
@@ -3138,11 +3267,6 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 	}
 
 	ibev.device = &ibdev->ib_dev;
-
-	if (!rdma_is_port_valid(&ibdev->ib_dev, ibev.element.port_num)) {
-		mlx5_ib_warn(ibdev, "warning: event on port %d\n",  ibev.element.port_num);
-		goto out;
-	}
 
 	if (ibdev->ib_active)
 		ib_dispatch_event(&ibev);
@@ -3154,14 +3278,35 @@ out:
 static int mlx5_ib_event(struct notifier_block *nb,
 			 unsigned long event, void *param)
 {
+	struct mlx5_ib_dev *dev =
+		container_of(nb, struct mlx5_ib_dev, mdev_events);
 	struct mlx5_ib_event_work *work;
+	unsigned long flags;
+
+	/*
+	 * Events cannot be forwarded to ib_core before the device is active.
+	 * Record them, which needs no allocation and therefore cannot fail,
+	 * and let __mlx5_ib_add() replay them.
+	 */
+	spin_lock_irqsave(&dev->pending_events_lock, flags);
+	if (!dev->ib_active) {
+		if (event == MLX5_EVENT_TYPE_PORT_CHANGE) {
+			struct mlx5_eqe *eqe = param;
+
+			record_port_event(dev, mlx5_ib_eqe_port_num(eqe),
+					  eqe->sub_type);
+		}
+		spin_unlock_irqrestore(&dev->pending_events_lock, flags);
+		return NOTIFY_OK;
+	}
+	spin_unlock_irqrestore(&dev->pending_events_lock, flags);
 
 	work = kmalloc_obj(*work, GFP_ATOMIC);
 	if (!work)
 		return NOTIFY_DONE;
 
 	INIT_WORK(&work->work, mlx5_ib_handle_event);
-	work->dev = container_of(nb, struct mlx5_ib_dev, mdev_events);
+	work->dev = dev;
 	work->is_slave = false;
 	work->param = param;
 	work->event = event;
@@ -3210,7 +3355,9 @@ static void mlx5_ib_handle_sys_error_event(struct work_struct *_work)
 	if (ibdev->ib_active)
 		ib_dispatch_event(&ibev);
 
+	spin_lock_irq(&ibdev->pending_events_lock);
 	ibdev->ib_active = false;
+	spin_unlock_irq(&ibdev->pending_events_lock);
 out:
 	kfree(work);
 }
@@ -3370,7 +3517,7 @@ int mlx5_ib_dev_res_srq_init(struct mlx5_ib_dev *dev)
 {
 	struct mlx5_ib_resources *devr = &dev->devr;
 	struct ib_srq_init_attr attr;
-	struct ib_srq *s0, *s1;
+	struct ib_srq *s0 = NULL, *s1;
 	int ret = 0;
 
 	/*
@@ -3388,19 +3535,27 @@ int mlx5_ib_dev_res_srq_init(struct mlx5_ib_dev *dev)
 	if (ret)
 		goto unlock;
 
-	memset(&attr, 0, sizeof(attr));
-	attr.attr.max_sge = 1;
-	attr.attr.max_wr = 1;
-	attr.srq_type = IB_SRQT_XRC;
-	attr.ext.cq = devr->c0;
+	/*
+	 * s0 is an XRC-type placeholder SRQ used as the default XRQN for
+	 * XRC QPs.  Skip it when XRC is absent; all devr->s0 accesses in
+	 * qp.c are inside XRC QP paths that the verbs layer blocks before
+	 * reaching this driver when xrc=0, so NULL is safe.
+	 */
+	if (MLX5_CAP_GEN(dev->mdev, xrc)) {
+		memset(&attr, 0, sizeof(attr));
+		attr.attr.max_sge = 1;
+		attr.attr.max_wr = 1;
+		attr.srq_type = IB_SRQT_XRC;
+		attr.ext.cq = devr->c0;
 
-	s0 = ib_create_srq(devr->p0, &attr);
-	if (IS_ERR(s0)) {
-		ret = PTR_ERR(s0);
-		mlx5_ib_err(dev,
-			    "Couldn't create SRQ 0 for res init, err=%pe\n",
-			    s0);
-		goto unlock;
+		s0 = ib_create_srq(devr->p0, &attr);
+		if (IS_ERR(s0)) {
+			ret = PTR_ERR(s0);
+			mlx5_ib_err(dev,
+				    "Couldn't create SRQ 0 for res init, err=%pe\n",
+				    s0);
+			goto unlock;
+		}
 	}
 
 	memset(&attr, 0, sizeof(attr));
@@ -3414,7 +3569,8 @@ int mlx5_ib_dev_res_srq_init(struct mlx5_ib_dev *dev)
 		mlx5_ib_err(dev,
 			    "Couldn't create SRQ 1 for res init, err=%pe\n",
 			    s1);
-		ib_destroy_srq(s0);
+		if (s0)
+			ib_destroy_srq(s0);
 		goto unlock;
 	}
 
@@ -3431,8 +3587,11 @@ static int mlx5_ib_dev_res_init(struct mlx5_ib_dev *dev)
 	struct mlx5_ib_resources *devr = &dev->devr;
 	int ret;
 
+	mutex_init(&devr->cq_lock);
+	mutex_init(&devr->srq_lock);
+
 	if (!MLX5_CAP_GEN(dev->mdev, xrc))
-		return -EOPNOTSUPP;
+		return 0;
 
 	ret = mlx5_cmd_xrcd_alloc(dev->mdev, &devr->xrcdn0, 0);
 	if (ret)
@@ -3444,9 +3603,6 @@ static int mlx5_ib_dev_res_init(struct mlx5_ib_dev *dev)
 		return ret;
 	}
 
-	mutex_init(&devr->cq_lock);
-	mutex_init(&devr->srq_lock);
-
 	return 0;
 }
 
@@ -3457,10 +3613,13 @@ static void mlx5_ib_dev_res_cleanup(struct mlx5_ib_dev *dev)
 	/* After s0/s1 init, they are not unset during the device lifetime. */
 	if (devr->s1) {
 		ib_destroy_srq(devr->s1);
-		ib_destroy_srq(devr->s0);
+		if (devr->s0)
+			ib_destroy_srq(devr->s0);
 	}
-	mlx5_cmd_xrcd_dealloc(dev->mdev, devr->xrcdn1, 0);
-	mlx5_cmd_xrcd_dealloc(dev->mdev, devr->xrcdn0, 0);
+	if (MLX5_CAP_GEN(dev->mdev, xrc)) {
+		mlx5_cmd_xrcd_dealloc(dev->mdev, devr->xrcdn1, 0);
+		mlx5_cmd_xrcd_dealloc(dev->mdev, devr->xrcdn0, 0);
+	}
 	/* After p0/c0 init, they are not unset during the device lifetime. */
 	if (devr->c0) {
 		ib_destroy_cq(devr->c0);
@@ -3468,87 +3627,6 @@ static void mlx5_ib_dev_res_cleanup(struct mlx5_ib_dev *dev)
 	}
 	mutex_destroy(&devr->cq_lock);
 	mutex_destroy(&devr->srq_lock);
-}
-
-static int
-mlx5_ib_create_data_direct_resources(struct mlx5_ib_dev *dev)
-{
-	int inlen = MLX5_ST_SZ_BYTES(create_mkey_in);
-	struct mlx5_core_dev *mdev = dev->mdev;
-	bool ro_supp = false;
-	void *mkc;
-	u32 mkey;
-	u32 pdn;
-	u32 *in;
-	int err;
-
-	err = mlx5_core_alloc_pd(mdev, &pdn);
-	if (err)
-		return err;
-
-	in = kvzalloc(inlen, GFP_KERNEL);
-	if (!in) {
-		err = -ENOMEM;
-		goto err;
-	}
-
-	MLX5_SET(create_mkey_in, in, data_direct, 1);
-	mkc = MLX5_ADDR_OF(create_mkey_in, in, memory_key_mkey_entry);
-	MLX5_SET(mkc, mkc, access_mode_1_0, MLX5_MKC_ACCESS_MODE_PA);
-	MLX5_SET(mkc, mkc, lw, 1);
-	MLX5_SET(mkc, mkc, lr, 1);
-	MLX5_SET(mkc, mkc, rw, 1);
-	MLX5_SET(mkc, mkc, rr, 1);
-	MLX5_SET(mkc, mkc, a, 1);
-	MLX5_SET(mkc, mkc, pd, pdn);
-	MLX5_SET(mkc, mkc, length64, 1);
-	MLX5_SET(mkc, mkc, qpn, 0xffffff);
-	err = mlx5_core_create_mkey(mdev, &mkey, in, inlen);
-	if (err)
-		goto err_mkey;
-
-	dev->ddr.mkey = mkey;
-	dev->ddr.pdn = pdn;
-
-	/* create another mkey with RO support */
-	if (MLX5_CAP_GEN(dev->mdev, relaxed_ordering_write)) {
-		MLX5_SET(mkc, mkc, relaxed_ordering_write, 1);
-		ro_supp = true;
-	}
-
-	if (MLX5_CAP_GEN(dev->mdev, relaxed_ordering_read)) {
-		MLX5_SET(mkc, mkc, relaxed_ordering_read, 1);
-		ro_supp = true;
-	}
-
-	if (ro_supp) {
-		err = mlx5_core_create_mkey(mdev, &mkey, in, inlen);
-		/* RO is defined as best effort */
-		if (!err) {
-			dev->ddr.mkey_ro = mkey;
-			dev->ddr.mkey_ro_valid = true;
-		}
-	}
-
-	kvfree(in);
-	return 0;
-
-err_mkey:
-	kvfree(in);
-err:
-	mlx5_core_dealloc_pd(mdev, pdn);
-	return err;
-}
-
-static void
-mlx5_ib_free_data_direct_resources(struct mlx5_ib_dev *dev)
-{
-
-	if (dev->ddr.mkey_ro_valid)
-		mlx5_core_destroy_mkey(dev->mdev, dev->ddr.mkey_ro);
-
-	mlx5_core_destroy_mkey(dev->mdev, dev->ddr.mkey);
-	mlx5_core_dealloc_pd(dev->mdev, dev->ddr.pdn);
 }
 
 static u32 get_core_cap_flags(struct ib_device *ibdev,
@@ -4016,39 +4094,42 @@ unbind:
 	return false;
 }
 
+static int mlx5_ib_data_direct_event(struct notifier_block *nb,
+				     unsigned long action, void *data)
+{
+	struct mlx5_ib_dev *dev =
+		container_of(nb, struct mlx5_ib_dev, data_direct_nb);
+
+	if (action != MLX5_DATA_DIRECT_UNBIND)
+		return NOTIFY_DONE;
+
+	mutex_lock(&dev->data_direct_lock);
+	mlx5_ib_revoke_data_direct_mrs(dev);
+	mutex_unlock(&dev->data_direct_lock);
+
+	return NOTIFY_OK;
+}
+
 static int mlx5_ib_data_direct_init(struct mlx5_ib_dev *dev)
 {
-	char vuid[MLX5_ST_SZ_BYTES(array1024_auto) + 1] = {};
 	int ret;
 
-	if (!MLX5_CAP_GEN(dev->mdev, data_direct) ||
-	    !MLX5_CAP_GEN_2(dev->mdev, query_vuid))
+	if (!mlx5_data_direct_supported(dev->mdev))
 		return 0;
 
-	ret = mlx5_cmd_query_vuid(dev->mdev, true, vuid);
-	if (ret)
-		return ret;
-
-	ret = mlx5_ib_create_data_direct_resources(dev);
-	if (ret)
-		return ret;
-
 	INIT_LIST_HEAD(&dev->data_direct_mr_list);
-	ret = mlx5_data_direct_ib_reg(dev, vuid);
-	if (ret)
-		mlx5_ib_free_data_direct_resources(dev);
+	dev->data_direct_nb.notifier_call = mlx5_ib_data_direct_event;
+	ret = mlx5_data_direct_register(dev->mdev, &dev->data_direct_nb);
 
 	return ret;
 }
 
 static void mlx5_ib_data_direct_cleanup(struct mlx5_ib_dev *dev)
 {
-	if (!MLX5_CAP_GEN(dev->mdev, data_direct) ||
-	    !MLX5_CAP_GEN_2(dev->mdev, query_vuid))
+	if (!mlx5_data_direct_supported(dev->mdev))
 		return;
 
-	mlx5_data_direct_ib_unreg(dev);
-	mlx5_ib_free_data_direct_resources(dev);
+	mlx5_data_direct_unregister(dev->mdev, &dev->data_direct_nb);
 }
 
 static int mlx5_ib_init_multiport_master(struct mlx5_ib_dev *dev)
@@ -4267,7 +4348,10 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_VAR_OBJ_ALLOC)(
 		return PTR_ERR(entry);
 
 	mmap_offset = mlx5_entry_to_mmap_offset(entry);
-	length = entry->rdma_entry.npages * PAGE_SIZE;
+	if (check_mul_overflow(entry->rdma_entry.npages, (u32)PAGE_SIZE, &length)) {
+		rdma_user_mmap_entry_remove(&entry->rdma_entry);
+		return -EINVAL;
+	}
 	uobj->object = entry;
 	uverbs_finalize_uobj_create(attrs, MLX5_IB_ATTR_VAR_OBJ_ALLOC_HANDLE);
 
@@ -4514,6 +4598,8 @@ static int mlx5_ib_stage_init_init(struct mlx5_ib_dev *dev)
 	}
 
 	mutex_init(&dev->lb.mutex);
+	spin_lock_init(&dev->pending_events_lock);
+	INIT_WORK(&dev->pending_events_work, mlx5_ib_replay_port_events);
 
 	err = mlx5r_cmd_query_special_mkeys(dev);
 	if (err)
@@ -4836,6 +4922,7 @@ static int mlx5_ib_stage_caps_init(struct mlx5_ib_dev *dev)
 	}
 
 	dev->ib_dev.use_cq_dim = true;
+	dev->ib_dev.adversarial_mode = mlx5_ib_adversarial_mode;
 
 	return 0;
 
@@ -5062,44 +5149,60 @@ static int mlx5_ib_stage_dev_notifier_init(struct mlx5_ib_dev *dev)
 	dev->mdev_events.notifier_call = mlx5_ib_event;
 	mlx5_notifier_register(dev->mdev, &dev->mdev_events);
 
-	mlx5r_macsec_event_register(dev);
-
 	return 0;
 }
 
-static void mlx5_ib_stage_dev_notifier_cleanup(struct mlx5_ib_dev *dev)
+/*
+ * The event handlers use resources that later stages own, the GSI QPs in
+ * particular, so the notifier has to be gone before those stages are torn
+ * down. Stage cleanup runs in reverse order and this notifier is registered
+ * before MLX5_IB_STAGE_IB_REG, so both unwind paths, __mlx5_ib_remove() and
+ * the error unwind in __mlx5_ib_add(), call this first. Safe to call more
+ * than once and on a device that never got here.
+ */
+static void mlx5_ib_unregister_dev_notifier(struct mlx5_ib_dev *dev)
 {
 	struct mlx5_ib_resources *devr = &dev->devr;
 	int port;
 
-	mlx5r_macsec_event_unregister(dev);
+	if (!dev->mdev_events.notifier_call)
+		return;
+
 	mlx5_notifier_unregister(dev->mdev, &dev->mdev_events);
+	dev->mdev_events.notifier_call = NULL;
+
+	/*
+	 * Unregistering stops new events, but an event already queued still
+	 * dereferences this device and rearms work that this and later stage
+	 * cleanups cancel, so let the queued events run out first.
+	 */
+	flush_workqueue(mlx5_ib_event_wq);
 
 	for (port = 0; port < ARRAY_SIZE(devr->ports); ++port)
 		cancel_work_sync(&devr->ports[port].pkey_change_work);
 }
 
-void mlx5_ib_data_direct_bind(struct mlx5_ib_dev *ibdev,
-			      struct mlx5_data_direct_dev *dev)
+static int mlx5_ib_stage_macsec_notifier_init(struct mlx5_ib_dev *dev)
 {
-	mutex_lock(&ibdev->data_direct_lock);
-	ibdev->data_direct_dev = dev;
-	mutex_unlock(&ibdev->data_direct_lock);
+	mlx5r_macsec_event_register(dev);
+	return 0;
 }
 
-void mlx5_ib_data_direct_unbind(struct mlx5_ib_dev *ibdev)
+static void mlx5_ib_stage_macsec_notifier_cleanup(struct mlx5_ib_dev *dev)
 {
-	mutex_lock(&ibdev->data_direct_lock);
-	mlx5_ib_revoke_data_direct_mrs(ibdev);
-	ibdev->data_direct_dev = NULL;
-	mutex_unlock(&ibdev->data_direct_lock);
+	mlx5r_macsec_event_unregister(dev);
 }
 
 void __mlx5_ib_remove(struct mlx5_ib_dev *dev,
 		      const struct mlx5_ib_profile *profile,
 		      int stage)
 {
+	spin_lock_irq(&dev->pending_events_lock);
 	dev->ib_active = false;
+	spin_unlock_irq(&dev->pending_events_lock);
+
+	cancel_work_sync(&dev->pending_events_work);
+	mlx5_ib_unregister_dev_notifier(dev);
 
 	/* Number of stages to cleanup */
 	while (stage) {
@@ -5128,10 +5231,21 @@ int __mlx5_ib_add(struct mlx5_ib_dev *dev,
 		}
 	}
 
+	/*
+	 * Queued under the lock that publishes ib_active, so that it is on the
+	 * ordered event workqueue before anything the notifier queues once it
+	 * sees the device active.
+	 */
+	spin_lock_irq(&dev->pending_events_lock);
 	dev->ib_active = true;
+	queue_work(mlx5_ib_event_wq, &dev->pending_events_work);
+	spin_unlock_irq(&dev->pending_events_lock);
+
 	return 0;
 
 err_out:
+	mlx5_ib_unregister_dev_notifier(dev);
+
 	/* Clean up stages which were initialized */
 	while (i) {
 		i--;
@@ -5187,12 +5301,15 @@ static const struct mlx5_ib_profile pf_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_SYS_ERROR_NOTIFIER,
 		     mlx5_ib_stage_sys_error_notifier_init,
 		     mlx5_ib_stage_sys_error_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
+		     mlx5_ib_stage_dev_notifier_init,
+		     mlx5_ib_unregister_dev_notifier),
 	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
 		     mlx5_ib_stage_ib_reg_init,
 		     mlx5_ib_stage_ib_reg_cleanup),
-	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
-		     mlx5_ib_stage_dev_notifier_init,
-		     mlx5_ib_stage_dev_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_MACSEC_NOTIFIER,
+		     mlx5_ib_stage_macsec_notifier_init,
+		     mlx5_ib_stage_macsec_notifier_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_POST_IB_REG_UMR,
 		     mlx5_ib_stage_post_ib_reg_umr_init,
 		     NULL),
@@ -5247,12 +5364,15 @@ const struct mlx5_ib_profile raw_eth_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_SYS_ERROR_NOTIFIER,
 		     mlx5_ib_stage_sys_error_notifier_init,
 		     mlx5_ib_stage_sys_error_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
+		     mlx5_ib_stage_dev_notifier_init,
+		     mlx5_ib_unregister_dev_notifier),
 	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
 		     mlx5_ib_stage_ib_reg_init,
 		     mlx5_ib_stage_ib_reg_cleanup),
-	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
-		     mlx5_ib_stage_dev_notifier_init,
-		     mlx5_ib_stage_dev_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_MACSEC_NOTIFIER,
+		     mlx5_ib_stage_macsec_notifier_init,
+		     mlx5_ib_stage_macsec_notifier_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_POST_IB_REG_UMR,
 		     mlx5_ib_stage_post_ib_reg_umr_init,
 		     NULL),
@@ -5379,7 +5499,19 @@ static int mlx5r_mp_probe(struct auxiliary_device *adev,
 
 		if (bound) {
 			rdma_roce_rescan_device(&dev->ib_dev);
+			/*
+			 * Publishing this early stops recording as well, so on
+			 * a master that is still inside __mlx5_ib_add() an
+			 * event from here on is neither recorded nor delivered,
+			 * as ib_core has no handlers registered for it yet.
+			 * Left as is: these are Ethernet ports, whose tables do
+			 * not change behind the driver's back the way an IB
+			 * P_Key table does. Replaying here is not the answer,
+			 * the device is not registered yet.
+			 */
+			spin_lock_irq(&mpi->ibdev->pending_events_lock);
 			mpi->ibdev->ib_active = true;
+			spin_unlock_irq(&mpi->ibdev->pending_events_lock);
 			break;
 		}
 	}
@@ -5513,6 +5645,8 @@ static int __init mlx5_ib_init(void)
 		return -ENOMEM;
 	}
 
+	mlx5_ib_adversarial_mode = mlx5_is_adversarial();
+
 	ret = mlx5_ib_qp_event_init();
 	if (ret)
 		goto qp_event_err;
@@ -5521,9 +5655,6 @@ static int __init mlx5_ib_init(void)
 	ret = mlx5r_rep_init();
 	if (ret)
 		goto rep_err;
-	ret = mlx5_data_direct_driver_register();
-	if (ret)
-		goto dd_err;
 	ret = auxiliary_driver_register(&mlx5r_mp_driver);
 	if (ret)
 		goto mp_err;
@@ -5536,8 +5667,6 @@ static int __init mlx5_ib_init(void)
 drv_err:
 	auxiliary_driver_unregister(&mlx5r_mp_driver);
 mp_err:
-	mlx5_data_direct_driver_unregister();
-dd_err:
 	mlx5r_rep_cleanup();
 rep_err:
 	rcu_barrier();
@@ -5550,7 +5679,6 @@ qp_event_err:
 
 static void __exit mlx5_ib_cleanup(void)
 {
-	mlx5_data_direct_driver_unregister();
 	auxiliary_driver_unregister(&mlx5r_driver);
 	auxiliary_driver_unregister(&mlx5r_mp_driver);
 	mlx5r_rep_cleanup();

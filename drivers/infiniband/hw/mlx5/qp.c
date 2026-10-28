@@ -447,7 +447,7 @@ static int set_rq_size(struct mlx5_ib_dev *dev, struct ib_qp_cap *cap,
 	int wq_size;
 
 	/* Sanity check RQ size before proceeding */
-	if (cap->max_recv_wr > (1 << MLX5_CAP_GEN(dev->mdev, log_max_qp_sz)))
+	if (cap->max_recv_wr > MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp_sz))
 		return -EINVAL;
 
 	if (!has_rq) {
@@ -621,11 +621,11 @@ static int calc_sq_size(struct mlx5_ib_dev *dev, struct ib_qp_init_attr *attr,
 
 	wq_size = roundup_pow_of_two(attr->cap.max_send_wr * wqe_size);
 	qp->sq.wqe_cnt = wq_size / MLX5_SEND_WQE_BB;
-	if (qp->sq.wqe_cnt > (1 << MLX5_CAP_GEN(dev->mdev, log_max_qp_sz))) {
-		mlx5_ib_dbg(dev, "send queue size (%d * %d / %d -> %d) exceeds limits(%d)\n",
+	if (qp->sq.wqe_cnt > MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp_sz)) {
+		mlx5_ib_dbg(dev, "send queue size (%d * %d / %d -> %d) exceeds limits(%u)\n",
 			    attr->cap.max_send_wr, wqe_size, MLX5_SEND_WQE_BB,
 			    qp->sq.wqe_cnt,
-			    1 << MLX5_CAP_GEN(dev->mdev, log_max_qp_sz));
+			    MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp_sz));
 		return -ENOMEM;
 	}
 	qp->sq.wqe_shift = ilog2(MLX5_SEND_WQE_BB);
@@ -663,10 +663,10 @@ static int set_user_buf_size(struct mlx5_ib_dev *dev,
 
 	qp->sq.wqe_cnt = ucmd->sq_wqe_count;
 
-	if (qp->sq.wqe_cnt > (1 << MLX5_CAP_GEN(dev->mdev, log_max_qp_sz))) {
-		mlx5_ib_warn(dev, "wqe_cnt %d, max_wqes %d\n",
+	if (qp->sq.wqe_cnt > MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp_sz)) {
+		mlx5_ib_warn(dev, "wqe_cnt %d, max_wqes %u\n",
 			     qp->sq.wqe_cnt,
-			     1 << MLX5_CAP_GEN(dev->mdev, log_max_qp_sz));
+			     MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_qp_sz));
 		return -EINVAL;
 	}
 
@@ -1624,6 +1624,8 @@ static int create_raw_packet_qp(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 		if (err)
 			return err;
 
+		sq->base.container_mibqp = qp;
+		sq->base.mqp.event = mlx5_ib_qp_event;
 		err = create_raw_packet_qp_sq(dev, udata, attrs, sq, in, pd,
 					      to_mcq(init_attr->send_cq));
 		if (err)
@@ -1635,9 +1637,6 @@ static int create_raw_packet_qp(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 			resp->sqn = sq->base.mqp.qpn;
 			resp->comp_mask |= MLX5_IB_CREATE_QP_RESP_MASK_SQN;
 		}
-
-		sq->base.container_mibqp = qp;
-		sq->base.mqp.event = mlx5_ib_qp_event;
 	}
 
 	if (qp->rq.wqe_cnt) {
@@ -1647,6 +1646,7 @@ static int create_raw_packet_qp(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 		}
 
 		rq->base.container_mibqp = qp;
+		rq->base.mqp.event = mlx5_ib_qp_event;
 
 		if (qp->flags & IB_QP_CREATE_CVLAN_STRIPPING)
 			rq->flags |= MLX5_IB_RQ_CVLAN_STRIPPING;
@@ -2092,13 +2092,13 @@ static int create_xrc_tgt_qp(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 	}
 
 	base = &qp->trans_qp.base;
+	base->container_mibqp = qp;
+	base->mqp.event = mlx5_ib_qp_event;
 	err = mlx5_qpc_create_qp(dev, &base->mqp, in, inlen, out);
 	kvfree(in);
 	if (err)
 		return err;
 
-	base->container_mibqp = qp;
-	base->mqp.event = mlx5_ib_qp_event;
 	if (MLX5_CAP_GEN(mdev, ece_support))
 		params->resp.ece_options = MLX5_GET(create_qp_out, out, ece);
 
@@ -2155,7 +2155,7 @@ static int create_dci(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	    ucmd->rq_wqe_count != qp->rq.wqe_cnt)
 		return -EINVAL;
 
-	if (ucmd->sq_wqe_count > (1 << MLX5_CAP_GEN(mdev, log_max_qp_sz)))
+	if (ucmd->sq_wqe_count > MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_qp_sz))
 		return -EINVAL;
 
 	ts_format = get_qp_ts_format(dev, to_mcq(init_attr->send_cq),
@@ -2236,14 +2236,14 @@ static int create_dci(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 		qp->flags &= ~IB_QP_CREATE_PCI_WRITE_END_PADDING;
 	}
 
+	base->container_mibqp = qp;
+	base->mqp.event = mlx5_ib_qp_event;
 	err = mlx5_qpc_create_qp(dev, &base->mqp, in, inlen, out);
 
 	kvfree(in);
 	if (err)
 		goto err_create;
 
-	base->container_mibqp = qp;
-	base->mqp.event = mlx5_ib_qp_event;
 	if (MLX5_CAP_GEN(mdev, ece_support))
 		params->resp.ece_options = MLX5_GET(create_qp_out, out, ece);
 
@@ -2322,7 +2322,7 @@ static int create_user_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	    ucmd->rq_wqe_count != qp->rq.wqe_cnt)
 		return -EINVAL;
 
-	if (ucmd->sq_wqe_count > (1 << MLX5_CAP_GEN(mdev, log_max_qp_sz)))
+	if (ucmd->sq_wqe_count > MLX5_CAP_GEN_LOGSZ_U32(mdev, log_max_qp_sz))
 		return -EINVAL;
 
 	if (init_attr->qp_type != IB_QPT_RAW_PACKET) {
@@ -2432,6 +2432,8 @@ static int create_user_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 		qp->flags &= ~IB_QP_CREATE_PCI_WRITE_END_PADDING;
 	}
 
+	base->container_mibqp = qp;
+	base->mqp.event = mlx5_ib_qp_event;
 	if (init_attr->qp_type == IB_QPT_RAW_PACKET ||
 	    qp->flags & IB_QP_CREATE_SOURCE_QPN) {
 		qp->raw_packet_qp.sq.ubuffer.buf_addr = ucmd->sq_buf_addr;
@@ -2446,8 +2448,6 @@ static int create_user_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	if (err)
 		goto err_create;
 
-	base->container_mibqp = qp;
-	base->mqp.event = mlx5_ib_qp_event;
 	if (MLX5_CAP_GEN(mdev, ece_support))
 		params->resp.ece_options = MLX5_GET(create_qp_out, out, ece);
 
@@ -2577,13 +2577,12 @@ static int create_kernel_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	    MLX5_CAP_GEN(mdev, go_back_n))
 		MLX5_SET(qpc, qpc, retry_mode, MLX5_QP_RM_GO_BACK_N);
 
+	base->container_mibqp = qp;
+	base->mqp.event = mlx5_ib_qp_event;
 	err = mlx5_qpc_create_qp(dev, &base->mqp, in, inlen, out);
 	kvfree(in);
 	if (err)
 		goto err_create;
-
-	base->container_mibqp = qp;
-	base->mqp.event = mlx5_ib_qp_event;
 
 	get_cqs(qp->type, attr->send_cq, attr->recv_cq,
 		&send_cq, &recv_cq);
@@ -2825,15 +2824,24 @@ static int check_qp_type(struct mlx5_ib_dev *dev, struct ib_qp_init_attr *attr,
 	case IB_QPT_XRC_INI:
 		if (!MLX5_CAP_GEN(dev->mdev, xrc))
 			goto out;
-		fallthrough;
+		break;
 	case IB_QPT_RC:
+		if (!MLX5_CAP_GEN(dev->mdev, rc))
+			goto out;
+		break;
 	case IB_QPT_UC:
+		if (!MLX5_CAP_GEN(dev->mdev, uc))
+			goto out;
+		break;
+	case IB_QPT_UD:
+		if (!MLX5_CAP_GEN(dev->mdev, ud))
+			goto out;
+		break;
 	case IB_QPT_SMI:
 	case MLX5_IB_QPT_HW_GSI:
 	case IB_QPT_DRIVER:
 	case IB_QPT_GSI:
 	case IB_QPT_RAW_PACKET:
-	case IB_QPT_UD:
 	case MLX5_IB_QPT_REG_UMR:
 		break;
 	default:
@@ -2957,18 +2965,22 @@ static int process_vendor_flags(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 
 	switch (flags & (MLX5_QP_FLAG_TYPE_DCT | MLX5_QP_FLAG_TYPE_DCI)) {
 	case MLX5_QP_FLAG_TYPE_DCI:
+		if (qp->type != IB_QPT_DRIVER)
+			return -EINVAL;
 		qp->type = MLX5_IB_QPT_DCI;
 		break;
 	case MLX5_QP_FLAG_TYPE_DCT:
+		if (qp->type != IB_QPT_DRIVER)
+			return -EINVAL;
 		qp->type = MLX5_IB_QPT_DCT;
 		break;
+	case 0:
+		/* IB_QPT_DRIVER needs a subtype */
+		if (qp->type == IB_QPT_DRIVER)
+			return -EINVAL;
+		break;
 	default:
-		if (qp->type != IB_QPT_DRIVER)
-			break;
-		/*
-		 * It is IB_QPT_DRIVER and or no subtype or
-		 * wrong subtype were provided.
-		 */
+		/* Both subtypes */
 		return -EINVAL;
 	}
 
@@ -3186,7 +3198,7 @@ static int create_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 
 out:
 	if (err) {
-		mlx5_ib_err(dev, "Create QP type %d failed\n", qp->type);
+		mlx5_ib_err(dev, "Create QP type %d failed, err = %d\n", qp->type, err);
 		return err;
 	}
 
@@ -4797,19 +4809,15 @@ static bool mlx5_ib_modify_qp_allowed(struct mlx5_ib_dev *dev,
 static int validate_rd_atomic(struct mlx5_ib_dev *dev, struct ib_qp_attr *attr,
 			      int attr_mask, enum ib_qp_type qp_type)
 {
-	int log_max_ra_res;
-	int log_max_ra_req;
+	u32 log_max_ra_res;
+	u32 log_max_ra_req;
 
 	if (qp_type == MLX5_IB_QPT_DCI) {
-		log_max_ra_res = 1 << MLX5_CAP_GEN(dev->mdev,
-						   log_max_ra_res_dc);
-		log_max_ra_req = 1 << MLX5_CAP_GEN(dev->mdev,
-						   log_max_ra_req_dc);
+		log_max_ra_res = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_ra_res_dc);
+		log_max_ra_req = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_ra_req_dc);
 	} else {
-		log_max_ra_res = 1 << MLX5_CAP_GEN(dev->mdev,
-						   log_max_ra_res_qp);
-		log_max_ra_req = 1 << MLX5_CAP_GEN(dev->mdev,
-						   log_max_ra_req_qp);
+		log_max_ra_res = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_ra_res_qp);
+		log_max_ra_req = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_ra_req_qp);
 	}
 
 	if (attr_mask & IB_QP_MAX_QP_RD_ATOMIC &&
@@ -5068,6 +5076,9 @@ static int sqrq_state_to_qp_state(u8 sq_state, u8 rq_state,
 			[MLX5_SQ_STATE_NA]	= MLX5_QP_STATE_BAD,
 		},
 	};
+
+	if (sq_state >= MLX5_SQ_NUM_STATE || rq_state >= MLX5_RQ_NUM_STATE)
+		return -EIO;
 
 	*qp_state = sqrq_trans[rq_state][sq_state];
 
@@ -5344,11 +5355,14 @@ static void mlx5_ib_wq_event(struct mlx5_core_qp *core_qp, int type)
 			break;
 		default:
 			mlx5_ib_warn(dev, "Unexpected event type %d on WQ %06x\n", type, core_qp->qpn);
-			return;
+			goto out;
 		}
 
 		rwq->ibwq.event_handler(&event, rwq->ibwq.wq_context);
 	}
+
+out:
+	mlx5_core_res_put(&core_qp->common);
 }
 
 static int set_delay_drop(struct mlx5_ib_dev *dev)
@@ -5493,7 +5507,7 @@ static int set_user_rq_size(struct mlx5_ib_dev *dev,
 			    struct mlx5_ib_rwq *rwq)
 {
 	/* Sanity check RQ size before proceeding */
-	if (wq_init_attr->max_wr > (1 << MLX5_CAP_GEN(dev->mdev, log_max_wq_sz)))
+	if (wq_init_attr->max_wr > MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_wq_sz))
 		return -EINVAL;
 
 	if (!ucmd->rq_wqe_count)
@@ -5616,6 +5630,7 @@ struct ib_wq *mlx5_ib_create_wq(struct ib_pd *pd,
 		rwq = kzalloc_obj(*rwq);
 		if (!rwq)
 			return ERR_PTR(-ENOMEM);
+		rwq->core_qp.event = mlx5_ib_wq_event;
 		err = prepare_user_rq(pd, init_attr, udata, rwq);
 		if (err)
 			goto err;
@@ -5639,7 +5654,6 @@ struct ib_wq *mlx5_ib_create_wq(struct ib_pd *pd,
 			goto err_copy;
 	}
 
-	rwq->core_qp.event = mlx5_ib_wq_event;
 	rwq->ibwq.event_handler = init_attr->event_handler;
 	return &rwq->ibwq;
 

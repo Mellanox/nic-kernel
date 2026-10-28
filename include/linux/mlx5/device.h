@@ -37,6 +37,7 @@
 #include <rdma/ib_verbs.h>
 #include <linux/mlx5/mlx5_ifc.h>
 #include <linux/bitfield.h>
+#include <linux/minmax.h>
 
 #if defined(__LITTLE_ENDIAN)
 #define MLX5_SET_HOST_ENDIANNESS	0
@@ -102,6 +103,16 @@ __mlx5_mask(typ, fld))
 	pr_debug(#fld " = 0x%x\n", ___t); \
 	___t; \
 })
+
+/* Largest shift count that is defined behaviour for a value of type @T. */
+#define __mlx5_max_shift(T) (BITS_PER_TYPE(T) - 1 - is_signed_type(T))
+
+/* Calculate 2^@fld from a log2 cap field. Exponents that don't fit in @T
+ * saturate to the largest representable power of two (not to the type
+ * maximum), avoiding undefined shifts.
+ */
+#define MLX5_GET_LOGSZ_CLAMP(typ, p, fld, T) \
+	((T)((T)1 << min_t(u32, MLX5_GET(typ, p, fld), __mlx5_max_shift(T))))
 
 #define __MLX5_SET64(typ, p, fld, v) do { \
 	BUILD_BUG_ON(__mlx5_bit_sz(typ, fld) != 64); \
@@ -1303,6 +1314,15 @@ enum mlx5_qcam_feature_groups {
 #define MLX5_CAP_GEN_MAX(mdev, cap) \
 	MLX5_GET(cmd_hca_cap, mdev->caps.hca[MLX5_CAP_GENERAL]->max, cap)
 
+/* 2^cap for log2-encoded general caps */
+#define MLX5_CAP_GEN_LOGSZ_U32(mdev, cap) \
+	MLX5_GET_LOGSZ_CLAMP(cmd_hca_cap, \
+			     mdev->caps.hca[MLX5_CAP_GENERAL]->cur, cap, u32)
+
+#define MLX5_CAP_GEN_LOGSZ_U64(mdev, cap) \
+	MLX5_GET_LOGSZ_CLAMP(cmd_hca_cap, \
+			     mdev->caps.hca[MLX5_CAP_GENERAL]->cur, cap, u64)
+
 #define MLX5_CAP_GEN_2(mdev, cap) \
 	MLX5_GET(cmd_hca_cap_2, mdev->caps.hca[MLX5_CAP_GENERAL_2]->cur, cap)
 
@@ -1361,6 +1381,9 @@ enum mlx5_qcam_feature_groups {
 
 #define MLX5_CAP_FLOWTABLE_RDMA_TRANSPORT_TX(mdev, cap) \
 	MLX5_CAP_ADV_RDMA(mdev, rdma_transport_tx_flow_table_properties.cap)
+
+#define MLX5_CAP_FLOWTABLE_NIC_RX_CLASS(mdev, cap) \
+	MLX5_CAP_ADV_RDMA(mdev, nic_rx_class_flow_table_properties.cap)
 
 #define MLX5_CAP_ESW_FLOWTABLE(mdev, cap) \
 	MLX5_GET(flow_table_eswitch_cap, \
