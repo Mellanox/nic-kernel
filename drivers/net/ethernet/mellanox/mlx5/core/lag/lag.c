@@ -1854,11 +1854,37 @@ void mlx5_lag_set_vports_agg_speed(struct mlx5_lag *ldev)
 	}
 }
 
+static int mlx5_lag_get_restore_speed(struct mlx5_core_dev *mdev,
+				      struct mlx5_vport *vport, u32 *speed)
+{
+	u32 pci_bw;
+
+	if (vport->max_tx_speed) {
+		*speed = vport->max_tx_speed;
+		return 0;
+	}
+
+	*speed = 0;
+	mlx5_port_oper_linkspeed(mdev, speed);
+	if (!*speed && mlx5_port_max_linkspeed(mdev, speed))
+		return -ENODATA;
+
+	pci_bw = pcie_bandwidth_mbps(mdev->pdev);
+	if (pci_bw)
+		*speed = min(*speed, pci_bw);
+	*speed /= MLX5_MAX_TX_SPEED_UNIT;
+	return 0;
+}
+
 void mlx5_lag_reset_vports_speed(struct mlx5_lag *ldev)
 {
+	u16 op_mod = MLX5_VPORT_STATE_OP_MOD_ESW_VPORT;
 	struct mlx5_core_dev *mdev;
+	struct mlx5_eswitch *esw;
+	struct mlx5_vport *vport;
 	struct lag_fn *fn;
-	u32 speed;
+	u32 restore_speed;
+	unsigned long i;
 	int pf_idx;
 	int ret;
 
@@ -1870,17 +1896,39 @@ void mlx5_lag_reset_vports_speed(struct mlx5_lag *ldev)
 		mdev = fn->dev;
 		if (!mdev)
 			continue;
-
-		ret = mlx5_port_oper_linkspeed(mdev, &speed);
-		if (ret) {
-			mlx5_core_dbg(mdev,
-				      "Failed to reset vports speed for device %s. Oper speed is not available (err=%d)\n",
-				      dev_name(mdev->device), ret);
+		esw = mdev->priv.eswitch;
+		if (!esw || !MLX5_CAP_ESW(mdev, esw_vport_state_max_tx_speed))
 			continue;
-		}
 
-		speed = speed / MLX5_MAX_TX_SPEED_UNIT;
-		mlx5_lag_modify_device_vports_speed(mdev, speed);
+		mutex_lock(&esw->state_lock);
+		mlx5_esw_for_each_vport(esw, i, vport) {
+			if (!vport || vport->vport == MLX5_VPORT_UPLINK)
+				continue;
+
+			if (!vport->enabled) {
+				vport->agg_max_tx_speed = vport->max_tx_speed;
+				continue;
+			}
+
+			if (mlx5_lag_get_restore_speed(mdev, vport,
+						       &restore_speed)) {
+				vport->agg_max_tx_speed = 0;
+				continue;
+			}
+
+			ret = mlx5_modify_vport_max_tx_speed(mdev, op_mod,
+							     vport->vport,
+							     true,
+							     restore_speed);
+			if (ret) {
+				mlx5_core_dbg(mdev,
+					      "Failed to restore vport %d max tx speed, err=%d\n",
+					      vport->vport, ret);
+				continue;
+			}
+			vport->agg_max_tx_speed = 0;
+		}
+		mutex_unlock(&esw->state_lock);
 	}
 }
 #endif
