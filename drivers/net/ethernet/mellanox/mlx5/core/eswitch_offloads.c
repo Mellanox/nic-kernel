@@ -2929,11 +2929,14 @@ void mlx5_esw_offloads_cleanup_pf_vf_rep(struct mlx5_eswitch *esw, struct mlx5_v
 	mlx5_esw_offloads_pf_vf_devlink_port_cleanup(esw, vport);
 }
 
-int mlx5_esw_offloads_init_sf_rep(struct mlx5_eswitch *esw, struct mlx5_vport *vport,
+int mlx5_esw_offloads_init_sf_rep(struct mlx5_eswitch *esw,
+				  struct mlx5_vport *vport,
 				  struct mlx5_devlink_port *dl_port,
-				  u32 controller, u32 sfnum)
+				  u32 controller, u32 pfnum, u32 sfnum)
 {
-	return mlx5_esw_offloads_sf_devlink_port_init(esw, vport, dl_port, controller, sfnum);
+	return mlx5_esw_offloads_sf_devlink_port_init(esw, vport, dl_port,
+						      controller, pfnum,
+						      sfnum);
 }
 
 void mlx5_esw_offloads_cleanup_sf_rep(struct mlx5_eswitch *esw, struct mlx5_vport *vport)
@@ -4252,6 +4255,12 @@ bool mlx5_esw_offloads_controller_valid(const struct mlx5_eswitch *esw, u32 cont
 	const struct mlx5_esw_functions *esw_funcs;
 	int i;
 
+	/* User specifies correct non-zero self PF controller number */
+	esw_funcs = &esw->esw_funcs;
+	if (esw_funcs->phys_port_cnum &&
+	    controller == esw_funcs->phys_port_cnum)
+		return true;
+
 	/* Local controller is always valid */
 	if (controller == 0)
 		return true;
@@ -4263,7 +4272,6 @@ bool mlx5_esw_offloads_controller_valid(const struct mlx5_eswitch *esw, u32 cont
 	if (controller == mlx5_esw_get_hpf_host_number(esw->dev) + 1)
 		return true;
 
-	esw_funcs = &esw->esw_funcs;
 	for (i = 0; i < esw_funcs->num_spfs; i++) {
 		if (controller == esw_funcs->spfs[i].host_number + 1)
 			return true;
