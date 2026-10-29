@@ -6013,6 +6013,22 @@ int pcie_link_speed_mbps(struct pci_dev *pdev)
 }
 EXPORT_SYMBOL(pcie_link_speed_mbps);
 
+u32 pcie_bandwidth_mbps(struct pci_dev *pdev)
+{
+	u16 lnksta;
+	u32 width;
+	int speed;
+
+	if (pcie_capability_read_word(pdev, PCI_EXP_LNKSTA, &lnksta))
+		return 0;
+	speed = pcie_dev_speed_mbps(to_pcie_link_speed(lnksta));
+	if (speed <= 0)
+		return 0;
+	width = FIELD_GET(PCI_EXP_LNKSTA_NLW, lnksta);
+	return speed * width;
+}
+EXPORT_SYMBOL_GPL(pcie_bandwidth_mbps);
+
 /**
  * pcie_bandwidth_available - determine minimum link settings of a PCIe
  *			      device and its bandwidth limitation

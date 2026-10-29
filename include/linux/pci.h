@@ -1479,6 +1479,8 @@ u32 pcie_bandwidth_available(struct pci_dev *dev, struct pci_dev **limiting_dev,
 			     enum pci_bus_speed *speed,
 			     enum pcie_link_width *width);
 int pcie_link_speed_mbps(struct pci_dev *pdev);
+u32 pcie_bandwidth_mbps(struct pci_dev *pdev);
+
 void pcie_print_link_status(struct pci_dev *dev);
 int pcie_reset_flr(struct pci_dev *dev, bool probe);
 int pcie_flr(struct pci_dev *dev);
