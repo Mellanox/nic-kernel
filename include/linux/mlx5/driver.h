@@ -792,6 +792,7 @@ struct mlx5_core_dev {
 	struct mlx5_hv_vhca	*hv_vhca;
 	struct mlx5_hwmon	*hwmon;
 	struct {
+		/* Protects the fields below. */
 		struct mutex lock;
 		u64 num_tc;
 		u64 num_accel;

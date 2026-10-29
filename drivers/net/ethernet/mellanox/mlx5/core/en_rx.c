@@ -49,6 +49,7 @@
 #include "en_rep.h"
 #include "en/rep/tc.h"
 #include "ipoib/ipoib.h"
+#include "en_accel/en_accel.h"
 #include "en_accel/ipsec.h"
 #include "en_accel/macsec.h"
 #include "en_accel/psp_rxtx.h"
@@ -2227,33 +2228,6 @@ static bool mlx5e_hw_gro_skb_has_enough_space(struct sk_buff *skb,
 		return page_size * nr_frags + data_bcnt <= GRO_LEGACY_MAX_SIZE;
 }
 
-static bool mlx5e_hw_gro_psp_match(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
-{
-#ifdef CONFIG_MLX5_EN_PSP
-	struct psp_skb_ext *pse = skb_ext_find(skb, SKB_EXT_PSP);
-	bool is_psp = mlx5e_psp_is_rx_flow(cqe);
-
-	if (likely(!is_psp && !pse))
-		return true;
-
-	/* No match on PSP status change (no crypto -> crypto or vice-versa). */
-	if (unlikely(is_psp != !!pse))
-		return false;
-
-	/* SPI and version are only available in CQE metadata for decap flows.
-	 * Non-decap PSP cannot be matched here, force a flush.
-	 */
-	if (unlikely(!mlx5e_psp_is_decap(cqe)))
-		return false;
-
-	/* No match on security parameters change. */
-	return pse->spi == mlx5e_psp_get_spi(cqe) &&
-		pse->version == mlx5e_psp_get_version(cqe);
-#else
-	return true;
-#endif
-}
-
 static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe)
 {
 	u16 data_bcnt		= mpwrq_get_cqe_byte_cnt(cqe) - cqe->shampo.header_size;
@@ -2298,7 +2272,7 @@ static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cq
 	if (*skb &&
 	    !(match &&
 	      mlx5e_hw_gro_skb_has_enough_space(*skb, data_bcnt, page_size) &&
-	      mlx5e_hw_gro_psp_match(*skb, cqe))) {
+	      mlx5e_accel_shampo_can_merge(rq, cqe))) {
 		match = false;
 		mlx5e_shampo_flush_skb(rq, cqe, match);
 	}
@@ -2326,6 +2300,7 @@ static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cq
 
 		NAPI_GRO_CB(*skb)->count = 1;
 		skb_shinfo(*skb)->gso_size = cqe_bcnt - head_size;
+		mlx5e_ktls_shampo_init_session(rq, cqe);
 	} else {
 		NAPI_GRO_CB(*skb)->count++;
 

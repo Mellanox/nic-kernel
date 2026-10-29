@@ -603,10 +603,9 @@ struct mlx5e_hairpin_entry {
 
 static void mlx5e_tc_del_flow(struct mlx5e_priv *priv,
 			      struct mlx5e_tc_flow *flow);
-static int mlx5e_tc_block_accel_offload(struct net_device *filter,
-					struct mlx5e_priv *priv);
-static void mlx5e_tc_unblock_accel_offload(struct net_device *filter,
-					   struct mlx5e_priv *priv);
+static int mlx5e_tc_block_accel_offload(struct mlx5e_tc_flow *flow,
+					struct net_device *filter);
+static void mlx5e_tc_unblock_accel_offload(struct mlx5e_tc_flow *flow);
 
 struct mlx5e_tc_flow *mlx5e_flow_get(struct mlx5e_tc_flow *flow)
 {
@@ -2162,7 +2161,6 @@ static void mlx5e_tc_del_fdb_peers_flow(struct mlx5e_tc_flow *flow)
 static void mlx5e_tc_del_flow(struct mlx5e_priv *priv,
 			      struct mlx5e_tc_flow *flow)
 {
-	struct net_device *filter_dev = flow->attr->parse_attr->filter_dev;
 	bool peer = flow_flag_test(flow, PEER);
 
 	if (mlx5e_is_eswitch_flow(flow)) {
@@ -2182,7 +2180,7 @@ static void mlx5e_tc_del_flow(struct mlx5e_priv *priv,
 	}
 out:
 	if (!peer) {
-		mlx5e_tc_unblock_accel_offload(filter_dev, flow->priv);
+		mlx5e_tc_unblock_accel_offload(flow);
 		mlx5_esw_put(flow->priv->mdev);
 	}
 }
@@ -4514,7 +4512,7 @@ mlx5e_alloc_flow(struct mlx5e_priv *priv, int attr_size,
 	attr->parse_attr = parse_attr;
 	/* Non-peer flows own the reservations until final destruction. */
 	if (!flow_flag_test(flow, PEER)) {
-		err = mlx5e_tc_block_accel_offload(filter_dev, priv);
+		err = mlx5e_tc_block_accel_offload(flow, filter_dev);
 		if (err)
 			goto err_free_attr;
 		mlx5_esw_get(priv->mdev);
@@ -4856,35 +4854,38 @@ static bool is_tc_accel_check_needed(struct net_device *filter,
 	return true;
 }
 
-static int mlx5e_tc_block_accel_offload(struct net_device *filter,
-					struct mlx5e_priv *priv)
+static int mlx5e_tc_block_accel_offload(struct mlx5e_tc_flow *flow,
+					struct net_device *filter)
 {
-	struct mlx5_core_dev *mdev = priv->mdev;
+	struct mlx5_core_dev *mdev = flow->priv->mdev;
 	int ret = 0;
 
-	if (!is_tc_accel_check_needed(filter, priv))
+	if (!is_tc_accel_check_needed(filter, flow->priv))
 		return 0;
 
 	mutex_lock(&mdev->offload_block.lock);
 	if (mdev->offload_block.num_tc)
 		ret = -EBUSY;
-	else
+	else {
 		mdev->offload_block.num_accel++;
+		flow_flag_set(flow, BLOCK_IPSEC);
+	}
 	mutex_unlock(&mdev->offload_block.lock);
 
 	return ret;
 }
 
-static void mlx5e_tc_unblock_accel_offload(struct net_device *filter,
-					   struct mlx5e_priv *priv)
+static void mlx5e_tc_unblock_accel_offload(struct mlx5e_tc_flow *flow)
 {
-	if (!is_tc_accel_check_needed(filter, priv))
+	struct mlx5_core_dev *mdev = flow->priv->mdev;
+
+	if (!flow_flag_test(flow, BLOCK_IPSEC))
 		return;
 
-	mutex_lock(&priv->mdev->offload_block.lock);
-	if (!WARN_ON_ONCE(!priv->mdev->offload_block.num_accel))
-		priv->mdev->offload_block.num_accel--;
-	mutex_unlock(&priv->mdev->offload_block.lock);
+	mutex_lock(&mdev->offload_block.lock);
+	if (!WARN_ON_ONCE(!mdev->offload_block.num_accel))
+		mdev->offload_block.num_accel--;
+	mutex_unlock(&mdev->offload_block.lock);
 }
 
 int mlx5e_configure_flower(struct net_device *dev, struct mlx5e_priv *priv,

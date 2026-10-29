@@ -496,7 +496,6 @@ void mlx5vf_free_data_buffer(struct mlx5_vhca_data_buffer *buf)
 static int mlx5vf_add_pages(struct page ***page_list, unsigned int npages)
 {
 	unsigned int filled, done = 0;
-	int i;
 
 	*page_list =
 		kvzalloc_objs(struct page *, npages, GFP_KERNEL_ACCOUNT);
@@ -517,10 +516,7 @@ static int mlx5vf_add_pages(struct page ***page_list, unsigned int npages)
 	return 0;
 
 err:
-	for (i = 0; i < done; i++)
-		__free_page(*page_list[i]);
-
-	kvfree(*page_list);
+	free_page_list(done, *page_list);
 	*page_list = NULL;
 	return -ENOMEM;
 }

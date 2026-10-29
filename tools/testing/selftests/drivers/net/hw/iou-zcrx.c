@@ -478,9 +478,6 @@ static void run_server(void)
 
 	pthread_barrier_wait(&setup_done);
 
-	if (listen(fd, 1024) < 0)
-		error(1, 0, "listen()");
-
 	if (cfg_num_threads > 1) {
 		ifindex = if_nametoindex(cfg_ifname);
 		if (!ifindex)
@@ -489,6 +486,9 @@ static void run_server(void)
 			ctxs[i].napi_id = query_napi_id(ifindex,
 							ctxs[i].queue_id);
 	}
+
+	if (listen(fd, 1024) < 0)
+		error(1, 0, "listen()");
 
 	total_conns = cfg_num_threads * cfg_num_threads;
 

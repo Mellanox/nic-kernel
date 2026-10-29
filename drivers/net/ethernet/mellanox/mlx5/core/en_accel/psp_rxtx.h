@@ -104,6 +104,13 @@ static inline __be32 mlx5e_psp_get_spi(struct mlx5_cqe64 *cqe)
 	return cqe->ft_metadata;
 }
 
+static inline bool
+mlx5e_psp_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
+{
+	/* PSP packets cannot be merged. */
+	return !skb_ext_exist(skb, SKB_EXT_PSP) && !mlx5e_psp_is_rx_flow(cqe);
+}
+
 bool mlx5e_psp_offload_handle_rx_skb(struct net_device *netdev, struct sk_buff *skb,
 				     struct mlx5_cqe64 *cqe);
 #else
@@ -142,6 +149,12 @@ static inline u8 mlx5e_psp_get_version(struct mlx5_cqe64 *cqe)
 static inline __be32 mlx5e_psp_get_spi(struct mlx5_cqe64 *cqe)
 {
 	return 0;
+}
+
+static inline bool
+mlx5e_psp_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
+{
+	return true;
 }
 
 static inline bool mlx5e_psp_offload_handle_rx_skb(struct net_device *netdev,
