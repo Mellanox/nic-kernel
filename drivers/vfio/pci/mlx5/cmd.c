@@ -320,7 +320,7 @@ err_exec:
 	return ret;
 }
 
-static u32 *alloc_mkey_in(u32 npages, u32 pdn)
+static u32 *alloc_mkey_in(struct mlx5_core_dev *mdev, u32 npages, u32 pdn)
 {
 	int inlen;
 	void *mkc;
@@ -348,6 +348,7 @@ static u32 *alloc_mkey_in(u32 npages, u32 pdn)
 	MLX5_SET(mkc, mkc, log_page_size, PAGE_SHIFT);
 	MLX5_SET(mkc, mkc, translations_octword_size, DIV_ROUND_UP(npages, 2));
 	MLX5_SET64(mkc, mkc, len, npages * PAGE_SIZE);
+	mlx5_core_mkey_set_ordering(mdev, mkc, MLX5_MKEY_ORDER_RELAXED);
 
 	return in;
 }
@@ -439,7 +440,7 @@ static int mlx5vf_dma_data_buffer(struct mlx5_vhca_data_buffer *buf)
 	if (buf->mkey_in || !buf->npages)
 		return -EINVAL;
 
-	buf->mkey_in = alloc_mkey_in(buf->npages, buf->migf->pdn);
+	buf->mkey_in = alloc_mkey_in(mdev, buf->npages, buf->migf->pdn);
 	if (!buf->mkey_in)
 		return -ENOMEM;
 
@@ -1435,7 +1436,7 @@ static int mlx5vf_alloc_qp_recv_resources(struct mlx5_core_dev *mdev,
 
 	recv_buf->npages = npages;
 
-	recv_buf->mkey_in = alloc_mkey_in(npages, pdn);
+	recv_buf->mkey_in = alloc_mkey_in(mdev, npages, pdn);
 	if (!recv_buf->mkey_in) {
 		err = -ENOMEM;
 		goto end;
@@ -1640,7 +1641,7 @@ set_report_output(u32 size, int index, struct mlx5_vhca_qp *qp,
 	int i;
 
 	buf_offset = index * qp->max_msg_size;
-	if (WARN_ON(buf_offset + size >= qp->recv_buf.npages * PAGE_SIZE ||
+	if (WARN_ON(buf_offset + size > qp->recv_buf.npages * PAGE_SIZE ||
 		    (nent > qp->max_msg_size / entry_size)))
 		return;
 

@@ -248,12 +248,22 @@ static int UVERBS_HANDLER(UVERBS_METHOD_GET_CONTEXT)(
 	u32 num_comp = attrs->ufile->device->num_comp_vectors;
 	u64 core_support = IB_UVERBS_CORE_SUPPORT_OPTIONAL_MR_ACCESS;
 	struct ib_device *ib_dev;
+	u32 ctx_flags;
 	int ret;
 
 	ib_dev = srcu_dereference(attrs->ufile->device->ib_dev,
 				  &attrs->ufile->device->disassociate_srcu);
 	if (!ib_dev)
 		return -EIO;
+
+	ret = uverbs_get_flags32(&ctx_flags, attrs, UVERBS_ATTR_GET_CONTEXT_FLAGS,
+				 UVERBS_ATTR_GET_CONTEXT_FLAG_ADVERSARIAL_SUPPORTED);
+	if (ret)
+		return ret;
+
+	if (ib_dev->adversarial_mode &&
+	    !(ctx_flags & UVERBS_ATTR_GET_CONTEXT_FLAG_ADVERSARIAL_SUPPORTED))
+		return -EPERM;
 
 	ret = uverbs_copy_to(attrs, UVERBS_ATTR_GET_CONTEXT_NUM_COMP_VECTORS,
 			     &num_comp, sizeof(num_comp));
@@ -262,6 +272,8 @@ static int UVERBS_HANDLER(UVERBS_METHOD_GET_CONTEXT)(
 
 	if (ib_dev->ops.uverbs_robust_udata)
 		core_support |= IB_UVERBS_CORE_SUPPORT_ROBUST_UDATA;
+	if (ib_dev->adversarial_mode)
+		core_support |= IB_UVERBS_CORE_SUPPORT_ADVERSARIAL;
 	ret = uverbs_copy_to(attrs, UVERBS_ATTR_GET_CONTEXT_CORE_SUPPORT,
 			     &core_support, sizeof(core_support));
 	if (IS_UVERBS_COPY_ERR(ret))
@@ -303,6 +315,8 @@ static int UVERBS_HANDLER(UVERBS_METHOD_QUERY_CONTEXT)(
 	if (IS_UVERBS_COPY_ERR(ret))
 		return ret;
 
+	if (ib_dev->adversarial_mode)
+		core_support |= IB_UVERBS_CORE_SUPPORT_ADVERSARIAL;
 	ret = uverbs_copy_to(attrs, UVERBS_ATTR_QUERY_CONTEXT_CORE_SUPPORT,
 			     &core_support, sizeof(core_support));
 	if (IS_UVERBS_COPY_ERR(ret))
@@ -519,6 +533,8 @@ DECLARE_UVERBS_NAMED_METHOD(
 			   UVERBS_ATTR_MIN_SIZE(sizeof(int)),
 			   UA_OPTIONAL,
 			   UA_ALLOC_AND_COPY),
+	UVERBS_ATTR_FLAGS_IN(UVERBS_ATTR_GET_CONTEXT_FLAGS, u32,
+			     UA_OPTIONAL),
 	UVERBS_ATTR_UHW());
 
 DECLARE_UVERBS_NAMED_METHOD(
