@@ -627,18 +627,11 @@ free_data:
 	return err;
 }
 
-static void mlx5_fw_fatal_reporter_err_work(struct work_struct *work)
+static void mlx5_fw_fatal_reporter_err(struct mlx5_core_dev *dev, bool forced)
 {
 	struct mlx5_fw_reporter_ctx fw_reporter_ctx;
-	struct mlx5_core_health *health;
-	struct mlx5_core_dev *dev;
-	struct devlink *devlink;
-	struct mlx5_priv *priv;
-
-	health = container_of(work, struct mlx5_core_health, fatal_report_work);
-	priv = container_of(health, struct mlx5_priv, health);
-	dev = container_of(priv, struct mlx5_core_dev, priv);
-	devlink = priv_to_devlink(dev);
+	struct mlx5_core_health *health = &dev->priv.health;
+	struct devlink *devlink = priv_to_devlink(dev);
 
 	mutex_lock(&dev->intf_state_mutex);
 	if (test_bit(MLX5_DROP_HEALTH_WORK, &health->flags)) {
@@ -646,8 +639,26 @@ static void mlx5_fw_fatal_reporter_err_work(struct work_struct *work)
 		mutex_unlock(&dev->intf_state_mutex);
 		return;
 	}
+	/*
+	 * The firmware might still be running, so stop it first. Do it under
+	 * intf_state_mutex and only while UP, so the cmd interface is valid.
+	 */
+	if (forced && test_bit(MLX5_INTERFACE_STATE_UP, &dev->intf_state)) {
+		int err;
+
+		mlx5_stop_health_poll(dev, false);
+		err = mlx5_cmd_fast_teardown_hca(dev);
+		if (err)
+			mlx5_core_err(dev, "Failed to stop the device before forcing the error state, err %d\n",
+				      err);
+	}
+
+	/*
+	 * Enter the error state before unlocking, or an unload could send
+	 * TEARDOWN_HCA to the stopped NIC, fail and skip function disable.
+	 */
+	enter_error_state(dev, forced);
 	mutex_unlock(&dev->intf_state_mutex);
-	enter_error_state(dev, false);
 	if (IS_ERR_OR_NULL(health->fw_fatal_reporter)) {
 		devl_lock(devlink);
 		if (mlx5_health_try_recover(dev))
@@ -667,6 +678,33 @@ static void mlx5_fw_fatal_reporter_err_work(struct work_struct *work)
 		mlx5_core_err(dev, "Driver is in error state. Unloading\n");
 		mlx5_unload_one(dev, false);
 	}
+}
+
+static void mlx5_fw_fatal_reporter_err_work(struct work_struct *work)
+{
+	struct mlx5_core_health *health;
+	struct mlx5_core_dev *dev;
+	struct mlx5_priv *priv;
+
+	health = container_of(work, struct mlx5_core_health, fatal_report_work);
+	priv = container_of(health, struct mlx5_priv, health);
+	dev = container_of(priv, struct mlx5_core_dev, priv);
+
+	mlx5_fw_fatal_reporter_err(dev, false);
+}
+
+static void mlx5_fw_fatal_reporter_force_err_work(struct work_struct *work)
+{
+	struct mlx5_core_health *health;
+	struct mlx5_core_dev *dev;
+	struct mlx5_priv *priv;
+
+	health = container_of(work, struct mlx5_core_health,
+			      force_fatal_report_work);
+	priv = container_of(health, struct mlx5_priv, health);
+	dev = container_of(priv, struct mlx5_core_dev, priv);
+
+	mlx5_fw_fatal_reporter_err(dev, true);
 }
 
 #define MLX5_FW_REPORTER_ECPF_GRACEFUL_PERIOD 180000
@@ -758,6 +796,25 @@ void mlx5_trigger_health_work(struct mlx5_core_dev *dev)
 	if (!mlx5_dev_is_lightweight(dev))
 		queue_work(health->wq, &health->fatal_report_work);
 }
+
+/**
+ * mlx5_trigger_health_work_force - enter the error state and recover, even
+ * if the health sensors report the device as healthy
+ * @dev: mlx5 core device
+ *
+ * For faults only a consumer can detect, where the firmware keeps answering
+ * and mlx5_health_check_fatal_sensors() sees nothing wrong. Without forcing,
+ * the device would stay in MLX5_DEVICE_STATE_UP and consumers waiting on
+ * outstanding work would never be released.
+ */
+void mlx5_trigger_health_work_force(struct mlx5_core_dev *dev)
+{
+	struct mlx5_core_health *health = &dev->priv.health;
+
+	if (!mlx5_dev_is_lightweight(dev))
+		queue_work(health->wq, &health->force_fatal_report_work);
+}
+EXPORT_SYMBOL_GPL(mlx5_trigger_health_work_force);
 
 #define MLX5_MSEC_PER_HOUR (MSEC_PER_SEC * 60 * 60)
 static void mlx5_health_log_ts_update(struct work_struct *work)
@@ -874,6 +931,7 @@ void mlx5_drain_health_wq(struct mlx5_core_dev *dev)
 	cancel_delayed_work_sync(&health->update_fw_log_ts_work);
 	cancel_work_sync(&health->report_work);
 	cancel_work_sync(&health->fatal_report_work);
+	cancel_work_sync(&health->force_fatal_report_work);
 }
 
 void mlx5_health_cleanup(struct mlx5_core_dev *dev)
@@ -911,6 +969,8 @@ int mlx5_health_init(struct mlx5_core_dev *dev)
 	if (!health->wq)
 		goto out_err;
 	INIT_WORK(&health->fatal_report_work, mlx5_fw_fatal_reporter_err_work);
+	INIT_WORK(&health->force_fatal_report_work,
+		  mlx5_fw_fatal_reporter_force_err_work);
 	INIT_WORK(&health->report_work, mlx5_fw_reporter_err_work);
 	INIT_DELAYED_WORK(&health->update_fw_log_ts_work, mlx5_health_log_ts_update);
 

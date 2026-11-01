@@ -31,6 +31,7 @@
  */
 
 #include <linux/highmem.h>
+#include <linux/cc_platform.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/errno.h>
@@ -88,6 +89,10 @@ MODULE_PARM_DESC(debug_mask, "debug mask: 1 = dump cmd data, 2 = dump cmd exec t
 static unsigned int prof_sel = MLX5_DEFAULT_PROF;
 module_param_named(prof_sel, prof_sel, uint, 0444);
 MODULE_PARM_DESC(prof_sel, "profile selector. Valid range 0 - 2");
+
+static bool adversarial;
+module_param(adversarial, bool, 0444);
+MODULE_PARM_DESC(adversarial, "Adversarial mode: treat the NIC as untrusted even outside a confidential guest");
 
 static u32 sw_owner_id[4];
 #define MAX_SW_VHCA_ID (BIT(__mlx5_bit_sz(cmd_hca_cap_2, sw_vhca_id)) - 1)
@@ -324,12 +329,12 @@ int mlx5_core_get_caps_mode(struct mlx5_core_dev *dev, enum mlx5_cap_type cap_ty
 
 	switch (cap_mode) {
 	case HCA_CAP_OPMOD_GET_MAX:
-		memcpy(dev->caps.hca[cap_type]->max, hca_caps,
-		       MLX5_UN_SZ_BYTES(hca_cap_union));
+		err = mlx5_store_caps(dev, cap_type,
+				      dev->caps.hca[cap_type]->max, hca_caps);
 		break;
 	case HCA_CAP_OPMOD_GET_CUR:
-		memcpy(dev->caps.hca[cap_type]->cur, hca_caps,
-		       MLX5_UN_SZ_BYTES(hca_cap_union));
+		err = mlx5_store_caps(dev, cap_type,
+				      dev->caps.hca[cap_type]->cur, hca_caps);
 		break;
 	default:
 		mlx5_core_warn(dev,
@@ -483,6 +488,12 @@ bool mlx5_is_roce_on(struct mlx5_core_dev *dev)
 	return MLX5_CAP_GEN(dev, roce);
 }
 EXPORT_SYMBOL(mlx5_is_roce_on);
+
+bool mlx5_is_adversarial(void)
+{
+	return cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT) || adversarial;
+}
+EXPORT_SYMBOL_GPL(mlx5_is_adversarial);
 
 static int handle_hca_cap_2(struct mlx5_core_dev *dev, void *set_ctx)
 {
