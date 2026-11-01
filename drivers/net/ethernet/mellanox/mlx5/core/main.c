@@ -90,6 +90,10 @@ static unsigned int prof_sel = MLX5_DEFAULT_PROF;
 module_param_named(prof_sel, prof_sel, uint, 0444);
 MODULE_PARM_DESC(prof_sel, "profile selector. Valid range 0 - 2");
 
+static bool adversarial;
+module_param(adversarial, bool, 0444);
+MODULE_PARM_DESC(adversarial, "Adversarial mode: treat the NIC as untrusted even outside a confidential guest");
+
 static u32 sw_owner_id[4];
 #define MAX_SW_VHCA_ID (BIT(__mlx5_bit_sz(cmd_hca_cap_2, sw_vhca_id)) - 1)
 static DEFINE_IDA(sw_vhca_ida);
@@ -491,7 +495,7 @@ EXPORT_SYMBOL(mlx5_is_roce_on);
 
 bool mlx5_is_adversarial(void)
 {
-	return cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT);
+	return cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT) || adversarial;
 }
 EXPORT_SYMBOL_GPL(mlx5_is_adversarial);
 
