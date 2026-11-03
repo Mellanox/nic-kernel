@@ -369,6 +369,21 @@ static void mlx5e_tx_flush(struct mlx5e_txqsq *sq)
 	mlx5e_notify_hw(&sq->wq, sq->pc, sq->uar_map, &wqe->ctrl);
 }
 
+static void mlx5e_tx_drop(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	sq->stats->dropped++;
+
+	if (IS_ENABLED(CONFIG_MLX5_EN_TLS) &&
+	    tls_is_skb_tx_device_offloaded(skb)) {
+		/* kTLS WQEs may have been posted for the skb. */
+		mlx5e_ktls_tx_hold_skb(sq, skb);
+	} else {
+		dev_kfree_skb_any(skb);
+	}
+
+	mlx5e_tx_flush(sq);
+}
+
 static inline void
 mlx5e_txwqe_complete(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 		     const struct mlx5e_tx_attr *attr,
@@ -471,9 +486,7 @@ mlx5e_sq_xmit_wqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	return;
 
 err_drop:
-	stats->dropped++;
-	dev_kfree_skb_any(skb);
-	mlx5e_tx_flush(sq);
+	mlx5e_tx_drop(sq, skb);
 }
 
 static bool mlx5e_tx_skb_supports_mpwqe(struct sk_buff *skb, struct mlx5e_tx_attr *attr)
@@ -613,9 +626,7 @@ mlx5e_sq_xmit_mpwqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	return;
 
 err_unmap:
-	sq->stats->dropped++;
-	dev_kfree_skb_any(skb);
-	mlx5e_tx_flush(sq);
+	mlx5e_tx_drop(sq, skb);
 }
 
 void mlx5e_tx_mpwqe_ensure_complete(struct mlx5e_txqsq *sq)
@@ -812,6 +823,12 @@ static int mlx5e_poll_tx_cqes(struct mlx5e_txqsq *sq, int napi_budget)
 			sqcc += wi->num_wqebbs;
 
 			if (likely(wi->skb)) {
+				if (unlikely(!wi->num_bytes)) {
+					/* Held by mlx5e_ktls_tx_hold_skb() */
+					dev_kfree_skb_any(wi->skb);
+					continue;
+				}
+
 				mlx5e_tx_wi_dma_unmap(sq, wi, &dma_fifo_cc);
 				mlx5e_consume_skb(sq, wi->skb, cqe, napi_budget);
 

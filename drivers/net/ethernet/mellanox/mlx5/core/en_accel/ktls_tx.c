@@ -826,6 +826,20 @@ err_out:
 	return MLX5E_KTLS_SYNC_FAIL;
 }
 
+void mlx5e_ktls_tx_hold_skb(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	u16 pi;
+
+	mlx5e_tx_mpwqe_ensure_complete(sq);
+
+	pi = mlx5_wq_cyc_ctr2ix(&sq->wq, sq->pc);
+	sq->db.wqe_info[pi] = (struct mlx5e_tx_wqe_info) {
+		.skb = skb,
+		.num_wqebbs = 1,
+	};
+	mlx5e_post_nop(&sq->wq, sq->sqn, &sq->pc);
+}
+
 bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state)
@@ -890,7 +904,8 @@ out:
 	return true;
 
 err_out:
-	dev_kfree_skb_any(skb);
+	/* Parameter and DUMP WQEs may have been posted for the skb. */
+	mlx5e_ktls_tx_hold_skb(sq, skb);
 	return false;
 }
 
