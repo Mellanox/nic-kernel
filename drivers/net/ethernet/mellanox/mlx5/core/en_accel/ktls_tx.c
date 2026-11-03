@@ -890,7 +890,8 @@ out:
 	return true;
 
 err_out:
-	dev_kfree_skb_any(skb);
+	/* Parameter and DUMP WQEs may have been posted for the skb. */
+	mlx5e_tx_flush(sq, skb);
 	return false;
 }
 
