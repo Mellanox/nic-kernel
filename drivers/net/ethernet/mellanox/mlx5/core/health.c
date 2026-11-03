@@ -224,6 +224,18 @@ unlock:
 	mutex_unlock(&dev->intf_state_mutex);
 }
 
+/* Caller must drain the fw_reset and health work before calling this */
+void mlx5_health_enter_error_state_drained(struct mlx5_core_dev *dev)
+{
+	if (!mlx5_health_check_fatal_sensors(dev))
+		return;
+
+	mutex_lock(&dev->intf_state_mutex);
+	if (test_bit(MLX5_INTERFACE_STATE_UP, &dev->intf_state))
+		enter_error_state(dev, false);
+	mutex_unlock(&dev->intf_state_mutex);
+}
+
 void mlx5_error_sw_reset(struct mlx5_core_dev *dev)
 {
 	unsigned long end, delay_ms = mlx5_tout_ms(dev, PCI_TOGGLE);
