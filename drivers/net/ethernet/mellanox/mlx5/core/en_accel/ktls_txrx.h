@@ -19,6 +19,7 @@ u16 mlx5e_ktls_get_stop_room(struct mlx5_core_dev *mdev, struct mlx5e_params *pa
 bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state);
+void mlx5e_ktls_tx_hold_skb(struct mlx5e_txqsq *sq, struct sk_buff *skb);
 void mlx5e_ktls_handle_rx_skb(struct mlx5e_rq *rq, struct sk_buff *skb,
 			      struct mlx5_cqe64 *cqe, u32 *cqe_bcnt);
 
@@ -68,6 +69,9 @@ mlx5e_ktls_tx_try_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 {
 	return false;
 }
+
+static inline void
+mlx5e_ktls_tx_hold_skb(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
 
 static inline bool
 mlx5e_ktls_rx_handle_resync_list(struct mlx5e_icosq *sq, int budget)
