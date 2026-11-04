@@ -87,11 +87,17 @@ static int mlx5e_ktls_destroy_tis_cb(struct mlx5_core_dev *mdev, u32 tisn,
 				out, outlen, callback, context);
 }
 
+/* Bits of mlx5e_ktls_offload_context_tx flags */
+enum {
+	MLX5E_KTLS_TX_RESYNC, /* WQEs lost, see mlx5e_ktls_tx_handle_lost() */
+};
+
 struct mlx5e_ktls_offload_context_tx {
 	/* fast path */
 	u32 expected_seq;
 	u32 tisn;
 	bool ctx_post_pending;
+	unsigned long flags; /* MLX5E_KTLS_TX_* */
 	/* control / resync */
 	struct list_head list_node; /* member of the pool */
 	union mlx5e_crypto_info crypto_info;
@@ -498,6 +504,7 @@ int mlx5e_ktls_add_tx(struct net_device *netdev, struct sock *sk,
 	mlx5e_set_ktls_tx_priv_ctx(tls_ctx, priv_tx);
 
 	priv_tx->ctx_post_pending = true;
+	priv_tx->flags = 0;
 	atomic64_inc(&priv_tx->sw_stats->tx_tls_ctx);
 
 	return 0;
@@ -676,7 +683,7 @@ out:
 static void
 tx_post_resync_params(struct mlx5e_txqsq *sq,
 		      struct mlx5e_ktls_offload_context_tx *priv_tx,
-		      u64 rcd_sn)
+		      u64 rcd_sn, bool full)
 {
 	__be64 rn_be = cpu_to_be64(rcd_sn);
 	bool skip_static_post;
@@ -704,7 +711,8 @@ tx_post_resync_params(struct mlx5e_txqsq *sq,
 		return;
 	}
 
-	skip_static_post = !memcmp(rec_seq, &rn_be, rec_seq_sz);
+	/* rec_seq is the record sequence of the last posted static params. */
+	skip_static_post = !full && !memcmp(rec_seq, &rn_be, rec_seq_sz);
 	if (!skip_static_post)
 		memcpy(rec_seq, &rn_be, rec_seq_sz);
 
@@ -772,7 +780,7 @@ static enum mlx5e_ktls_sync_retval
 mlx5e_ktls_tx_handle_ooo(struct mlx5e_ktls_offload_context_tx *priv_tx,
 			 struct mlx5e_txqsq *sq,
 			 int datalen,
-			 u32 seq)
+			 u32 seq, bool full)
 {
 	enum mlx5e_ktls_sync_retval ret;
 	struct tx_sync_info info = {};
@@ -786,7 +794,7 @@ mlx5e_ktls_tx_handle_ooo(struct mlx5e_ktls_offload_context_tx *priv_tx,
 		 */
 		return ret;
 
-	tx_post_resync_params(sq, priv_tx, info.rcd_sn);
+	tx_post_resync_params(sq, priv_tx, info.rcd_sn, full);
 
 	for (i = 0; i < info.nr_frags; i++) {
 		unsigned int orig_fsz, frag_offset = 0, n = 0;
@@ -826,6 +834,28 @@ err_out:
 	return MLX5E_KTLS_SYNC_FAIL;
 }
 
+/* The WQEs posted for an skb were not executed: the skb was dropped, or its
+ * WQEs were flushed by an SQ error or destroyed with their SQ. The TIS state
+ * of its connection may be off from ours, resync it fully on the next skb.
+ */
+void mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	struct mlx5e_ktls_offload_context_tx *priv_tx;
+	struct tls_context *tls_ctx;
+
+	/* The skb holds the socket, and so its TLS context. tls_device_down()
+	 * clears the netdev, and waits for RCU readers before it releases the
+	 * driver context.
+	 */
+	tls_ctx = tls_get_ctx(skb->sk);
+	rcu_read_lock();
+	if (rcu_dereference(tls_ctx->netdev) == sq->netdev) {
+		priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
+		set_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags);
+	}
+	rcu_read_unlock();
+}
+
 bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state)
@@ -834,6 +864,7 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 	struct mlx5e_sq_stats *stats = sq->stats;
 	struct net_device *tls_netdev;
 	struct tls_context *tls_ctx;
+	bool ooo, resync;
 	int datalen;
 	u32 seq;
 
@@ -858,24 +889,37 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 		mlx5e_ktls_tx_post_param_wqes(sq, priv_tx, false, false);
 
 	seq = ntohl(tcp_hdr(skb)->seq);
-	if (unlikely(priv_tx->expected_seq != seq)) {
+	ooo = priv_tx->expected_seq != seq;
+	/* Take the loss mark before resyncing, a loss reported meanwhile
+	 * marks the connection again.
+	 */
+	resync = test_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags) &&
+		 test_and_clear_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags);
+	if (unlikely(ooo || resync)) {
 		enum mlx5e_ktls_sync_retval ret =
-			mlx5e_ktls_tx_handle_ooo(priv_tx, sq, datalen, seq);
+			mlx5e_ktls_tx_handle_ooo(priv_tx, sq, datalen, seq,
+						 resync);
 
-		stats->tls_ooo++;
+		if (ooo)
+			stats->tls_ooo++;
 
 		switch (ret) {
 		case MLX5E_KTLS_SYNC_DONE:
 			break;
 		case MLX5E_KTLS_SYNC_SKIP_NO_DATA:
 			stats->tls_skip_no_sync_data++;
-			if (likely(!skb->decrypted))
+			if (likely(!skb->decrypted)) {
+				/* Nothing was posted, keep the mark. */
+				if (resync)
+					set_bit(MLX5E_KTLS_TX_RESYNC,
+						&priv_tx->flags);
 				goto out;
+			}
 			WARN_ON_ONCE(1);
-			goto err_out;
+			goto err_lost;
 		case MLX5E_KTLS_SYNC_FAIL:
 			stats->tls_drop_no_sync_data++;
-			goto err_out;
+			goto err_lost;
 		}
 	}
 
@@ -889,6 +933,9 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 out:
 	return true;
 
+err_lost:
+	/* Resync params may have moved the TIS state to the dropped skb. */
+	set_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags);
 err_out:
 	/* Parameter and DUMP WQEs may have been posted for the skb. */
 	mlx5e_tx_flush(sq, skb);
