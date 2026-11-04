@@ -36,6 +36,9 @@
 #include <linux/inetdevice.h>
 #include <linux/netdevice.h>
 #include <net/netevent.h>
+#if IS_ENABLED(CONFIG_IPV6)
+#include <net/ndisc.h>
+#endif
 
 #include "en.h"
 #include "eswitch.h"
@@ -339,11 +342,12 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 		}
 		rt_dst_entry = &rt->dst;
 		break;
+#if IS_ENABLED(CONFIG_IPV6)
 	case AF_INET6:
-		if (!IS_ENABLED(CONFIG_IPV6) ||
-		    ip6_dst_lookup(dev_net(netdev), NULL, &rt_dst_entry, &fl6))
+		if (ip6_dst_lookup(dev_net(netdev), NULL, &rt_dst_entry, &fl6))
 			goto neigh;
 		break;
+#endif
 	default:
 		return;
 	}
@@ -364,9 +368,22 @@ static void mlx5e_ipsec_init_macs(struct mlx5e_ipsec_sa_entry *sa_entry,
 	return;
 
 neigh:
-	n = ipv4_neigh_lookup(netdev, pkey);
+	if (addrs->family == AF_INET)
+		n = ipv4_neigh_lookup(netdev, pkey);
+#if IS_ENABLED(CONFIG_IPV6)
+	else if (addrs->family == AF_INET6)
+		n = ipv6_neigh_lookup(netdev, pkey);
+#endif
+	else
+		return;
+
 	if (!n) {
-		n = ipv4_neigh_create(netdev, pkey);
+		if (addrs->family == AF_INET)
+			n = ipv4_neigh_create(netdev, pkey);
+#if IS_ENABLED(CONFIG_IPV6)
+		else
+			n = ipv6_neigh_create(netdev, pkey);
+#endif
 		if (IS_ERR(n))
 			return;
 		neigh_event_send(n, NULL);
@@ -592,6 +609,12 @@ static int mlx5e_xfrm_validate_state(struct mlx5_core_dev *mdev,
 		    !(mlx5_ipsec_device_caps(mdev) & MLX5_IPSEC_CAP_TUNNEL)) {
 			NL_SET_ERR_MSG_MOD(extack, "Packet offload is not supported for tunnel mode");
 			return -EINVAL;
+		}
+		if (x->props.family == AF_INET6 &&
+		    x->props.mode == XFRM_MODE_TUNNEL &&
+		    !IS_ENABLED(CONFIG_IPV6)) {
+			NL_SET_ERR_MSG_MOD(extack, "IPv6 is not enabled");
+			return -EOPNOTSUPP;
 		}
 
 		if (x->replay_esn && x->xso.dir == XFRM_DEV_OFFLOAD_IN &&
