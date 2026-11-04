@@ -87,6 +87,7 @@ static int mlx5e_ktls_resync(struct net_device *netdev,
 }
 
 static const struct tlsdev_ops mlx5e_ktls_ops = {
+	.flags = TLSDEV_F_STICKY_TXQ,
 	.tls_dev_add = mlx5e_ktls_add,
 	.tls_dev_del = mlx5e_ktls_del,
 	.tls_dev_resync = mlx5e_ktls_resync,
