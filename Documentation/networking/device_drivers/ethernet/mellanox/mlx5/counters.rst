@@ -711,6 +711,13 @@ the software port.
        data.
      - Acceleration
 
+   * - `tx[i]_tls_drop_txq_move`
+     - Number of TLS packets dropped on ring i because their connection still
+       had packets in flight on another ring. Posting them on ring i would
+       break the ordering of the connection's TLS state updates in the
+       device. TCP retransmits the dropped data.
+     - Error
+
    * - `ptp_cq[i]_abort`
      - Number of times a CQE has to be skipped in precision time protocol due to
        a skew between the port timestamp and CQE timestamp being greater than

@@ -92,12 +92,15 @@ enum {
 	MLX5E_KTLS_TX_RESYNC, /* WQEs lost, see mlx5e_ktls_tx_handle_lost() */
 };
 
+#define MLX5E_KTLS_TX_NO_TXQ (-1)
+
 struct mlx5e_ktls_offload_context_tx {
 	/* fast path */
 	u32 expected_seq;
 	u32 tisn;
 	bool ctx_post_pending;
 	unsigned long flags; /* MLX5E_KTLS_TX_* */
+	int txq_ix; /* that it posts on, see mlx5e_ktls_tx_move() */
 	/* control / resync */
 	struct list_head list_node; /* member of the pool */
 	union mlx5e_crypto_info crypto_info;
@@ -505,6 +508,7 @@ int mlx5e_ktls_add_tx(struct net_device *netdev, struct sock *sk,
 
 	priv_tx->ctx_post_pending = true;
 	priv_tx->flags = 0;
+	priv_tx->txq_ix = MLX5E_KTLS_TX_NO_TXQ;
 	atomic64_inc(&priv_tx->sw_stats->tx_tls_ctx);
 
 	return 0;
@@ -854,6 +858,66 @@ void mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb)
 	rcu_read_unlock();
 }
 
+/* Move the connection to TX queue @txq_ix only if no other skb of its
+ * socket is in flight, under the old TX queue's lock. Returns the TX queue
+ * that the connection owns after the call.
+ */
+static int mlx5e_ktls_tx_move(struct net_device *netdev,
+			      struct mlx5e_ktls_offload_context_tx *priv_tx,
+			      struct sk_buff *skb, int txq_ix)
+{
+	int own = skb_is_decrypted(skb) ? skb->truesize : 0;
+	int old = READ_ONCE(priv_tx->txq_ix);
+	struct netdev_queue *old_txq;
+	int owner;
+
+	if (old == txq_ix)
+		return old;
+
+	if (old == MLX5E_KTLS_TX_NO_TXQ || old >= netdev->real_num_tx_queues) {
+		owner = cmpxchg(&priv_tx->txq_ix, old, txq_ix);
+		return owner == old ? txq_ix : owner;
+	}
+
+	old_txq = netdev_get_tx_queue(netdev, old);
+	if (!__netif_tx_trylock(old_txq))
+		return old;
+
+	owner = READ_ONCE(priv_tx->txq_ix);
+	if (owner == old &&
+	    sk_wmem_alloc_get(skb->sk) < own + SKB_TRUESIZE(1)) {
+		WRITE_ONCE(priv_tx->txq_ix, txq_ix);
+		owner = txq_ix;
+	}
+	__netif_tx_unlock(old_txq);
+
+	return owner;
+}
+
+/* Move the connection along with its socket, when the queue selection
+ * lets the socket move. Returns the connection's TX queue, or -1 if @skb
+ * is not of a connection offloaded to @netdev.
+ */
+int mlx5e_ktls_tx_select_txq(struct net_device *netdev, struct sk_buff *skb,
+			     u16 txq_ix, bool may_move)
+{
+	struct mlx5e_ktls_offload_context_tx *priv_tx;
+	struct tls_context *tls_ctx;
+
+	if (!tls_is_skb_tx_device_offloaded(skb))
+		return -1;
+
+	tls_ctx = tls_get_ctx(skb->sk);
+	if (rcu_dereference_bh(tls_ctx->netdev) != netdev)
+		return -1;
+
+	priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
+	if (!may_move)
+		return READ_ONCE(priv_tx->txq_ix);
+
+	return mlx5e_ktls_tx_move(netdev, priv_tx, skb, txq_ix);
+}
+
 bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state)
@@ -888,6 +952,11 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 		goto err_out;
 
 	priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
+
+	if (unlikely(READ_ONCE(priv_tx->txq_ix) != sq->txq_ix) &&
+	    mlx5e_ktls_tx_move(netdev, priv_tx, skb, sq->txq_ix) !=
+	    sq->txq_ix)
+		goto err_move;
 
 	/* Post pending context params only for an skb that uses them. */
 	seq = ntohl(tcp_hdr(skb)->seq);
@@ -930,6 +999,15 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 	stats->tls_encrypted_bytes   += datalen;
 
 	return true;
+
+err_move:
+	/* Nothing was posted for the skb, TCP retransmits it. */
+	stats->tls_drop_txq_move++;
+	netdev_warn_once(netdev,
+			 "kTLS TX connection moved to TX queue %d with packets in flight, dropping\n",
+			 sq->txq_ix);
+	dev_kfree_skb_any(skb);
+	return false;
 
 err_lost:
 	/* Resync params may have moved the TIS state to the dropped skb. */

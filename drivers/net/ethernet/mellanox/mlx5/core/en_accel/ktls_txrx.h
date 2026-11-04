@@ -31,6 +31,8 @@ void mlx5e_ktls_tx_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 					   struct mlx5e_tx_wqe_info *wi,
 					   u32 *dma_fifo_cc);
 void mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb);
+int mlx5e_ktls_tx_select_txq(struct net_device *netdev, struct sk_buff *skb,
+			     u16 txq_ix, bool may_move);
 
 /* The WQEs posted for the skb may have not been executed. */
 static inline void
@@ -87,6 +89,13 @@ mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
 
 static inline void
 mlx5e_ktls_tx_try_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
+
+static inline int
+mlx5e_ktls_tx_select_txq(struct net_device *netdev, struct sk_buff *skb,
+			 u16 txq_ix, bool may_move)
+{
+	return -1;
+}
 
 static inline bool
 mlx5e_ktls_rx_handle_resync_list(struct mlx5e_icosq *sq, int budget)
