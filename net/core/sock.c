@@ -606,7 +606,7 @@ struct dst_entry *__sk_dst_check(struct sock *sk, u32 cookie)
 	if (dst && READ_ONCE(dst->obsolete) &&
 	    INDIRECT_CALL_INET(dst->ops->check, ip6_dst_check, ipv4_dst_check,
 			       dst, cookie) == NULL) {
-		sk_tx_queue_clear(sk);
+		sk_tx_queue_maybe_clear(sk);
 		WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
 		RCU_INIT_POINTER(sk->sk_dst_cache, NULL);
 		dst_release(dst);

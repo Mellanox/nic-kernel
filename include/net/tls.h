@@ -276,7 +276,20 @@ enum tls_offload_ctx_dir {
 	TLS_OFFLOAD_CTX_DIR_TX,
 };
 
+/* TX offload state (e.g. crypto and record tracking state of a device
+ * connection context) is updated by TX queue execution, and the device
+ * provides no cross-queue ordering. The stack keeps the socket's TX queue
+ * selection stable while the socket has packets in flight
+ * (SOCK_STICKY_TXQ), and the driver keeps its own part of the selection
+ * stable too, see Documentation/networking/tls-offload.rst. Packets in
+ * flight are tracked by sk_wmem_alloc, so the driver must not free an skb
+ * before the device is done with all work it posted for it, even when the
+ * skb is dropped.
+ */
+#define TLSDEV_F_STICKY_TXQ	BIT(0)
+
 struct tlsdev_ops {
+	u32 flags; /* TLSDEV_F_* */
 	int (*tls_dev_add)(struct net_device *netdev, struct sock *sk,
 			   enum tls_offload_ctx_dir direction,
 			   struct tls_crypto_info *crypto_info,
