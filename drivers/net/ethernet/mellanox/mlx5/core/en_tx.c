@@ -376,6 +376,7 @@ static void mlx5e_tx_drop(struct mlx5e_txqsq *sq, struct sk_buff *skb)
 	if (IS_ENABLED(CONFIG_MLX5_EN_TLS) &&
 	    tls_is_skb_tx_device_offloaded(skb)) {
 		/* kTLS WQEs may have been posted for the skb. */
+		mlx5e_ktls_tx_handle_lost(sq, skb);
 		mlx5e_ktls_tx_hold_skb(sq, skb);
 	} else {
 		dev_kfree_skb_any(skb);
@@ -806,13 +807,14 @@ static int mlx5e_poll_tx_cqes(struct mlx5e_txqsq *sq, int napi_budget)
 	i = 0;
 	do {
 		struct mlx5e_tx_wqe_info *wi;
+		bool last_wqe, err_cqe;
 		u16 wqe_counter;
-		bool last_wqe;
 		u16 ci;
 
 		mlx5_cqwq_pop(&cq->wq);
 
 		wqe_counter = be16_to_cpu(cqe->wqe_counter);
+		err_cqe = get_cqe_opcode(cqe) == MLX5_CQE_REQ_ERR;
 
 		do {
 			last_wqe = (sqcc == wqe_counter);
@@ -823,6 +825,10 @@ static int mlx5e_poll_tx_cqes(struct mlx5e_txqsq *sq, int napi_budget)
 			sqcc += wi->num_wqebbs;
 
 			if (likely(wi->skb)) {
+				if (unlikely(err_cqe))
+					mlx5e_ktls_tx_try_handle_lost(sq,
+								      wi->skb);
+
 				if (unlikely(!wi->num_bytes)) {
 					/* Held by mlx5e_ktls_tx_hold_skb() */
 					dev_kfree_skb_any(wi->skb);
@@ -850,7 +856,7 @@ static int mlx5e_poll_tx_cqes(struct mlx5e_txqsq *sq, int napi_budget)
 			}
 		} while (!last_wqe);
 
-		if (unlikely(get_cqe_opcode(cqe) == MLX5_CQE_REQ_ERR)) {
+		if (unlikely(err_cqe)) {
 			/* A drained SQ gets closed, not recovered. */
 			if (test_bit(MLX5E_SQ_STATE_ENABLED, &sq->state) &&
 			    !test_and_set_bit(MLX5E_SQ_STATE_RECOVERING,
@@ -932,6 +938,8 @@ void mlx5e_free_txqsq_descs(struct mlx5e_txqsq *sq)
 		sqcc += wi->num_wqebbs;
 
 		if (likely(wi->skb)) {
+			/* Destroyed with the SQ, not executed. */
+			mlx5e_ktls_tx_try_handle_lost(sq, wi->skb);
 			mlx5e_tx_wi_dma_unmap(sq, wi, &dma_fifo_cc);
 			dev_kfree_skb_any(wi->skb);
 
