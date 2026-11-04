@@ -1024,6 +1024,7 @@ enum sock_flags {
 	SOCK_RCVMARK, /* Receive SO_MARK  ancillary data with packet */
 	SOCK_RCVPRIORITY, /* Receive SO_PRIORITY ancillary data with packet */
 	SOCK_TIMESTAMPING_ANY, /* Copy of sk_tsflags & TSFLAGS_ANY */
+	SOCK_STICKY_TXQ, /* Keep the TX queue while packets are in flight */
 };
 
 #define SK_FLAGS_TIMESTAMP ((1UL << SOCK_TIMESTAMP) | (1UL << SOCK_TIMESTAMPING_RX_SOFTWARE))
@@ -2065,6 +2066,22 @@ static inline void sk_tx_queue_clear(struct sock *sk)
 	WRITE_ONCE(sk->sk_tx_queue_mapping, NO_QUEUE_MAPPING);
 }
 
+#define SK_WMEM_ALLOC_BIAS 1
+
+static inline bool sk_tx_queue_pinned(const struct sock *sk)
+{
+	return sock_flag(sk, SOCK_STICKY_TXQ) &&
+	       refcount_read(&sk->sk_wmem_alloc) - SK_WMEM_ALLOC_BIAS >=
+	       SKB_TRUESIZE(1);
+}
+
+/* Like sk_tx_queue_clear(), but keeps a pinned mapping. */
+static inline void sk_tx_queue_maybe_clear(struct sock *sk)
+{
+	if (!sk_tx_queue_pinned(sk))
+		sk_tx_queue_clear(sk);
+}
+
 int sk_tx_queue_get(const struct sock *sk);
 
 static inline void __sk_rx_queue_set(struct sock *sk,
@@ -2238,7 +2255,7 @@ __sk_dst_set(struct sock *sk, struct dst_entry *dst)
 {
 	struct dst_entry *old_dst;
 
-	sk_tx_queue_clear(sk);
+	sk_tx_queue_maybe_clear(sk);
 	WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
 	old_dst = rcu_dereference_protected(sk->sk_dst_cache,
 					    lockdep_sock_is_held(sk));
@@ -2251,7 +2268,7 @@ sk_dst_set(struct sock *sk, struct dst_entry *dst)
 {
 	struct dst_entry *old_dst;
 
-	sk_tx_queue_clear(sk);
+	sk_tx_queue_maybe_clear(sk);
 	WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
 	old_dst = unrcu_pointer(xchg(&sk->sk_dst_cache, RCU_INITIALIZER(dst)));
 	dst_release(old_dst);
@@ -2379,7 +2396,6 @@ static inline int skb_copy_to_page_nocache(struct sock *sk, struct iov_iter *fro
 	return 0;
 }
 
-#define SK_WMEM_ALLOC_BIAS 1
 /**
  * sk_wmem_alloc_get - returns write allocations
  * @sk: socket
