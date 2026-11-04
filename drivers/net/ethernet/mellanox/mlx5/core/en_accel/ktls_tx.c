@@ -542,16 +542,6 @@ static void tx_fill_wi(struct mlx5e_txqsq *sq,
 	};
 }
 
-static bool
-mlx5e_ktls_tx_offload_test_and_clear_pending(struct mlx5e_ktls_offload_context_tx *priv_tx)
-{
-	bool ret = priv_tx->ctx_post_pending;
-
-	priv_tx->ctx_post_pending = false;
-
-	return ret;
-}
-
 static void
 post_static_params(struct mlx5e_txqsq *sq,
 		   struct mlx5e_ktls_offload_context_tx *priv_tx,
@@ -872,6 +862,12 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 	if (!datalen)
 		return true;
 
+	/* Only data that the device encrypts uses the TLS context. */
+	if (!skb_is_decrypted(skb)) {
+		stats->tls_skip_no_sync_data++;
+		return true;
+	}
+
 	mlx5e_tx_mpwqe_ensure_complete(sq);
 
 	tls_ctx = tls_get_ctx(skb->sk);
@@ -885,9 +881,9 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 
 	priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
 
-	if (unlikely(mlx5e_ktls_tx_offload_test_and_clear_pending(priv_tx)))
-		mlx5e_ktls_tx_post_param_wqes(sq, priv_tx, false, false);
-
+	/* WQEs naming the TIS, pending context params included, are
+	 * posted only for an skb that uses it.
+	 */
 	seq = ntohl(tcp_hdr(skb)->seq);
 	ooo = priv_tx->expected_seq != seq;
 	/* Take the loss mark before resyncing, a loss reported meanwhile
@@ -896,31 +892,32 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 	resync = test_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags) &&
 		 test_and_clear_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags);
 	if (unlikely(ooo || resync)) {
+		/* A resync installs a pending context fully: rec_seq may match
+		 * while the TIS still holds the params of its previous user.
+		 */
+		bool full = resync || priv_tx->ctx_post_pending;
 		enum mlx5e_ktls_sync_retval ret =
 			mlx5e_ktls_tx_handle_ooo(priv_tx, sq, datalen, seq,
-						 resync);
+						 full);
 
 		if (ooo)
 			stats->tls_ooo++;
 
 		switch (ret) {
 		case MLX5E_KTLS_SYNC_DONE:
+			priv_tx->ctx_post_pending = false;
 			break;
 		case MLX5E_KTLS_SYNC_SKIP_NO_DATA:
 			stats->tls_skip_no_sync_data++;
-			if (likely(!skb->decrypted)) {
-				/* Nothing was posted, keep the mark. */
-				if (resync)
-					set_bit(MLX5E_KTLS_TX_RESYNC,
-						&priv_tx->flags);
-				goto out;
-			}
 			WARN_ON_ONCE(1);
 			goto err_lost;
 		case MLX5E_KTLS_SYNC_FAIL:
 			stats->tls_drop_no_sync_data++;
 			goto err_lost;
 		}
+	} else if (unlikely(priv_tx->ctx_post_pending)) {
+		priv_tx->ctx_post_pending = false;
+		mlx5e_ktls_tx_post_param_wqes(sq, priv_tx, false, false);
 	}
 
 	priv_tx->expected_seq = seq + datalen;
@@ -930,7 +927,6 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 	stats->tls_encrypted_packets += skb_is_gso(skb) ? skb_shinfo(skb)->gso_segs : 1;
 	stats->tls_encrypted_bytes   += datalen;
 
-out:
 	return true;
 
 err_lost:
