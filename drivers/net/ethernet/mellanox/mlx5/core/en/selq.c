@@ -9,6 +9,7 @@
 #include "en.h"
 #include "en/ptp.h"
 #include "en/htb.h"
+#include "en_accel/ktls_txrx.h"
 
 struct mlx5e_selq_params {
 	unsigned int num_regular_queues;
@@ -276,6 +277,12 @@ static bool mlx5e_sk_txq_may_move(const struct sk_buff *skb)
 	       sk_wmem_alloc_get(skb->sk) < own + SKB_TRUESIZE(1);
 }
 
+static bool mlx5e_selq_is_ptp_txq(struct mlx5e_selq_params *selq, int txq_ix)
+{
+	return selq->is_ptp && txq_ix >= selq->num_regular_queues &&
+	       txq_ix < selq->num_regular_queues + selq->num_tcs;
+}
+
 /* Return the socket's previous queue while it must not move, or -1 to
  * select a queue anew.
  */
@@ -285,19 +292,34 @@ static int mlx5e_select_sticky_queue(struct net_device *dev,
 {
 	int txq_ix;
 
-	if (mlx5e_sk_txq_may_move(skb))
-		return -1;
-
 	txq_ix = sk_tx_queue_get(skb->sk);
 	if (txq_ix < 0 || txq_ix >= dev->real_num_tx_queues)
 		return -1;
 
 	/* The PTP queues are selected for PTP event packets only. */
-	if (selq->is_ptp && txq_ix >= selq->num_regular_queues &&
-	    txq_ix < selq->num_regular_queues + selq->num_tcs)
+	if (mlx5e_selq_is_ptp_txq(selq, txq_ix))
 		return -1;
 
 	return txq_ix;
+}
+
+/* If the connection can't move along, keep the skb on its TX queue. */
+static int mlx5e_select_owned_queue(struct net_device *dev,
+				    struct sk_buff *skb,
+				    struct mlx5e_selq_params *selq, int txq_ix,
+				    bool may_move)
+{
+	struct mlx5e_priv *priv = netdev_priv(dev);
+	int owner;
+
+	owner = mlx5e_ktls_tx_select_txq(dev, skb, txq_ix, may_move);
+	if (owner < 0 || owner == txq_ix ||
+	    owner >= dev->real_num_tx_queues ||
+	    mlx5e_selq_is_ptp_txq(selq, owner) ||
+	    !READ_ONCE(priv->txq2sq[owner]))
+		return txq_ix;
+
+	return owner;
 }
 
 u16 mlx5e_select_queue(struct net_device *dev, struct sk_buff *skb,
@@ -306,6 +328,7 @@ u16 mlx5e_select_queue(struct net_device *dev, struct sk_buff *skb,
 	struct mlx5e_priv *priv = netdev_priv(dev);
 	struct mlx5e_selq_params *selq;
 	struct sock *sk = skb->sk;
+	bool may_move;
 	int txq_ix;
 
 	selq = rcu_dereference_bh(priv->selq.active);
@@ -320,11 +343,15 @@ u16 mlx5e_select_queue(struct net_device *dev, struct sk_buff *skb,
 	if (likely(!mlx5e_sk_sticky_txq(sk)))
 		return mlx5e_select_new_queue(dev, skb, selq);
 
-	txq_ix = mlx5e_select_sticky_queue(dev, skb, selq);
-	if (txq_ix >= 0)
-		return txq_ix;
+	may_move = mlx5e_sk_txq_may_move(skb);
+	if (!may_move) {
+		txq_ix = mlx5e_select_sticky_queue(dev, skb, selq);
+		if (txq_ix >= 0)
+			return txq_ix;
+	}
 
 	txq_ix = mlx5e_select_new_queue(dev, skb, selq);
+	txq_ix = mlx5e_select_owned_queue(dev, skb, selq, txq_ix, may_move);
 	/* Cache the final queue, also without a dst. */
 	sk_tx_queue_set(sk, txq_ix);
 
