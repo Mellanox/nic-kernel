@@ -1744,6 +1744,17 @@ esw_chains_destroy(struct mlx5_eswitch *esw, struct mlx5_fs_chains *chains)
 
 #endif
 
+/* SW and HW steering tables are unbounded, so they can be sized for any peer.
+ * FW steering is bounded by log_max_ft_size, so it uses local total_vports.
+ */
+static int esw_max_vports(const struct mlx5_eswitch *esw)
+{
+	if (esw->dev->priv.steering->mode == MLX5_FLOW_STEERING_MODE_DMFS)
+		return esw->total_vports;
+
+	return MLX5_ESW_MAX_VPORT_ID;
+}
+
 static int
 esw_create_send_to_vport_group(struct mlx5_eswitch *esw,
 			       struct mlx5_flow_table *fdb,
@@ -1771,7 +1782,9 @@ esw_create_send_to_vport_group(struct mlx5_eswitch *esw,
 	}
 
 	/* See comment at table_size calculation */
-	count = MLX5_MAX_PORTS * (esw->total_vports * MAX_SQ_NVPORTS + MAX_PF_SQ);
+	count = MLX5_MAX_PORTS *
+		(esw_max_vports(esw) * MAX_SQ_NVPORTS + MAX_PF_SQ);
+
 	MLX5_SET(create_flow_group_in, flow_group_in, start_flow_index, 0);
 	MLX5_SET(create_flow_group_in, flow_group_in, end_flow_index, *ix + count - 1);
 	*ix += count;
@@ -1841,7 +1854,7 @@ esw_create_peer_esw_miss_group(struct mlx5_eswitch *esw,
 			       u32 *flow_group_in,
 			       int *ix)
 {
-	int max_peer_ports = (esw->total_vports - 1) * (MLX5_MAX_PORTS - 1);
+	int max_peer_ports = (esw_max_vports(esw) - 1) * (MLX5_MAX_PORTS - 1);
 	int inlen = MLX5_ST_SZ_BYTES(create_flow_group_in);
 	struct mlx5_flow_group *g;
 	void *match_criteria;
