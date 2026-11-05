@@ -15,28 +15,30 @@ struct mlx5_vnic_diag_stats {
 	__be64 query_vnic_env_out[MLX5_ST_SZ_QW(query_vnic_env_out)];
 };
 
+static int mlx5_reporter_vnic_query_nic_cap(struct mlx5_core_dev *dev, u32 *out)
+{
+	u32 in[MLX5_ST_SZ_DW(nic_cap_reg)] = {};
+	int err;
+
+	err = mlx5_core_access_reg(dev, in, sizeof(in), out,
+				   MLX5_ST_SZ_BYTES(nic_cap_reg),
+				   MLX5_REG_NIC_CAP, 0, 0);
+	if (err)
+		mlx5_core_warn(dev, "Reading nic_cap_reg failed. err = %d\n",
+			       err);
+
+	return err;
+}
+
 static void mlx5_reporter_vnic_diagnose_counter_icm(struct mlx5_core_dev *dev,
 						    struct devlink_fmsg *fmsg,
 						    u16 vport_num, bool other_vport)
 {
 	u32 out_icm_reg[MLX5_ST_SZ_DW(vhca_icm_ctrl_reg)] = {};
 	u32 in_icm_reg[MLX5_ST_SZ_DW(vhca_icm_ctrl_reg)] = {};
-	u32 out_reg[MLX5_ST_SZ_DW(nic_cap_reg)] = {};
-	u32 in_reg[MLX5_ST_SZ_DW(nic_cap_reg)] = {};
 	u32 cur_alloc_icm;
-	int vhca_icm_ctrl;
 	u16 vhca_id;
 	int err;
-
-	err = mlx5_core_access_reg(dev, in_reg, sizeof(in_reg), out_reg,
-				   sizeof(out_reg), MLX5_REG_NIC_CAP, 0, 0);
-	if (err) {
-		mlx5_core_warn(dev, "Reading nic_cap_reg failed. err = %d\n", err);
-		return;
-	}
-	vhca_icm_ctrl = MLX5_GET(nic_cap_reg, out_reg, vhca_icm_ctrl);
-	if (!vhca_icm_ctrl)
-		return;
 
 	MLX5_SET(vhca_icm_ctrl_reg, in_icm_reg, vhca_id_valid, other_vport);
 	if (other_vport) {
@@ -64,13 +66,18 @@ void mlx5_reporter_vnic_diagnose_counters(struct mlx5_core_dev *dev,
 					  u16 vport_num, bool other_vport)
 {
 	u32 in[MLX5_ST_SZ_DW(query_vnic_env_in)] = {};
+	u32 cap_reg[MLX5_ST_SZ_DW(nic_cap_reg)] = {};
 	struct mlx5_vnic_diag_stats vnic;
+	bool cap_reg_valid = false;
 
 	MLX5_SET(query_vnic_env_in, in, opcode, MLX5_CMD_OP_QUERY_VNIC_ENV);
 	MLX5_SET(query_vnic_env_in, in, vport_number, vport_num);
 	MLX5_SET(query_vnic_env_in, in, other_vport, !!other_vport);
 
 	mlx5_cmd_exec_inout(dev, query_vnic_env, in, &vnic.query_vnic_env_out);
+
+	if (MLX5_CAP_GEN(dev, nic_cap_reg))
+		cap_reg_valid = !mlx5_reporter_vnic_query_nic_cap(dev, cap_reg);
 
 	devlink_fmsg_pair_nest_start(fmsg, "vNIC env counters");
 	devlink_fmsg_obj_nest_start(fmsg);
@@ -105,7 +112,7 @@ void mlx5_reporter_vnic_diagnose_counters(struct mlx5_core_dev *dev,
 		devlink_fmsg_u64_pair_put(fmsg, "handled_pkt_steering_fail",
 					  VNIC_ENV_GET64(&vnic, handled_pkt_steering_fail));
 	}
-	if (MLX5_CAP_GEN(dev, nic_cap_reg))
+	if (cap_reg_valid && MLX5_GET(nic_cap_reg, cap_reg, vhca_icm_ctrl))
 		mlx5_reporter_vnic_diagnose_counter_icm(dev, fmsg, vport_num, other_vport);
 	if (MLX5_CAP_GEN(dev, vnic_env_cnt_bar_uar_access))
 		devlink_fmsg_u32_pair_put(fmsg, "bar_uar_access",
@@ -116,6 +123,10 @@ void mlx5_reporter_vnic_diagnose_counters(struct mlx5_core_dev *dev,
 		devlink_fmsg_u32_pair_put(fmsg, "odp_remote_triggered_page_fault",
 					  VNIC_ENV_GET(&vnic, odp_remote_triggered_page_fault));
 	}
+	if (cap_reg_valid &&
+	    MLX5_GET(nic_cap_reg, cap_reg, sw_roce_monitor_classifier))
+		devlink_fmsg_u32_pair_put(fmsg, "sw_roce_monitor_matched_packets",
+					  VNIC_ENV_GET(&vnic, sw_roce_monitor_matched_packets));
 
 	devlink_fmsg_obj_nest_end(fmsg);
 	devlink_fmsg_pair_nest_end(fmsg);
