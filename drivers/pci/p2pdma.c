@@ -793,7 +793,7 @@ check_b_path_acs:
 	}
 
 map_through_host_bridge:
-	if (!cpu_supports_p2pdma() &&
+	if (0 && !cpu_supports_p2pdma() &&
 	    !host_bridge_whitelist(provider, client, verbose)) {
 		if (verbose)
 			pci_warn(client, "cannot be used for peer-to-peer DMA as the client and provider (%s) do not share an upstream bridge or whitelisted host bridge\n",
