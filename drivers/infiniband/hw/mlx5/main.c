@@ -3672,6 +3672,8 @@ static int mlx5_port_immutable(struct ib_device *ibdev, u32 port_num,
 	immutable->pkey_tbl_len = attr.pkey_tbl_len;
 	immutable->gid_tbl_len = attr.gid_tbl_len;
 	immutable->core_cap_flags = get_core_cap_flags(ibdev, &rep);
+	if (mlx5_lag_is_roce(dev->mdev))
+		immutable->core_cap_flags |= RDMA_CORE_CAP_BONDING_FAILOVER;
 	immutable->max_mad_size = IB_MGMT_MAD_SIZE;
 
 	return 0;

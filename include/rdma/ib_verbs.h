@@ -650,6 +650,8 @@ void rdma_free_hw_stats_struct(struct rdma_hw_stats *stats);
 #define RDMA_CORE_CAP_IW_CM             0x00000008
 #define RDMA_CORE_CAP_IB_SA             0x00000010
 #define RDMA_CORE_CAP_OPA_MAD           0x00000020
+/* Existing QPs can switch bond members without replacing their GIDs. */
+#define RDMA_CORE_CAP_BONDING_FAILOVER  0x00000040
 
 /* Address format                       0x000FF000 */
 #define RDMA_CORE_CAP_AF_IB             0x00001000
