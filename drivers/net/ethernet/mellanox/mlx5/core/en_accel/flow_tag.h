@@ -16,13 +16,15 @@
  *              0 = none (default)
  *              1 = IPsec
  *              2 = MACsec
- *              3 = PSP (HW decrypted, PSP header present)
+ *              3 = PSP (HW decrypted & decapsulated)
  *              4-7 = reserved
- *   [20:16] = reserved
+ *   [20:17] = PSP version (4 bits, valid when proto == PSP)
+ *   16      = reserved
  *   [15:0]  = used by other subsystems (e.g. TC).
  */
 #define MLX5E_ACCEL_FLOW_TAG_MASK		GENMASK(23, 0)
 #define MLX5E_ACCEL_FLOW_TAG_PROTO_MASK		GENMASK(23, 21)
+#define MLX5E_ACCEL_FLOW_TAG_PSP_VER_MASK	GENMASK(20, 17)
 
 enum {
 	MLX5E_ACCEL_FLOW_TAG_PROTO_NONE		= 0,
