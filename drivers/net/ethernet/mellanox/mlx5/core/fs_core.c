@@ -3869,6 +3869,7 @@ void mlx5_fs_core_cleanup(struct mlx5_core_dev *dev)
 
 	WARN_ON(!xa_empty(&steering->esw_egress_root_ns));
 	WARN_ON(!xa_empty(&steering->esw_ingress_root_ns));
+	WARN_ON(steering->rx_crypto.refcnt);
 	xa_destroy(&steering->esw_egress_root_ns);
 	xa_destroy(&steering->esw_ingress_root_ns);
 
@@ -3977,6 +3978,7 @@ void mlx5_fs_core_free(struct mlx5_core_dev *dev)
 
 	kmem_cache_destroy(steering->ftes_cache);
 	kmem_cache_destroy(steering->fgs_cache);
+	mutex_destroy(&steering->rx_crypto.lock);
 	kfree(steering);
 	mlx5_ft_pool_destroy(dev);
 	mlx5_cleanup_fc_stats(dev);
@@ -4003,6 +4005,7 @@ int mlx5_fs_core_alloc(struct mlx5_core_dev *dev)
 	}
 
 	steering->dev = dev;
+	mutex_init(&steering->rx_crypto.lock);
 	dev->priv.steering = steering;
 
 	if (mlx5_fs_dr_is_supported(dev))
