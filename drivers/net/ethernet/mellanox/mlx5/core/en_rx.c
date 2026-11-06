@@ -1405,11 +1405,6 @@ static inline void mlx5e_handle_csum(struct net_device *netdev,
 		skb->ip_summed = CHECKSUM_COMPLETE;
 		skb->csum = csum_unfold((__force __sum16)cqe->check_sum);
 
-		if (unlikely(mlx5e_psp_is_rx_flow(cqe))) {
-			/* TBD: PSP csum complete corrections for now chose csum_unnecessary path */
-			goto csum_unnecessary;
-		}
-
 		if (test_bit(MLX5E_RQ_STATE_CSUM_FULL, &rq->state))
 			return; /* CQE csum covers all received bytes */
 
