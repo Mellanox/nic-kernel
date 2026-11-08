@@ -4,6 +4,7 @@
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
+#include <linux/rcupdate.h>
 #include <linux/mlx5/driver.h>
 #include <linux/mlx5/vport.h>
 #include "mlx5_core.h"
@@ -28,7 +29,9 @@
 #define MLX5_EQ_SHARE_IRQ_MIN_CTRL (4)
 
 struct mlx5_irq {
-	struct atomic_notifier_head nh;
+	/* Walked only by irq_int_handler(), see mlx5_irq_detach_nb() */
+	struct raw_notifier_head nh;
+	spinlock_t nh_lock; /* serializes nh updates */
 	cpumask_var_t mask;
 	char name[MLX5_MAX_IRQ_FORMATTED_NAME];
 	struct mlx5_irq_pool *pool;
@@ -213,7 +216,9 @@ static int irq_get(struct mlx5_irq *irq)
 
 static irqreturn_t irq_int_handler(int irq, void *nh)
 {
-	atomic_notifier_call_chain(nh, 0, NULL);
+	rcu_read_lock();
+	raw_notifier_call_chain(nh, 0, NULL);
+	rcu_read_unlock();
 	return IRQ_HANDLED;
 }
 
@@ -281,7 +286,8 @@ struct mlx5_irq *mlx5_irq_alloc(struct mlx5_irq_pool *pool, int i,
 		irq_set_name(pool, name, i);
 	else
 		irq_sf_set_name(pool, name, i);
-	ATOMIC_INIT_NOTIFIER_HEAD(&irq->nh);
+	RAW_INIT_NOTIFIER_HEAD(&irq->nh);
+	spin_lock_init(&irq->nh_lock);
 	snprintf(irq->name, MLX5_MAX_IRQ_FORMATTED_NAME,
 		 MLX5_IRQ_NAME_FORMAT_STR, name, pci_name(dev->pdev));
 	err = request_irq(irq->map.virq, irq_int_handler, 0, irq->name,
@@ -325,6 +331,7 @@ err_alloc_irq:
 
 int mlx5_irq_attach_nb(struct mlx5_irq *irq, struct notifier_block *nb)
 {
+	unsigned long flags;
 	int ret;
 
 	ret = irq_get(irq);
@@ -333,7 +340,9 @@ int mlx5_irq_attach_nb(struct mlx5_irq *irq, struct notifier_block *nb)
 		 * on non-existing IRQ.
 		 */
 		return -ENOENT;
-	ret = atomic_notifier_chain_register(&irq->nh, nb);
+	spin_lock_irqsave(&irq->nh_lock, flags);
+	ret = raw_notifier_chain_register(&irq->nh, nb);
+	spin_unlock_irqrestore(&irq->nh_lock, flags);
 	if (ret)
 		mlx5_irq_put(irq);
 	return ret;
@@ -341,9 +350,16 @@ int mlx5_irq_attach_nb(struct mlx5_irq *irq, struct notifier_block *nb)
 
 int mlx5_irq_detach_nb(struct mlx5_irq *irq, struct notifier_block *nb)
 {
-	int err = 0;
+	unsigned long flags;
+	int err;
 
-	err = atomic_notifier_chain_unregister(&irq->nh, nb);
+	spin_lock_irqsave(&irq->nh_lock, flags);
+	err = raw_notifier_chain_unregister(&irq->nh, nb);
+	spin_unlock_irqrestore(&irq->nh_lock, flags);
+	/* The chain is walked only by irq_int_handler(), so waiting for
+	 * in flight handlers is enough to stop using nb.
+	 */
+	synchronize_irq(irq->map.virq);
 	mlx5_irq_put(irq);
 	return err;
 }
