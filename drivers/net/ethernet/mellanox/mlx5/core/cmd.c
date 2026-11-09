@@ -2106,10 +2106,14 @@ static int cmd_status_err(struct mlx5_core_dev *dev, int err, u16 opcode, u16 op
  */
 int mlx5_cmd_do(struct mlx5_core_dev *dev, void *in, int in_size, void *out, int out_size)
 {
-	int err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, false);
 	u16 op_mod = MLX5_GET(mbox_in, in, op_mod);
 	u16 opcode = in_to_opcode(in);
+	int err;
 
+	/* Read the header first: callers may pass the same buffer as in and
+	 * out, and cmd_exec() then overwrites the inbox with the outbox.
+	 */
+	err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, false);
 	return cmd_status_err(dev, err, opcode, op_mod, out);
 }
 EXPORT_SYMBOL(mlx5_cmd_do);
@@ -2152,10 +2156,12 @@ EXPORT_SYMBOL(mlx5_cmd_exec);
 int mlx5_cmd_exec_polling(struct mlx5_core_dev *dev, void *in, int in_size,
 			  void *out, int out_size)
 {
-	int err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, true);
 	u16 op_mod = MLX5_GET(mbox_in, in, op_mod);
 	u16 opcode = in_to_opcode(in);
+	int err;
 
+	/* Read the header first, see mlx5_cmd_do() */
+	err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, true);
 	err = cmd_status_err(dev, err, opcode, op_mod, out);
 	return mlx5_cmd_check(dev, err, in, out);
 }
