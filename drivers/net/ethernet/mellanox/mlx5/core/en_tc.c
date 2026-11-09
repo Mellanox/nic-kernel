@@ -2053,6 +2053,8 @@ mlx5e_tc_add_fdb_flow(struct mlx5e_priv *priv,
 		goto err_out;
 	}
 	flow_flag_set(flow, OFFLOADED);
+	/* Clear the mark of an earlier failed attempt */
+	flow_flag_clear(flow, FAILED);
 
 	return 0;
 
