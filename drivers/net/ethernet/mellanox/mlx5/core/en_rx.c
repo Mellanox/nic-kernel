@@ -1515,8 +1515,10 @@ static bool mlx5e_shampo_complete_rx_cqe(struct mlx5e_rq *rq,
 
 	stats->packets++;
 	stats->bytes += cqe_bcnt;
-	if (NAPI_GRO_CB(skb)->count != 1)
+	if (NAPI_GRO_CB(skb)->count != 1) {
+		mlx5e_ktls_shampo_count_merged(rq, cqe, cqe_bcnt);
 		return false;
+	}
 
 	if (mlx5e_build_rx_skb(cqe, cqe_bcnt, rq, skb))
 		return true;

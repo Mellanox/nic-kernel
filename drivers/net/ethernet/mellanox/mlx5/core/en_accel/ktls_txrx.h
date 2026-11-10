@@ -75,6 +75,17 @@ mlx5e_ktls_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
 	return (tls_offload == CQE_TLS_OFFLOAD_DECRYPTED) ==
 	       skb_is_decrypted(skb);
 }
+
+/* mlx5e_ktls_handle_rx_skb() accounts the first CQE of a HW-GRO session only */
+static inline void
+mlx5e_ktls_shampo_count_merged(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe,
+			       u32 cqe_bcnt)
+{
+	if (get_cqe_tls_offload(cqe) == CQE_TLS_OFFLOAD_DECRYPTED) {
+		rq->stats->tls_decrypted_packets++;
+		rq->stats->tls_decrypted_bytes += cqe_bcnt;
+	}
+}
 #else
 static inline bool
 mlx5e_ktls_tx_try_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
@@ -113,6 +124,12 @@ static inline bool
 mlx5e_ktls_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
 {
 	return true;
+}
+
+static inline void
+mlx5e_ktls_shampo_count_merged(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe,
+			       u32 cqe_bcnt)
+{
 }
 #endif /* CONFIG_MLX5_EN_TLS */
 
