@@ -271,19 +271,27 @@ static void amdgpu_vm_bo_reset_state_machine(struct amdgpu_vm *vm)
 
 	/*
 	 * Don't use list splice here, we need the special handling for the root
-	 * PD and set the moved flag appropriately.
+	 * PD. All mappings must be written again, also of the vm_bos which are
+	 * already waiting for an update of some of them, e.g. after a map with
+	 * a delayed update, so set the moved flag for everything that needs an
+	 * update.
 	 */
 	amdgpu_vm_assert_locked(vm);
 	list_for_each_entry_safe(vm_bo, tmp, &vm->kernel.idle, vm_status)
 		amdgpu_vm_bo_needs_update(vm_bo);
+	list_for_each_entry(vm_bo, &vm->kernel.needs_update, vm_status)
+		vm_bo->moved = true;
+
 	list_for_each_entry_safe(vm_bo, tmp, &vm->always_valid.idle, vm_status)
 		amdgpu_vm_bo_needs_update(vm_bo);
+	list_for_each_entry(vm_bo, &vm->always_valid.needs_update, vm_status)
+		vm_bo->moved = true;
 
 	spin_lock(&vm->individual_lock);
-	list_for_each_entry_safe(vm_bo, tmp, &vm->individual.idle, vm_status) {
-		vm_bo->moved = true;
+	list_for_each_entry_safe(vm_bo, tmp, &vm->individual.idle, vm_status)
 		list_move(&vm_bo->vm_status, &vm->individual.needs_update);
-	}
+	list_for_each_entry(vm_bo, &vm->individual.needs_update, vm_status)
+		vm_bo->moved = true;
 	spin_unlock(&vm->individual_lock);
 }
 
@@ -2737,10 +2745,7 @@ int amdgpu_vm_make_compute(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 
 	if (vm->use_cpu_for_update) {
 		/* Sync with last SDMA update/clear before switching to CPU */
-		r = amdgpu_bo_sync_wait(vm->root.bo,
-					AMDGPU_FENCE_OWNER_UNDEFINED, true);
-		if (r)
-			goto unreserve_bo;
+		dma_fence_wait(vm->last_update, false);
 
 		vm->update_funcs = &amdgpu_vm_cpu_funcs;
 		r = amdgpu_vm_pt_map_tables(adev, vm);
@@ -2797,6 +2802,7 @@ int amdgpu_vm_make_npa(struct amdgpu_device *adev, struct amdgpu_vm *vm)
 		return r;
 
 	vm->is_npa = true;
+	vm->need_tlb_fence = false;
 
 	return 0;
 }

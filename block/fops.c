@@ -812,9 +812,7 @@ static ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			} else {
 				ssize_t ret2;
 
-				inode_lock_shared(bd_inode);
 				ret2 = blkdev_buffered_write(iocb, from);
-				inode_unlock_shared(bd_inode);
 				ret = direct_write_fallback(iocb, from, ret,
 							    ret2);
 				need_sync = true;
@@ -1019,8 +1017,6 @@ static int blkdev_init_dma_buf_io_ctx(struct file *file,
 	if (ctx->dmabuf->size > UINT_MAX)
 		return -EINVAL;
 	if (!disk->fops->init_dma_buf_io_ctx)
-		return -EOPNOTSUPP;
-	if (bdev_has_integrity_csum(bdev))
 		return -EOPNOTSUPP;
 	return disk->fops->init_dma_buf_io_ctx(bdev, ctx);
 }
