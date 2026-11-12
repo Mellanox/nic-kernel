@@ -3248,6 +3248,7 @@ static int mlx5_ib_stage_sys_error_notifier_init(struct mlx5_ib_dev *dev)
 static void mlx5_ib_stage_sys_error_notifier_cleanup(struct mlx5_ib_dev *dev)
 {
 	mlx5_notifier_unregister(dev->mdev, &dev->sys_error_events);
+	flush_workqueue(mlx5_ib_event_wq);
 }
 
 static int mlx5_ib_get_plane_num(struct mlx5_core_dev *mdev, u8 *num_plane)
@@ -4085,6 +4086,7 @@ static void mlx5_ib_cleanup_multiport_master(struct mlx5_ib_dev *dev)
 	mlx5_ib_dbg(dev, "removing from devlist\n");
 	list_del(&dev->ib_dev_list);
 	mutex_unlock(&mlx5_ib_multiport_mutex);
+	flush_workqueue(mlx5_ib_event_wq);
 
 	mlx5_nic_vport_disable_roce(dev->mdev);
 }
@@ -5326,6 +5328,7 @@ static void mlx5r_mp_remove(struct auxiliary_device *adev)
 	else
 		list_del(&mpi->list);
 	mutex_unlock(&mlx5_ib_multiport_mutex);
+	flush_workqueue(mlx5_ib_event_wq);
 	kfree(mpi);
 }
 
