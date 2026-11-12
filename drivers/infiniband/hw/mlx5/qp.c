@@ -1184,7 +1184,7 @@ static int _create_kernel_qp(struct mlx5_ib_dev *dev,
 	}
 
 	*inlen = MLX5_ST_SZ_BYTES(create_qp_in) +
-		 MLX5_FLD_SZ_BYTES(create_qp_in, pas[0]) * qp->buf.npages;
+		 MLX5_FLD_SZ_BYTES(create_qp_in, pas[0]) * qp->buf.num_frags;
 	*in = kvzalloc(*inlen, GFP_KERNEL);
 	if (!*in) {
 		err = -ENOMEM;
@@ -1194,7 +1194,7 @@ static int _create_kernel_qp(struct mlx5_ib_dev *dev,
 	qpc = MLX5_ADDR_OF(create_qp_in, *in, qpc);
 	MLX5_SET(qpc, qpc, uar_page, uar_index);
 	MLX5_SET(qpc, qpc, ts_format, mlx5_get_qp_default_ts(dev->mdev));
-	MLX5_SET(qpc, qpc, log_page_size, qp->buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT);
+	MLX5_SET(qpc, qpc, log_page_size, qp->buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT);
 
 	/* Set "fast registration enabled" for all kernel QPs */
 	MLX5_SET(qpc, qpc, fre, 1);
