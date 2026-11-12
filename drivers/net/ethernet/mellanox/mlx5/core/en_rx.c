@@ -1515,8 +1515,10 @@ static bool mlx5e_shampo_complete_rx_cqe(struct mlx5e_rq *rq,
 
 	stats->packets++;
 	stats->bytes += cqe_bcnt;
-	if (NAPI_GRO_CB(skb)->count != 1)
+	if (NAPI_GRO_CB(skb)->count != 1) {
+		mlx5e_ktls_shampo_count_merged(rq, cqe, cqe_bcnt);
 		return false;
+	}
 
 	if (mlx5e_build_rx_skb(cqe, cqe_bcnt, rq, skb))
 		return true;
@@ -2272,7 +2274,7 @@ static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cq
 	if (*skb &&
 	    !(match &&
 	      mlx5e_hw_gro_skb_has_enough_space(*skb, data_bcnt, page_size) &&
-	      mlx5e_accel_shampo_can_merge(rq, cqe))) {
+	      mlx5e_accel_shampo_can_merge(*skb, cqe))) {
 		match = false;
 		mlx5e_shampo_flush_skb(rq, cqe, match);
 	}
