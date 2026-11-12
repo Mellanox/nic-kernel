@@ -196,9 +196,10 @@ int mlx5_ib_create_srq(struct ib_srq *ib_srq,
 	struct mlx5_ib_srq *srq = to_msrq(ib_srq);
 	size_t desc_size;
 	size_t buf_size;
+	unsigned long max;
 	int err;
 	struct mlx5_srq_attr in = {};
-	__u32 max_srq_wqes = 1 << MLX5_CAP_GEN(dev->mdev, log_max_srq_sz);
+	__u32 max_srq_wqes = MLX5_CAP_GEN_LOGSZ_U32(dev->mdev, log_max_srq_sz);
 	__u32 max_sge_sz =  MLX5_CAP_GEN(dev->mdev, max_wqe_sz_rq) /
 			    sizeof(struct mlx5_wqe_data_seg);
 
@@ -222,7 +223,11 @@ int mlx5_ib_create_srq(struct ib_srq *ib_srq,
 
 	mutex_init(&srq->mutex);
 	spin_lock_init(&srq->lock);
-	srq->msrq.max    = roundup_pow_of_two(init_attr->attr.max_wr + 1);
+	/* srq->msrq.max is an int */
+	max = roundup_pow_of_two(init_attr->attr.max_wr + 1);
+	if (max > INT_MAX)
+		return -EINVAL;
+	srq->msrq.max    = max;
 	srq->msrq.max_gs = init_attr->attr.max_sge;
 
 	desc_size = sizeof(struct mlx5_wqe_srq_next_seg) +
@@ -238,8 +243,9 @@ int mlx5_ib_create_srq(struct ib_srq *ib_srq,
 	srq->msrq.max_avail_gather = (desc_size - sizeof(struct mlx5_wqe_srq_next_seg)) /
 		sizeof(struct mlx5_wqe_data_seg);
 	srq->msrq.wqe_shift = ilog2(desc_size);
-	buf_size = srq->msrq.max * desc_size;
-	if (buf_size < desc_size)
+	/* create_srq_user() and create_srq_kernel() take an int */
+	if (check_mul_overflow((size_t)srq->msrq.max, desc_size, &buf_size) ||
+	    buf_size > INT_MAX)
 		return -EINVAL;
 
 	in.type = init_attr->srq_type;

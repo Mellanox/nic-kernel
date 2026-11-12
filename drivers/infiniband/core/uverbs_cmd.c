@@ -292,6 +292,11 @@ static int ib_uverbs_get_context(struct uverbs_attr_bundle *attrs)
 		goto err_ucontext;
 	}
 
+	if (ib_dev->adversarial_mode) {
+		ret = -EPERM;
+		goto err_uobj;
+	}
+
 	resp = (struct ib_uverbs_get_context_resp){
 		.num_comp_vectors = attrs->ufile->device->num_comp_vectors,
 		.async_fd = uobj->id,
@@ -1668,8 +1673,8 @@ static int ib_uverbs_query_qp(struct uverbs_attr_bundle *attrs)
 	if (ret)
 		return ret;
 
-	attr = kmalloc_obj(*attr);
-	init_attr = kmalloc_obj(*init_attr);
+	attr = kzalloc_obj(*attr);
+	init_attr = kzalloc_obj(*init_attr);
 	if (!attr || !init_attr) {
 		ret = -ENOMEM;
 		goto out;
