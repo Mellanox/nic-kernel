@@ -348,7 +348,11 @@ static void mlx5e_tx_check_stop(struct mlx5e_txqsq *sq)
 	}
 }
 
-static void mlx5e_tx_flush(struct mlx5e_txqsq *sq)
+/* Post a NOP that requests a completion, and ring the doorbell. A given
+ * skb is held by the NOP until all WQEs posted ahead of it are retired:
+ * WQEs posted for it, e.g. kTLS ones, may need its socket to stay alive.
+ */
+void mlx5e_tx_flush(struct mlx5e_txqsq *sq, struct sk_buff *skb)
 {
 	struct mlx5e_tx_wqe_info *wi;
 	struct mlx5e_tx_wqe *wqe;
@@ -361,11 +365,34 @@ static void mlx5e_tx_flush(struct mlx5e_txqsq *sq)
 	wi = &sq->db.wqe_info[pi];
 
 	*wi = (struct mlx5e_tx_wqe_info) {
+		.skb = skb,
 		.num_wqebbs = 1,
 	};
 
 	wqe = mlx5e_post_nop(&sq->wq, sq->sqn, &sq->pc);
+
+	/* The NOP takes the room of the SEND that was not posted. As after a
+	 * SEND, stop the queue if room runs low; the completion wakes it.
+	 */
+	mlx5e_tx_check_stop(sq);
 	mlx5e_notify_hw(&sq->wq, sq->pc, sq->uar_map, &wqe->ctrl);
+}
+
+/* Drop an skb whose SEND could not be posted. */
+static void mlx5e_tx_drop(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	sq->stats->dropped++;
+
+	if (IS_ENABLED(CONFIG_MLX5_EN_TLS) &&
+	    tls_is_skb_tx_device_offloaded(skb)) {
+		/* kTLS WQEs may have been posted for the skb. */
+		mlx5e_ktls_tx_handle_lost(sq, skb);
+		mlx5e_tx_flush(sq, skb);
+		return;
+	}
+
+	dev_kfree_skb_any(skb);
+	mlx5e_tx_flush(sq, NULL);
 }
 
 static inline void
@@ -470,9 +497,7 @@ mlx5e_sq_xmit_wqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	return;
 
 err_drop:
-	stats->dropped++;
-	dev_kfree_skb_any(skb);
-	mlx5e_tx_flush(sq);
+	mlx5e_tx_drop(sq, skb);
 }
 
 static bool mlx5e_tx_skb_supports_mpwqe(struct sk_buff *skb, struct mlx5e_tx_attr *attr)
@@ -612,9 +637,7 @@ mlx5e_sq_xmit_mpwqe(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 	return;
 
 err_unmap:
-	sq->stats->dropped++;
-	dev_kfree_skb_any(skb);
-	mlx5e_tx_flush(sq);
+	mlx5e_tx_drop(sq, skb);
 }
 
 void mlx5e_tx_mpwqe_ensure_complete(struct mlx5e_txqsq *sq)
@@ -793,13 +816,15 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 	i = 0;
 	do {
 		struct mlx5e_tx_wqe_info *wi;
+		bool last_wqe, err_cqe;
 		u16 wqe_counter;
-		bool last_wqe;
 		u16 ci;
 
 		mlx5_cqwq_pop(&cq->wq);
 
 		wqe_counter = be16_to_cpu(cqe->wqe_counter);
+		/* WQEs covered by an error CQE may not have been executed. */
+		err_cqe = get_cqe_opcode(cqe) == MLX5_CQE_REQ_ERR;
 
 		do {
 			last_wqe = (sqcc == wqe_counter);
@@ -810,6 +835,16 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 			sqcc += wi->num_wqebbs;
 
 			if (likely(wi->skb)) {
+				if (unlikely(err_cqe))
+					mlx5e_ktls_tx_try_handle_lost(sq,
+								      wi->skb);
+
+				if (unlikely(!wi->num_bytes)) {
+					/* Dropped, held by mlx5e_tx_flush() */
+					dev_kfree_skb_any(wi->skb);
+					continue;
+				}
+
 				mlx5e_tx_wi_dma_unmap(sq, wi, &dma_fifo_cc);
 				mlx5e_consume_skb(sq, wi->skb, cqe, napi_budget);
 
@@ -831,7 +866,7 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 			}
 		} while (!last_wqe);
 
-		if (unlikely(get_cqe_opcode(cqe) == MLX5_CQE_REQ_ERR)) {
+		if (unlikely(err_cqe)) {
 			if (!test_and_set_bit(MLX5E_SQ_STATE_RECOVERING,
 					      &sq->state)) {
 				mlx5e_dump_error_cqe(&sq->cq, sq->sqn,
@@ -885,6 +920,8 @@ void mlx5e_free_txqsq_descs(struct mlx5e_txqsq *sq)
 		sqcc += wi->num_wqebbs;
 
 		if (likely(wi->skb)) {
+			/* Destroyed with the SQ, not executed. */
+			mlx5e_ktls_tx_try_handle_lost(sq, wi->skb);
 			mlx5e_tx_wi_dma_unmap(sq, wi, &dma_fifo_cc);
 			dev_kfree_skb_any(wi->skb);
 
@@ -1007,6 +1044,6 @@ void mlx5i_sq_xmit(struct mlx5e_txqsq *sq, struct sk_buff *skb,
 err_drop:
 	stats->dropped++;
 	dev_kfree_skb_any(skb);
-	mlx5e_tx_flush(sq);
+	mlx5e_tx_flush(sq, NULL);
 }
 #endif
