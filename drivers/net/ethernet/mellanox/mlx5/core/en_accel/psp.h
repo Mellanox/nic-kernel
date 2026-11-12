@@ -40,9 +40,14 @@ static inline bool mlx5_is_psp_device(struct mlx5_core_dev *mdev)
 	    !MLX5_CAP_PSP(mdev, psp_crypto_esp_aes_gcm_128_decrypt))
 		return false;
 
+	/* RX packets are decapsulated in steering. */
+	if (!MLX5_CAP_FLOWTABLE_NIC_RX(mdev, reformat_del_psp_transport))
+		return false;
+
 	return true;
 }
 
+bool mlx5e_psp_rx_is_active(struct mlx5e_priv *priv);
 void mlx5_accel_psp_fs_cleanup_rx_tables(struct mlx5e_priv *priv);
 void mlx5_accel_psp_fs_cleanup_tx_tables(struct mlx5e_priv *priv);
 int mlx5e_psp_register(struct mlx5e_priv *priv);
@@ -50,6 +55,11 @@ void mlx5e_psp_unregister(struct mlx5e_priv *priv);
 int mlx5e_psp_init(struct mlx5e_priv *priv);
 void mlx5e_psp_cleanup(struct mlx5e_priv *priv);
 #else
+static inline bool mlx5e_psp_rx_is_active(struct mlx5e_priv *priv)
+{
+	return false;
+}
+
 static inline void mlx5_accel_psp_fs_cleanup_rx_tables(struct mlx5e_priv *priv) { }
 static inline void mlx5_accel_psp_fs_cleanup_tx_tables(struct mlx5e_priv *priv) { }
 static inline bool mlx5_is_psp_device(struct mlx5_core_dev *mdev)

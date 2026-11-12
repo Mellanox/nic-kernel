@@ -9,10 +9,7 @@
 #include <net/psp.h>
 #include "en.h"
 #include "en/txrx.h"
-
-/* Bit30: PSP marker, Bit22-0: PSP obj id */
-#define MLX5_PSP_METADATA_MARKER(metadata)  ((((metadata) >> 30) & 0x3) == 0x3)
-#define MLX5_PSP_METADATA_HANDLE(metadata)  ((metadata) & GENMASK(22, 0))
+#include "en_accel/flow_tag.h"
 
 struct mlx5e_accel_tx_psp_state {
 	u32 tailen;
@@ -82,14 +79,38 @@ static inline unsigned int mlx5e_psp_tx_ids_len(struct mlx5e_accel_tx_psp_state 
 
 static inline bool mlx5e_psp_is_rx_flow(struct mlx5_cqe64 *cqe)
 {
-	return MLX5_PSP_METADATA_MARKER(be32_to_cpu(cqe->ft_metadata));
+	u32 proto = mlx5e_accel_flow_tag_proto(cqe);
+
+	return proto == MLX5E_ACCEL_FLOW_TAG_PROTO_PSP;
+}
+
+static inline u8 mlx5e_psp_get_version(struct mlx5_cqe64 *cqe)
+{
+	return FIELD_GET(MLX5E_ACCEL_FLOW_TAG_PSP_VER_MASK,
+			 mlx5e_accel_flow_tag(cqe));
+}
+
+static inline __be32 mlx5e_psp_get_spi(struct mlx5_cqe64 *cqe)
+{
+	return cqe->ft_metadata;
 }
 
 static inline bool
 mlx5e_psp_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
 {
-	/* PSP packets cannot be merged. */
-	return !skb_ext_exist(skb, SKB_EXT_PSP) && !mlx5e_psp_is_rx_flow(cqe);
+	struct psp_skb_ext *pse = skb_ext_find(skb, SKB_EXT_PSP);
+	bool is_psp = mlx5e_psp_is_rx_flow(cqe);
+
+	if (likely(!is_psp && !pse))
+		return true;
+
+	/* No match on PSP status change (no crypto -> crypto or vice-versa). */
+	if (unlikely(is_psp != !!pse))
+		return false;
+
+	/* No match on security parameters change. */
+	return pse->spi == mlx5e_psp_get_spi(cqe) &&
+		pse->version == mlx5e_psp_get_version(cqe);
 }
 
 bool mlx5e_psp_offload_handle_rx_skb(struct net_device *netdev, struct sk_buff *skb,
@@ -115,6 +136,16 @@ static inline bool mlx5e_psp_txwqe_build_eseg_csum(struct mlx5e_txqsq *sq, struc
 static inline bool mlx5e_psp_is_rx_flow(struct mlx5_cqe64 *cqe)
 {
 	return false;
+}
+
+static inline u8 mlx5e_psp_get_version(struct mlx5_cqe64 *cqe)
+{
+	return 0;
+}
+
+static inline __be32 mlx5e_psp_get_spi(struct mlx5_cqe64 *cqe)
+{
+	return 0;
 }
 
 static inline bool
