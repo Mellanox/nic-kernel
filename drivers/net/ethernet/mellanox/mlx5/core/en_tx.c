@@ -780,10 +780,11 @@ void mlx5e_txqsq_wake(struct mlx5e_txqsq *sq)
 	}
 }
 
-bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
+/* Returns the number of polled CQEs. */
+static int mlx5e_poll_tx_cqes(struct mlx5e_txqsq *sq, int napi_budget)
 {
+	struct mlx5e_cq *cq = &sq->cq;
 	struct mlx5e_sq_stats *stats;
-	struct mlx5e_txqsq *sq;
 	struct mlx5_cqe64 *cqe;
 	u32 dma_fifo_cc;
 	u32 nbytes;
@@ -791,14 +792,9 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 	u16 sqcc;
 	int i;
 
-	sq = container_of(cq, struct mlx5e_txqsq, cq);
-
-	if (unlikely(!test_bit(MLX5E_SQ_STATE_ENABLED, &sq->state)))
-		return false;
-
 	cqe = mlx5_cqwq_get_cqe(&cq->wq);
 	if (!cqe)
-		return false;
+		return 0;
 
 	stats = sq->stats;
 
@@ -891,9 +887,38 @@ bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
 
 	netdev_tx_completed_queue(sq->txq, npkts, nbytes);
 
+	return i;
+}
+
+bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget)
+{
+	struct mlx5e_txqsq *sq = container_of(cq, struct mlx5e_txqsq, cq);
+	int i;
+
+	if (unlikely(!test_bit(MLX5E_SQ_STATE_ENABLED, &sq->state)))
+		return false;
+
+	i = mlx5e_poll_tx_cqes(sq, napi_budget);
+	if (!i)
+		return false;
+
 	mlx5e_txqsq_wake(sq);
 
 	return (i == MLX5E_TX_CQ_POLL_BUDGET);
+}
+
+/* Reap the completions of a deactivated SQ, whose NAPI is disabled, without
+ * waking its TX queue. Returns true once all its WQEs have completed.
+ */
+bool mlx5e_txqsq_drain(struct mlx5e_txqsq *sq)
+{
+	int polled;
+
+	do {
+		polled = mlx5e_poll_tx_cqes(sq, 0);
+	} while (polled == MLX5E_TX_CQ_POLL_BUDGET);
+
+	return sq->cc == sq->pc;
 }
 
 static void mlx5e_tx_wi_kfree_fifo_skbs(struct mlx5e_txqsq *sq, struct mlx5e_tx_wqe_info *wi)
