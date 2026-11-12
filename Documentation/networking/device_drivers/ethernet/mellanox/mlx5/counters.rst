@@ -427,9 +427,10 @@ the software port.
      - Error
 
    * - `ch[i]_force_irq`
-     - Number of times NAPI is triggered by XSK wakeups by posting a NOP to
-       ICOSQ.
-     - Acceleration
+     - The number of times the NAPI poll function stopped execution on a CPU
+       due to a change in affinity and forced an interrupt, by a NOP posted to
+       the ICOSQ, to reschedule NAPI, on channel i.
+     - Informative
 
    * - `rx[i]_congst_umr`
      - The number of times an outstanding UMR request is delayed due to
