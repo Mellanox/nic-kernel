@@ -693,9 +693,9 @@ struct mlx5e_rq {
 			u16                    num_strides;
 			u16                    actual_wq_head;
 			u8                     log_stride_sz;
-			u8                     umr_in_progress;
-			u8                     umr_last_bulk;
-			u8                     umr_completed;
+			u16                    umr_in_progress;
+			u16                    umr_last_bulk;
+			u16                    umr_completed;
 			u8                     min_wqe_bulk;
 			u8                     page_shift;
 			u8                     pages_per_wqe;

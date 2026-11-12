@@ -182,11 +182,13 @@ static int mlx5e_rx_reporter_timeout_recover(void *ctx)
 
 	/* Acquire netdev instance lock to synchronize with channel close and
 	 * reopen flows. Either successfully obtain the lock, or detect that
-	 * channels are closing for another reason, making this work no longer
-	 * necessary.
+	 * the RQ was deactivated, which channel close does before waiting for
+	 * this work, making this work no longer necessary. Don't rely on the
+	 * channels state: the old channels of a reconfiguration can be closed
+	 * after the new ones are activated.
 	 */
 	while (!netdev_trylock(rq->netdev)) {
-		if (!test_bit(MLX5E_STATE_CHANNELS_ACTIVE, &rq->priv->state))
+		if (!test_bit(MLX5E_RQ_STATE_ENABLED, &rq->state))
 			return 0;
 		msleep(20);
 	}

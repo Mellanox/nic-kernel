@@ -29,6 +29,15 @@ void mlx5e_ktls_handle_get_psv_completion(struct mlx5e_icosq_wqe_info *wi,
 void mlx5e_ktls_tx_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 					   struct mlx5e_tx_wqe_info *wi,
 					   u32 *dma_fifo_cc);
+void mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb);
+
+/* The WQEs posted for the skb may have not been executed. */
+static inline void
+mlx5e_ktls_tx_try_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	if (tls_is_skb_tx_device_offloaded(skb))
+		mlx5e_ktls_tx_handle_lost(sq, skb);
+}
 
 void
 mlx5e_ktls_rx_resync_async_request_cancel(struct mlx5e_icosq_wqe_info *wi);
@@ -60,6 +69,32 @@ mlx5e_ktls_handle_tx_wqe(struct mlx5_wqe_ctrl_seg *cseg,
 {
 	cseg->tis_tir_num = cpu_to_be32(state->tls_tisn << 8);
 }
+
+/* The first CQE of a HW-GRO session sets skb->decrypted. A resync request or
+ * a TLS error is handled on the first CQE only, so it starts a new session.
+ */
+static inline bool
+mlx5e_ktls_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
+{
+	u8 tls_offload = get_cqe_tls_offload(cqe);
+
+	if (unlikely(tls_offload > CQE_TLS_OFFLOAD_DECRYPTED))
+		return false;
+
+	return (tls_offload == CQE_TLS_OFFLOAD_DECRYPTED) ==
+	       skb_is_decrypted(skb);
+}
+
+/* mlx5e_ktls_handle_rx_skb() accounts the first CQE of a HW-GRO session only */
+static inline void
+mlx5e_ktls_shampo_count_merged(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe,
+			       u32 cqe_bcnt)
+{
+	if (get_cqe_tls_offload(cqe) == CQE_TLS_OFFLOAD_DECRYPTED) {
+		rq->stats->tls_decrypted_packets++;
+		rq->stats->tls_decrypted_bytes += cqe_bcnt;
+	}
+}
 #else
 static inline bool
 mlx5e_ktls_tx_try_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
@@ -68,6 +103,12 @@ mlx5e_ktls_tx_try_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 {
 	return false;
 }
+
+static inline void
+mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
+
+static inline void
+mlx5e_ktls_tx_try_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
 
 static inline bool
 mlx5e_ktls_rx_handle_resync_list(struct mlx5e_icosq *sq, int budget)
@@ -91,6 +132,18 @@ static inline void mlx5e_ktls_handle_rx_skb(struct mlx5e_rq *rq,
 					    struct sk_buff *skb,
 					    struct mlx5_cqe64 *cqe,
 					    u32 *cqe_bcnt)
+{
+}
+
+static inline bool
+mlx5e_ktls_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
+{
+	return true;
+}
+
+static inline void
+mlx5e_ktls_shampo_count_merged(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe,
+			       u32 cqe_bcnt)
 {
 }
 #endif /* CONFIG_MLX5_EN_TLS */

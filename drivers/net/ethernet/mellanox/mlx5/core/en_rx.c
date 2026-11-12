@@ -625,7 +625,7 @@ mlx5e_free_rx_mpwqe(struct mlx5e_rq *rq, struct mlx5e_mpw_info *wi)
 	}
 }
 
-static void mlx5e_post_rx_mpwqe(struct mlx5e_rq *rq, u8 n)
+static void mlx5e_post_rx_mpwqe(struct mlx5e_rq *rq, u16 n)
 {
 	struct mlx5_wq_ll *wq = &rq->mpwqe.wq;
 
@@ -934,11 +934,11 @@ static void mlx5e_reclaim_mpwqe_pages(struct mlx5e_rq *rq, int head,
 INDIRECT_CALLABLE_SCOPE bool mlx5e_post_rx_mpwqes(struct mlx5e_rq *rq)
 {
 	struct mlx5_wq_ll *wq = &rq->mpwqe.wq;
-	u8  umr_completed = rq->mpwqe.umr_completed;
+	u16 umr_completed = rq->mpwqe.umr_completed;
 	struct mlx5e_icosq *sq = rq->icosq;
 	bool reclaimed = false;
 	int alloc_err = 0;
-	u8  missing, i;
+	u16 missing, i;
 	u16 head;
 
 	if (unlikely(!test_bit(MLX5E_RQ_STATE_ENABLED, &rq->state)))
@@ -1511,14 +1511,17 @@ static bool mlx5e_shampo_complete_rx_cqe(struct mlx5e_rq *rq,
 
 	stats->packets++;
 	stats->bytes += cqe_bcnt;
-	if (NAPI_GRO_CB(skb)->count != 1)
+	if (NAPI_GRO_CB(skb)->count != 1) {
+		mlx5e_ktls_shampo_count_merged(rq, cqe, cqe_bcnt);
 		return false;
+	}
 
 	if (mlx5e_build_rx_skb(cqe, cqe_bcnt, rq, skb))
 		return true;
 
 	skb_reset_network_header(skb);
 	if (!skb_flow_dissect_flow_keys(skb, &rq->hw_gro_data->fk, 0)) {
+		skb_shinfo(skb)->gso_size = 0;
 		napi_gro_receive(rq->cq.napi, skb);
 		rq->hw_gro_data->skb = NULL;
 	}
@@ -2267,7 +2270,7 @@ static void mlx5e_handle_rx_cqe_mpwrq_shampo(struct mlx5e_rq *rq, struct mlx5_cq
 	if (*skb &&
 	    !(match &&
 	      mlx5e_hw_gro_skb_has_enough_space(*skb, data_bcnt, page_size) &&
-	      mlx5e_accel_shampo_can_merge(rq, cqe))) {
+	      mlx5e_accel_shampo_can_merge(*skb, cqe))) {
 		match = false;
 		mlx5e_shampo_flush_skb(rq, cqe, match);
 	}
