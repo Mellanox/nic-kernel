@@ -6196,6 +6196,18 @@ void mlx5e_destroy_q_counters(struct mlx5e_priv *priv)
 	}
 }
 
+static bool mlx5e_data_direct_enabled(struct mlx5e_priv *priv)
+{
+	bool enabled;
+
+	mutex_lock(&priv->state_lock);
+	enabled = MLX5E_GET_PFLAG(&priv->channels.params,
+				  MLX5E_PFLAG_DATA_DIRECT);
+	mutex_unlock(&priv->state_lock);
+
+	return enabled;
+}
+
 static int mlx5e_data_direct_event(struct notifier_block *nb,
 				   unsigned long action, void *data)
 {
@@ -6204,7 +6216,7 @@ static int mlx5e_data_direct_event(struct notifier_block *nb,
 	struct mlx5_data_direct_dev *dd_dev = data;
 	struct net_device *netdev = priv->netdev;
 	struct mlx5e_params new_params;
-	bool enabled, reopen;
+	bool reopen;
 	int err;
 
 	if (action != MLX5_DATA_DIRECT_UNBIND)
@@ -6213,11 +6225,7 @@ static int mlx5e_data_direct_event(struct notifier_block *nb,
 	rtnl_lock();
 	netdev_lock(netdev);
 
-	mutex_lock(&priv->state_lock);
-	enabled = MLX5E_GET_PFLAG(&priv->channels.params,
-				  MLX5E_PFLAG_DATA_DIRECT);
-	mutex_unlock(&priv->state_lock);
-	if (!enabled)
+	if (!mlx5e_data_direct_enabled(priv))
 		goto out;
 
 	reopen = netif_running(netdev);
@@ -6239,10 +6247,15 @@ static int mlx5e_data_direct_event(struct notifier_block *nb,
 	netdev_info(netdev, "data_direct device unbound, disabled data_direct\n");
 
 	if (reopen) {
-		err = netif_open(netdev, NULL);
-		if (err)
-			netdev_err(netdev, "Failed to reopen after data_direct unbind, err=%d\n",
-				   err);
+		if (netif_device_present(netdev)) {
+			err = netif_open(netdev, NULL);
+			if (err)
+				netdev_err(netdev, "Failed to reopen after data_direct unbind, err=%d\n",
+					   err);
+		} else {
+			/* In detached state reopen on resume. */
+			priv->dd_reopen = true;
+		}
 	}
 
 out:
@@ -6250,6 +6263,48 @@ out:
 	rtnl_unlock();
 
 	return NOTIFY_OK;
+}
+
+static bool mlx5e_data_direct_has_mappings(struct net_device *netdev,
+					   struct device *dd_dev)
+{
+	for (u32 i = 0; i < netdev->real_num_rx_queues; i++)
+		if (netif_rxq_has_unreadable_mp(netdev, i))
+			return true;
+
+	return netdev_has_dmabuf_binding(netdev, dd_dev);
+}
+
+static void mlx5e_data_direct_suspend(struct mlx5e_priv *priv)
+{
+	struct net_device *netdev = priv->netdev;
+	struct mlx5_data_direct_dev *dd_dev;
+
+	dd_dev = mlx5_data_direct_get_dev(priv->mdev->data_direct);
+	if (!dd_dev || !mlx5e_data_direct_enabled(priv) ||
+	    !mlx5e_data_direct_has_mappings(netdev, dd_dev->device))
+		return;
+
+	priv->dd_reopen = netif_running(netdev);
+	netif_close(netdev);
+	WARN_ON_ONCE(netdev_unbind_dma_dev(netdev, dd_dev->device));
+}
+
+static void mlx5e_data_direct_resume(struct mlx5e_priv *priv)
+{
+	struct net_device *netdev = priv->netdev;
+	int err;
+
+	if (!priv->dd_reopen)
+		return;
+
+	priv->dd_reopen = false;
+	netdev_lock(netdev);
+	err = netif_open(netdev, NULL);
+	netdev_unlock(netdev);
+	if (err)
+		netdev_err(netdev, "Failed to reopen after data_direct suspend, err=%d\n",
+			   err);
 }
 
 static int mlx5e_nic_init(struct mlx5_core_dev *mdev,
@@ -6471,6 +6526,7 @@ static int mlx5e_nic_enable(struct mlx5e_priv *priv)
 	udp_tunnel_nic_reset_ntf(priv->netdev);
 	netdev_unlock(netdev);
 	netif_device_attach(netdev);
+	mlx5e_data_direct_resume(priv);
 	rtnl_unlock();
 
 	return 0;
@@ -6489,6 +6545,7 @@ static void mlx5e_nic_disable(struct mlx5e_priv *priv)
 
 	rtnl_lock();
 	netdev_lock(priv->netdev);
+	mlx5e_data_direct_suspend(priv);
 	if (netif_running(priv->netdev))
 		mlx5e_close(priv->netdev);
 	netif_device_detach(priv->netdev);

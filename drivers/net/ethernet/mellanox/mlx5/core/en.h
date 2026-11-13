@@ -994,6 +994,7 @@ struct mlx5e_priv {
 	struct dentry             *dfs_root;
 	struct mlx5_devcom_comp_dev *devcom;
 	struct notifier_block      data_direct_nb;
+	bool                       dd_reopen;
 };
 
 static inline u16 mlx5e_stats_nch_read(const struct mlx5e_priv *priv)
