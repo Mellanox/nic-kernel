@@ -930,6 +930,9 @@ static int alloc_rmap(struct mlx5_core_dev *mdev)
 	if (mlx5_core_is_sf(mdev))
 		return 0;
 
+	if (!eq_table->max_comp_eqs)
+		return -EINVAL;
+
 	eq_table->rmap = alloc_irq_cpu_rmap(eq_table->max_comp_eqs);
 	if (!eq_table->rmap)
 		return -ENOMEM;
