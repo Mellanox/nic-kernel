@@ -1522,29 +1522,36 @@ err:
 	return ret;
 }
 
-static void ib_cache_event_task(struct work_struct *_work)
+static int ib_cache_event_process(struct ib_event *event)
 {
-	struct ib_update_work *work =
-		container_of(_work, struct ib_update_work, work);
 	int ret;
 
 	/* Before distributing the cache update event, first sync
 	 * the cache.
 	 */
-	ret = ib_cache_update(work->event.device, work->event.element.port_num,
-			      work->event.event == IB_EVENT_GID_CHANGE ||
-			      work->event.event == IB_EVENT_CLIENT_REREGISTER,
-			      work->event.event == IB_EVENT_PKEY_CHANGE,
-			      work->event.event == IB_EVENT_PKEY_CHANGE ||
-			      work->event.event == IB_EVENT_GID_CHANGE);
+	ret = ib_cache_update(event->device, event->element.port_num,
+			      event->event == IB_EVENT_GID_CHANGE ||
+			      event->event == IB_EVENT_CLIENT_REREGISTER,
+			      event->event == IB_EVENT_PKEY_CHANGE,
+			      event->event == IB_EVENT_PKEY_CHANGE ||
+			      event->event == IB_EVENT_GID_CHANGE);
 
 	/* GID event is notified already for individual GID entries by
 	 * dispatch_gid_change_event(). Hence, notifiy for rest of the
 	 * events.
 	 */
-	if (!ret && work->event.event != IB_EVENT_GID_CHANGE)
-		ib_dispatch_event_clients(&work->event);
+	if (!ret && event->event != IB_EVENT_GID_CHANGE)
+		ib_dispatch_event_clients(event);
 
+	return ret;
+}
+
+static void ib_cache_event_task(struct work_struct *_work)
+{
+	struct ib_update_work *work =
+		container_of(_work, struct ib_update_work, work);
+
+	ib_cache_event_process(&work->event);
 	kfree(work);
 }
 
@@ -1592,6 +1599,40 @@ void ib_dispatch_event(const struct ib_event *event)
 	queue_work(ib_wq, &work->work);
 }
 EXPORT_SYMBOL(ib_dispatch_event);
+
+/**
+ * ib_dispatch_event_sync - Process an asynchronous event before returning
+ * @event: Event to process
+ *
+ * Does in the caller's context what ib_dispatch_event() leaves to a work
+ * item, by the same rules: an event that affects the cache updates it first,
+ * and the registered event handlers are then called, unless that update
+ * failed or the event is a GID change. All of it completes before this
+ * returns, so events a caller passes here one after the other are processed
+ * in that order. They are not ordered against events passed to
+ * ib_dispatch_event().
+ *
+ * Context: Workqueue context, which event handlers are promised, with no
+ * locks held that the cache update or the handlers may take. Not from an
+ * event handler.
+ *
+ * Return: 0, or the error of the cache update.
+ */
+int ib_dispatch_event_sync(const struct ib_event *event)
+{
+	struct ib_event copy = *event;
+
+	might_sleep();
+	lockdep_assert_not_held(&event->device->event_handler_rwsem);
+
+	if (!is_cache_update_event(&copy)) {
+		ib_dispatch_event_clients(&copy);
+		return 0;
+	}
+
+	return ib_cache_event_process(&copy);
+}
+EXPORT_SYMBOL(ib_dispatch_event_sync);
 
 int ib_cache_setup_one(struct ib_device *device)
 {
