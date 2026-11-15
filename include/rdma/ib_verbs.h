@@ -3308,6 +3308,7 @@ bool ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
 void ib_register_event_handler(struct ib_event_handler *event_handler);
 void ib_unregister_event_handler(struct ib_event_handler *event_handler);
 void ib_dispatch_event(const struct ib_event *event);
+int ib_dispatch_event_sync(const struct ib_event *event);
 
 int ib_query_port(struct ib_device *device,
 		  u32 port_num, struct ib_port_attr *port_attr);
