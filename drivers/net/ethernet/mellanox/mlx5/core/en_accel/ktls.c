@@ -87,6 +87,7 @@ static int mlx5e_ktls_resync(struct net_device *netdev,
 }
 
 static const struct tlsdev_ops mlx5e_ktls_ops = {
+	.flags = TLSDEV_F_STICKY_TXQ,
 	.tls_dev_add = mlx5e_ktls_add,
 	.tls_dev_del = mlx5e_ktls_del,
 	.tls_dev_resync = mlx5e_ktls_resync,
@@ -139,7 +140,11 @@ int mlx5e_ktls_set_feature_rx(struct net_device *netdev, bool enable)
 		err = mlx5e_accel_fs_tcp_create(priv->fs);
 		if (!err && !priv->ktls_rx_was_enabled) {
 			priv->ktls_rx_was_enabled = true;
-			mlx5e_safe_reopen_channels(priv);
+			err = mlx5e_safe_reopen_channels(priv);
+			if (err) {
+				priv->ktls_rx_was_enabled = false;
+				mlx5e_accel_fs_tcp_destroy(priv->fs);
+			}
 		}
 	} else {
 		mlx5e_accel_fs_tcp_destroy(priv->fs);

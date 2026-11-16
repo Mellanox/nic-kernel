@@ -449,6 +449,9 @@ But switching txq can introduce reorders, especially if the
 old queue is under high pressure. Modern TCP stacks deal
 well with reorders if they happen not too often.
 
+A flow offloaded to a TLS device that keeps per-flow TX state in
+the device switches txq only once it has no packets in flight.
+
 To disable this feature, set the value to 0.
 
 Default : 1000

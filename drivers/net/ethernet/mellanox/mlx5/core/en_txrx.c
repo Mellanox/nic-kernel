@@ -85,6 +85,31 @@ void mlx5e_trigger_irq(struct mlx5e_icosq *sq)
 	mlx5e_notify_hw(wq, sq->pc, sq->uar_map, &nopwqe->ctrl);
 }
 
+/* An armed CQ raises an event for the CQEs that no event has reported yet.
+ * Once this poll drained the ICOSQ CQ, the CQE of any WQE still in flight is
+ * one of them. If none is in flight, post a NOP for one. NOPs are thus posted
+ * only on an idle ICOSQ, and at most one of them is outstanding.
+ */
+static bool mlx5e_channel_force_irq(struct mlx5e_channel *c, bool ico_drained)
+{
+	struct mlx5e_icosq *icosq = &c->icosq;
+	bool sync_locked, forced = false;
+
+	if (unlikely(!ico_drained))
+		return false;
+
+	sync_locked = mlx5e_icosq_sync_lock(icosq);
+	if (likely(test_bit(MLX5E_SQ_STATE_ENABLED, &icosq->state) &&
+		   !test_bit(MLX5E_SQ_STATE_RECOVERING, &icosq->state))) {
+		if (icosq->pc == icosq->cc)
+			mlx5e_trigger_irq(icosq);
+		forced = true;
+	}
+	mlx5e_icosq_sync_unlock(icosq, sync_locked);
+
+	return forced;
+}
+
 static bool mlx5e_napi_xsk_post(struct mlx5e_xdpsq *xsksq, struct mlx5e_rq *xskrq)
 {
 	bool need_wakeup = xsk_uses_need_wakeup(xskrq->xsk_pool);
@@ -131,8 +156,8 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 	struct mlx5e_txqsq __rcu **qos_sqs;
 	struct mlx5e_rq *xskrq = &c->xskrq;
 	struct mlx5e_rq *rq = &c->rq;
-	bool aff_change = false;
 	bool busy_xsk = false;
+	bool ico_drained;
 	bool busy = false;
 	int work_done = 0;
 	u16 qos_sqs_size;
@@ -179,7 +204,7 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 
 	busy |= work_done == budget;
 
-	mlx5e_poll_ico_cq(&c->icosq.cq);
+	ico_drained = mlx5e_poll_ico_cq(&c->icosq.cq) < MLX5E_TX_CQ_POLL_BUDGET;
 	if (aicosq) {
 		if (mlx5e_poll_ico_cq(&aicosq->cq))
 			/* Don't clear the flag if nothing was polled to prevent
@@ -207,12 +232,18 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 				rq);
 
 	if (busy) {
-		if (likely(mlx5e_channel_no_affinity_change(c))) {
+		/* napi_complete_done() fails under busy polling, don't exit. */
+		if (likely(test_bit(NAPI_STATE_IN_BUSY_POLL, &napi->state) ||
+			   mlx5e_channel_no_affinity_change(c))) {
 			work_done = budget;
 			goto out;
 		}
 		ch_stats->aff_change++;
-		aff_change = true;
+		if (unlikely(!mlx5e_channel_force_irq(c, ico_drained))) {
+			/* No guaranteed event; poll another round. */
+			work_done = budget;
+			goto out;
+		}
 		if (work_done == budget)
 			work_done--;
 	}
@@ -221,6 +252,8 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 		goto out;
 
 	ch_stats->arm++;
+	if (unlikely(busy))
+		ch_stats->force_irq++;
 
 	for (i = 0; i < c->num_tc; i++) {
 		mlx5e_handle_tx_dim(&c->sq[i]);
@@ -250,11 +283,6 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 		}
 		if (c->xdpsq)
 			mlx5e_cq_arm(&c->xdpsq->cq);
-	}
-
-	if (unlikely(aff_change && busy_xsk)) {
-		mlx5e_trigger_napi_async_icosq(c);
-		ch_stats->force_irq++;
 	}
 
 out:

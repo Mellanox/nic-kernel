@@ -11113,7 +11113,9 @@ struct mlx5_ifc_mcam_access_reg_bits {
 	u8         mrtc[0x1];
 	u8         regs_44_to_41[0x4];
 	u8         mfrl[0x1];
-	u8         regs_39_to_32[0x8];
+	u8         regs_39_to_37[0x3];
+	u8         mnvda[0x1];
+	u8         regs_35_to_32[0x4];
 
 	u8         regs_31_to_11[0x15];
 	u8         mtmp[0x1];
@@ -12463,8 +12465,8 @@ struct mlx5_ifc_lagc_bits {
 	u8         reserved_at_18[0x5];
 	u8         lag_state[0x3];
 
-	u8         reserved_at_20[0xc];
-	u8         active_port[0x4];
+	u8         reserved_at_20[0x8];
+	u8         active_port[0x8];
 	u8         reserved_at_30[0x4];
 	u8         tx_remap_affinity_2[0x4];
 	u8         reserved_at_38[0x4];

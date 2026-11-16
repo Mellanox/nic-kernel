@@ -1235,6 +1235,11 @@ static u8 mlx5e_build_icosq_log_wq_sz(struct mlx5_core_dev *mdev,
 
 	wqebbs += mlx5e_max_xsk_wqebbs(mdev, params);
 
+	/* NOPs that trigger NAPI: mlx5e_trigger_napi_icosq() and
+	 * mlx5e_channel_force_irq().
+	 */
+	wqebbs += 2;
+
 	/* UMR WQEs don't cross the page boundary, they are padded with NOPs.
 	 * This padding is always smaller than the max WQE size. That gives us
 	 * at least (PAGE_SIZE - (max WQE size - MLX5_SEND_WQE_BB)) useful bytes
