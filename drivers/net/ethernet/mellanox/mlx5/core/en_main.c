@@ -3421,6 +3421,103 @@ static int mlx5e_switch_priv_params(struct mlx5e_priv *priv,
 	return 0;
 }
 
+/* Time for the TX SQs of deactivated channels to complete their WQEs. */
+#define MLX5E_SQ_DRAIN_TIMEOUT 100 /* msecs */
+
+/* Returns 1 if the SQ still has pending WQEs, and records the first such SQ. */
+static int mlx5e_drain_txqsq(struct mlx5e_txqsq *sq,
+			     struct mlx5e_txqsq **pending)
+{
+	if (mlx5e_txqsq_drain(sq))
+		return 0;
+
+	if (!*pending)
+		*pending = sq;
+
+	return 1;
+}
+
+/* Returns the number of the channel's TX SQs that still have pending WQEs. */
+static int mlx5e_drain_channel_txqsqs(struct mlx5e_channel *c,
+				      struct mlx5e_txqsq **pending)
+{
+	struct mlx5e_txqsq __rcu **qos_sqs;
+	int num_pending = 0;
+	int i;
+
+	for (i = 0; i < c->num_tc; i++)
+		num_pending += mlx5e_drain_txqsq(&c->sq[i], pending);
+
+	qos_sqs = mlx5e_state_dereference(c->priv, c->qos_sqs);
+	if (!qos_sqs)
+		return num_pending;
+
+	for (i = 0; i < c->qos_sqs_size; i++) {
+		struct mlx5e_txqsq *sq;
+
+		sq = mlx5e_state_dereference(c->priv, qos_sqs[i]);
+		if (sq)
+			num_pending += mlx5e_drain_txqsq(sq, pending);
+	}
+
+	return num_pending;
+}
+
+/* Returns the number of the PTP channel's TX SQs that still have pending
+ * WQEs.
+ */
+static int mlx5e_drain_ptp_txqsqs(struct mlx5e_ptp *ptp,
+				  struct mlx5e_txqsq **pending)
+{
+	int num_pending = 0;
+	int tc;
+
+	if (!test_bit(MLX5E_PTP_STATE_TX, ptp->state))
+		return 0;
+
+	for (tc = 0; tc < ptp->num_tc; tc++)
+		num_pending += mlx5e_drain_txqsq(&ptp->ptpsq[tc].txqsq, pending);
+
+	return num_pending;
+}
+
+/* Wait for the TX SQs of deactivated channels to complete all their WQEs,
+ * so that none of them executes concurrently with the new SQs.
+ * This includes the PTP SQs: tc skbedit can steer any skb to them.
+ */
+static bool mlx5e_drain_channels_txqsqs(struct mlx5e_channels *chs)
+{
+	unsigned long exp_time;
+
+	exp_time = jiffies + msecs_to_jiffies(MLX5E_SQ_DRAIN_TIMEOUT);
+	for (;;) {
+		struct mlx5e_txqsq *pending = NULL;
+		int num_pending = 0;
+		int i;
+
+		for (i = 0; i < chs->num; i++)
+			num_pending += mlx5e_drain_channel_txqsqs(chs->c[i],
+								  &pending);
+		if (chs->ptp)
+			num_pending += mlx5e_drain_ptp_txqsqs(chs->ptp,
+							      &pending);
+
+		if (!num_pending)
+			return true;
+
+		if (time_after(jiffies, exp_time)) {
+			netdev_warn(pending->netdev,
+				    "Old TX SQs not drained in %d msecs (%d pending, e.g. SQ 0x%x txq %d cc 0x%x pc 0x%x), closing the old channels first\n",
+				    MLX5E_SQ_DRAIN_TIMEOUT, num_pending,
+				    pending->sqn, pending->txq_ix,
+				    pending->cc, pending->pc);
+			return false;
+		}
+
+		usleep_range(10, 20);
+	}
+}
+
 static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 				      struct mlx5e_channels *old_chs,
 				      struct mlx5e_channels *new_chs,
@@ -3428,6 +3525,7 @@ static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 				      void *context)
 {
 	struct net_device *netdev = priv->netdev;
+	bool defer_close = false;
 	int carrier_ok;
 	int err = 0;
 
@@ -3450,7 +3548,10 @@ static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 	}
 
 	mlx5e_set_xdp_feature(priv);
-	if (!MLX5_CAP_GEN(priv->mdev, tis_tir_td_order))
+
+	defer_close = MLX5_CAP_GEN(priv->mdev, tis_tir_td_order) &&
+		      mlx5e_drain_channels_txqsqs(old_chs);
+	if (!defer_close)
 		mlx5e_close_channels(old_chs);
 	priv->profile->update_rx(priv);
 
@@ -3461,6 +3562,9 @@ out:
 	/* return carrier back if needed */
 	if (carrier_ok)
 		netif_carrier_on(netdev);
+
+	if (defer_close)
+		mlx5e_close_channels(old_chs);
 
 	return err;
 }
@@ -3498,9 +3602,6 @@ int mlx5e_safe_switch_params(struct mlx5e_priv *priv,
 					 preactivate, context);
 	if (err)
 		goto err_close;
-
-	if (MLX5_CAP_GEN(priv->mdev, tis_tir_td_order))
-		mlx5e_close_channels(old_chs);
 
 	kfree(new_chs);
 	kfree(old_chs);
