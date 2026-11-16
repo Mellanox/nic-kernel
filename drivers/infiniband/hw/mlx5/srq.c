@@ -135,8 +135,8 @@ static int create_srq_kernel(struct mlx5_ib_dev *dev, struct mlx5_ib_srq *srq,
 			cpu_to_be16((i + 1) & (srq->msrq.max - 1));
 	}
 
-	mlx5_ib_dbg(dev, "srq->buf.page_shift = %d\n", srq->buf.page_shift);
-	in->pas = kvcalloc(srq->buf.npages, sizeof(*in->pas), GFP_KERNEL);
+	mlx5_ib_dbg(dev, "srq->buf.log_frag_sz = %d\n", srq->buf.log_frag_sz);
+	in->pas = kvcalloc(srq->buf.num_frags, sizeof(*in->pas), GFP_KERNEL);
 	if (!in->pas) {
 		err = -ENOMEM;
 		goto err_buf;
@@ -150,7 +150,7 @@ static int create_srq_kernel(struct mlx5_ib_dev *dev, struct mlx5_ib_srq *srq,
 	}
 	srq->wq_sig = 0;
 
-	in->log_page_size = srq->buf.page_shift - MLX5_ADAPTER_PAGE_SHIFT;
+	in->log_page_size = srq->buf.log_frag_sz - MLX5_ADAPTER_PAGE_SHIFT;
 	if (MLX5_CAP_GEN(dev->mdev, cqe_version) == MLX5_CQE_VERSION_V1 &&
 	    in->type != IB_SRQT_BASIC)
 		in->user_index = MLX5_IB_DEFAULT_UIDX;
