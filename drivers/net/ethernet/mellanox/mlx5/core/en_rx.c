@@ -626,7 +626,7 @@ mlx5e_free_rx_mpwqe(struct mlx5e_rq *rq, struct mlx5e_mpw_info *wi)
 	}
 }
 
-static void mlx5e_post_rx_mpwqe(struct mlx5e_rq *rq, u8 n)
+static void mlx5e_post_rx_mpwqe(struct mlx5e_rq *rq, u16 n)
 {
 	struct mlx5_wq_ll *wq = &rq->mpwqe.wq;
 
@@ -933,11 +933,11 @@ static void mlx5e_reclaim_mpwqe_pages(struct mlx5e_rq *rq, int head,
 INDIRECT_CALLABLE_SCOPE bool mlx5e_post_rx_mpwqes(struct mlx5e_rq *rq)
 {
 	struct mlx5_wq_ll *wq = &rq->mpwqe.wq;
-	u8  umr_completed = rq->mpwqe.umr_completed;
+	u16 umr_completed = rq->mpwqe.umr_completed;
 	struct mlx5e_icosq *sq = rq->icosq;
 	bool reclaimed = false;
 	int alloc_err = 0;
-	u8  missing, i;
+	u16 missing, i;
 	u16 head;
 
 	if (unlikely(!test_bit(MLX5E_RQ_STATE_ENABLED, &rq->state)))
