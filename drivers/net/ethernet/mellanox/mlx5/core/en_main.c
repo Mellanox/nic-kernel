@@ -3518,6 +3518,23 @@ static bool mlx5e_drain_channels_txqsqs(struct mlx5e_channels *chs)
 	}
 }
 
+/* The old and the new channel of the same index are bound to the same
+ * XSK pool, which is lockless and expects a single user at a time.
+ * Close the old XSK queues before the new ones are activated, even
+ * when the closure of the rest of the old channels is deferred.
+ */
+static void mlx5e_close_channels_xsk(struct mlx5e_channels *chs)
+{
+	int i;
+
+	for (i = 0; i < chs->num; i++) {
+		struct mlx5e_channel *c = chs->c[i];
+
+		if (test_bit(MLX5E_CHANNEL_STATE_XSK, c->state))
+			mlx5e_close_xsk(c);
+	}
+}
+
 static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 				      struct mlx5e_channels *old_chs,
 				      struct mlx5e_channels *new_chs,
@@ -3553,6 +3570,8 @@ static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 		      mlx5e_drain_channels_txqsqs(old_chs);
 	if (!defer_close)
 		mlx5e_close_channels(old_chs);
+	else
+		mlx5e_close_channels_xsk(old_chs);
 	priv->profile->update_rx(priv);
 
 	mlx5e_selq_apply(&priv->selq);
