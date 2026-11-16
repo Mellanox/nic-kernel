@@ -2649,7 +2649,9 @@ static int mlx5e_flower_parse_meta(struct net_device *filter_dev,
 	struct flow_rule *rule = flow_cls_offload_flow_rule(f);
 	struct netlink_ext_ack *extack = f->common.extack;
 	struct net_device *ingress_dev;
+	netdevice_tracker dev_tracker;
 	struct flow_match_meta match;
+	int err = 0;
 
 	if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_META))
 		return 0;
@@ -2669,8 +2671,9 @@ static int mlx5e_flower_parse_meta(struct net_device *filter_dev,
 		return -EOPNOTSUPP;
 	}
 
-	ingress_dev = __dev_get_by_index(dev_net(filter_dev),
-					 match.key->ingress_ifindex);
+	ingress_dev = netdev_get_by_index(dev_net(filter_dev),
+					  match.key->ingress_ifindex,
+					  &dev_tracker, GFP_KERNEL);
 	if (!ingress_dev) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Can't find the ingress port to match on");
@@ -2680,10 +2683,11 @@ static int mlx5e_flower_parse_meta(struct net_device *filter_dev,
 	if (ingress_dev != filter_dev) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Can't match on the ingress filter port");
-		return -EOPNOTSUPP;
+		err = -EOPNOTSUPP;
 	}
 
-	return 0;
+	netdev_put(ingress_dev, &dev_tracker);
+	return err;
 }
 
 static bool skip_key_basic(struct net_device *filter_dev,
