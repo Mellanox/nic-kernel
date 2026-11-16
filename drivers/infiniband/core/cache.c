@@ -52,7 +52,6 @@ struct ib_pkey_cache {
 struct ib_update_work {
 	struct work_struct work;
 	struct ib_event event;
-	bool enforce_security;
 };
 
 union ib_gid zgid;
@@ -1536,7 +1535,8 @@ static void ib_cache_event_task(struct work_struct *_work)
 			      work->event.event == IB_EVENT_GID_CHANGE ||
 			      work->event.event == IB_EVENT_CLIENT_REREGISTER,
 			      work->event.event == IB_EVENT_PKEY_CHANGE,
-			      work->enforce_security);
+			      work->event.event == IB_EVENT_PKEY_CHANGE ||
+			      work->event.event == IB_EVENT_GID_CHANGE);
 
 	/* GID event is notified already for individual GID entries by
 	 * dispatch_gid_change_event(). Hence, notifiy for rest of the
@@ -1589,10 +1589,6 @@ void ib_dispatch_event(const struct ib_event *event)
 		INIT_WORK(&work->work, ib_generic_event_task);
 
 	work->event = *event;
-	if (event->event == IB_EVENT_PKEY_CHANGE ||
-	    event->event == IB_EVENT_GID_CHANGE)
-		work->enforce_security = true;
-
 	queue_work(ib_wq, &work->work);
 }
 EXPORT_SYMBOL(ib_dispatch_event);
