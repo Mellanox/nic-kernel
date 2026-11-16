@@ -139,6 +139,13 @@
 #define LAG_NUM_PRIOS 1
 #define LAG_MIN_LEVEL (OFFLOADS_MIN_LEVEL + KERNEL_RX_MACSEC_MIN_LEVEL + 1)
 
+/* After LAG demux: crypto state is per function.
+ * Shared dispatch table followed by the deepest protocol's table chain.
+ */
+#define RX_CRYPTO_NUM_PRIOS  1
+#define RX_CRYPTO_NUM_LEVELS 3
+#define RX_CRYPTO_MIN_LEVEL (LAG_MIN_LEVEL + RX_CRYPTO_NUM_PRIOS)
+
 #define KERNEL_TX_IPSEC_NUM_PRIOS  1
 #define KERNEL_TX_IPSEC_NUM_LEVELS 4
 #define KERNEL_TX_IPSEC_MIN_LEVEL        (KERNEL_TX_IPSEC_NUM_LEVELS)
@@ -164,7 +171,7 @@ static struct init_tree_node {
 	enum mlx5_flow_table_miss_action def_miss_action;
 } root_fs = {
 	.type = FS_TYPE_NAMESPACE,
-	.ar_size = 8,
+	.ar_size = 9,
 	  .children = (struct init_tree_node[]){
 		  ADD_PRIO(0, BY_PASS_MIN_LEVEL, 0, FS_CHAINING_CAPS,
 			   ADD_NS(MLX5_FLOW_TABLE_MISS_ACTION_DEF,
@@ -178,6 +185,10 @@ static struct init_tree_node {
 			   ADD_NS(MLX5_FLOW_TABLE_MISS_ACTION_DEF,
 				  ADD_MULTIPLE_PRIO(LAG_NUM_PRIOS,
 						    LAG_PRIO_NUM_LEVELS))),
+		  ADD_PRIO(0, RX_CRYPTO_MIN_LEVEL, 0, FS_CHAINING_CAPS,
+			   ADD_NS(MLX5_FLOW_TABLE_MISS_ACTION_DEF,
+				  ADD_MULTIPLE_PRIO(RX_CRYPTO_NUM_PRIOS,
+						    RX_CRYPTO_NUM_LEVELS))),
 		  ADD_PRIO(0, OFFLOADS_MIN_LEVEL, 0, FS_CHAINING_CAPS,
 			   ADD_NS(MLX5_FLOW_TABLE_MISS_ACTION_DEF,
 				  ADD_MULTIPLE_PRIO(OFFLOADS_NUM_PRIOS,
@@ -2679,6 +2690,7 @@ static bool is_nic_rx_ns(enum mlx5_flow_namespace_type type)
 	case MLX5_FLOW_NAMESPACE_BYPASS:
 	case MLX5_FLOW_NAMESPACE_KERNEL_RX_MACSEC:
 	case MLX5_FLOW_NAMESPACE_LAG:
+	case MLX5_FLOW_NAMESPACE_RX_CRYPTO:
 	case MLX5_FLOW_NAMESPACE_OFFLOADS:
 	case MLX5_FLOW_NAMESPACE_ETHTOOL:
 	case MLX5_FLOW_NAMESPACE_KERNEL:
@@ -3859,6 +3871,7 @@ void mlx5_fs_core_cleanup(struct mlx5_core_dev *dev)
 
 	WARN_ON(!xa_empty(&steering->esw_egress_root_ns));
 	WARN_ON(!xa_empty(&steering->esw_ingress_root_ns));
+	WARN_ON(steering->rx_crypto.refcnt);
 	xa_destroy(&steering->esw_egress_root_ns);
 	xa_destroy(&steering->esw_ingress_root_ns);
 
@@ -3967,6 +3980,7 @@ void mlx5_fs_core_free(struct mlx5_core_dev *dev)
 
 	kmem_cache_destroy(steering->ftes_cache);
 	kmem_cache_destroy(steering->fgs_cache);
+	mutex_destroy(&steering->rx_crypto.lock);
 	kfree(steering);
 	mlx5_ft_pool_destroy(dev);
 	mlx5_cleanup_fc_stats(dev);
@@ -3993,6 +4007,7 @@ int mlx5_fs_core_alloc(struct mlx5_core_dev *dev)
 	}
 
 	steering->dev = dev;
+	mutex_init(&steering->rx_crypto.lock);
 	dev->priv.steering = steering;
 
 	if (mlx5_fs_dr_is_supported(dev))

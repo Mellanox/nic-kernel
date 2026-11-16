@@ -125,6 +125,13 @@ enum mlx5_flow_steering_capabilty {
 	MLX5_FLOW_STEERING_CAP_DUPLICATE_MATCH = 1UL << 3,
 };
 
+/* Shared RX crypto dispatch table, see lib/rx_crypto.c */
+struct mlx5_rx_crypto {
+	struct mutex lock; /* protects refcnt and ft */
+	u32 refcnt;
+	struct mlx5_flow_table *ft;
+};
+
 struct mlx5_flow_steering {
 	struct mlx5_core_dev *dev;
 	enum   mlx5_flow_steering_mode	mode;
@@ -145,6 +152,7 @@ struct mlx5_flow_steering {
 	struct mlx5_flow_root_namespace **rdma_transport_tx_root_ns;
 	int rdma_transport_rx_vports;
 	int rdma_transport_tx_vports;
+	struct mlx5_rx_crypto rx_crypto;
 };
 
 struct fs_node {

@@ -996,6 +996,7 @@ static int mlx5_cmd_modify_header_alloc(struct mlx5_flow_root_namespace *ns,
 		table_type = FS_FT_FDB;
 		break;
 	case MLX5_FLOW_NAMESPACE_KERNEL_RX_MACSEC:
+	case MLX5_FLOW_NAMESPACE_RX_CRYPTO:
 	case MLX5_FLOW_NAMESPACE_KERNEL:
 	case MLX5_FLOW_NAMESPACE_BYPASS:
 		max_actions = MLX5_CAP_FLOWTABLE_NIC_RX(dev, max_modify_header_actions);
