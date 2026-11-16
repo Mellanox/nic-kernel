@@ -1661,9 +1661,14 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	 * 2) Or rtx queue is empty.
 	 *    This mitigates above case if ACK packets for
 	 *    all prior packets were already processed.
+	 * A SOCK_STICKY_TXQ socket (stateful TX offload) relies on 1) only:
+	 * a spurious retransmit clone may still hold wmem and reference
+	 * device state from the old queue when the rtx queue is already
+	 * empty.
 	 */
 	skb->ooo_okay = sk_wmem_alloc_get(sk) < SKB_TRUESIZE(1) ||
-			tcp_rtx_queue_empty(sk);
+			(tcp_rtx_queue_empty(sk) &&
+			 !sock_flag(sk, SOCK_STICKY_TXQ));
 
 	/* If we had to use memory reserve to allocate this skb,
 	 * this might cause drops if packet is looped back :

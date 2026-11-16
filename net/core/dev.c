@@ -4894,7 +4894,8 @@ int sk_tx_queue_get(const struct sock *sk)
 
 	resel = READ_ONCE(sock_net(sk)->core.sysctl_txq_reselection);
 	if (resel && time_is_before_jiffies(
-			READ_ONCE(sk->sk_tx_queue_mapping_jiffies) + resel))
+			READ_ONCE(sk->sk_tx_queue_mapping_jiffies) + resel) &&
+	    !sk_tx_queue_pinned(sk))
 		return -1;
 
 	return val;

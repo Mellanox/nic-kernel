@@ -190,6 +190,26 @@ TLS handling and confirms the sequence number matches its expectation.
 The device performs encryption and authentication of the record data.
 It replaces the authentication tag and TCP checksum with correct values.
 
+A device may keep the TLS state of a connection in the device, and update it
+as it processes the TX queues, with no ordering between the queues. Its driver
+sets ``TLSDEV_F_STICKY_TXQ`` in ``tlsdev_ops->flags``, and the stack then keeps
+the TX queue selection of an offloaded socket stable while the socket has
+packets in flight (``SOCK_STICKY_TXQ``): the cached queue is neither cleared on
+route changes nor expired by ``txq_reselection_ms``, and TCP sets
+``skb->ooo_okay`` only when no packet of the socket is in flight. Packets in
+flight are tracked by ``sk_wmem_alloc``, so the driver must not free an skb
+before the device is done with all the work it posted for it, even when the skb
+is dropped.
+
+The rest is up to the driver. If its ``ndo_select_queue`` derives the queue from
+more than the socket's cached queue, it must keep its choice stable as well, and
+may change it only for an skb with ``ooo_okay`` set. A queue change driven by
+the skb's priority or traffic class then waits until the socket has no packets
+in flight, which under sustained traffic may never happen. When TX queues are
+removed, the device must be done with their work before the flows that move from
+them start transmitting on other queues. ``tc`` ``skbedit queue_mapping``
+bypasses queue selection and is not supported for such sockets.
+
 RX
 --
 

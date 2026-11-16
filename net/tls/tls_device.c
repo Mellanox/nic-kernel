@@ -1197,6 +1197,9 @@ int tls_set_device_offload(struct sock *sk)
 	tls_device_attach(ctx, sk, netdev);
 	up_read(&device_offload_lock);
 
+	if (netdev->tlsdev_ops->flags & TLSDEV_F_STICKY_TXQ)
+		sock_set_flag(sk, SOCK_STICKY_TXQ);
+
 	/* following this assignment tls_is_skb_tx_device_offloaded
 	 * will return true and the context might be accessed
 	 * by the netdev's xmit function.
