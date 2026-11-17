@@ -3075,14 +3075,12 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, u32 port, u8 sub_type,
 	switch (sub_type) {
 	case MLX5_PORT_CHANGE_SUBTYPE_ACTIVE:
 	case MLX5_PORT_CHANGE_SUBTYPE_DOWN:
-	case MLX5_PORT_CHANGE_SUBTYPE_INITIALIZED:
-		if (ibdev->ib_active) {
-			struct ib_event speed_event = {};
+	case MLX5_PORT_CHANGE_SUBTYPE_INITIALIZED: {
+		struct ib_event speed_event = {};
 
-			speed_event.device = &ibdev->ib_dev;
-			speed_event.event = IB_EVENT_DEVICE_SPEED_CHANGE;
-			ib_dispatch_event(&speed_event);
-		}
+		speed_event.device = &ibdev->ib_dev;
+		speed_event.event = IB_EVENT_DEVICE_SPEED_CHANGE;
+		ib_dispatch_event(&speed_event);
 
 		/* In RoCE, port up/down events are handled in
 		 * mlx5_netdev_event().
@@ -3094,6 +3092,7 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, u32 port, u8 sub_type,
 		ibev->event = (sub_type == MLX5_PORT_CHANGE_SUBTYPE_ACTIVE) ?
 				IB_EVENT_PORT_ACTIVE : IB_EVENT_PORT_ERR;
 		break;
+	}
 
 	case MLX5_PORT_CHANGE_SUBTYPE_LID:
 		ibev->event = IB_EVENT_LID_CHANGE;
@@ -3200,6 +3199,15 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 		ibdev = work->dev;
 	}
 
+	/*
+	 * Teardown may have cancelled the work the handlers below rearm. A
+	 * device seen active here stays usable until this returns: the system
+	 * error handler runs on this same ordered workqueue, and teardown
+	 * flushes it before releasing anything used below.
+	 */
+	if (!mlx5_ib_dev_active(ibdev))
+		goto out;
+
 	switch (work->event) {
 	case MLX5_EVENT_TYPE_PORT_CHANGE: {
 		struct mlx5_eqe *eqe = work->param;
@@ -3217,9 +3225,7 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 	}
 
 	ibev.device = &ibdev->ib_dev;
-
-	if (ibdev->ib_active)
-		ib_dispatch_event(&ibev);
+	ib_dispatch_event(&ibev);
 
 out:
 	kfree(work);
@@ -5098,18 +5104,32 @@ static int mlx5_ib_stage_dev_notifier_init(struct mlx5_ib_dev *dev)
 	dev->mdev_events.notifier_call = mlx5_ib_event;
 	mlx5_notifier_register(dev->mdev, &dev->mdev_events);
 
-	mlx5r_macsec_event_register(dev);
-
 	return 0;
 }
 
 static void mlx5_ib_stage_dev_notifier_cleanup(struct mlx5_ib_dev *dev)
 {
+	mlx5_notifier_unregister(dev->mdev, &dev->mdev_events);
+	flush_workqueue(mlx5_ib_event_wq);
+}
+
+static int mlx5_ib_stage_macsec_notifier_init(struct mlx5_ib_dev *dev)
+{
+	mlx5r_macsec_event_register(dev);
+	return 0;
+}
+
+static void mlx5_ib_stage_macsec_notifier_cleanup(struct mlx5_ib_dev *dev)
+{
+	mlx5r_macsec_event_unregister(dev);
+}
+
+static void mlx5_ib_stage_event_flush_cleanup(struct mlx5_ib_dev *dev)
+{
 	struct mlx5_ib_resources *devr = &dev->devr;
 	int port;
 
-	mlx5r_macsec_event_unregister(dev);
-	mlx5_notifier_unregister(dev->mdev, &dev->mdev_events);
+	flush_workqueue(mlx5_ib_event_wq);
 
 	for (port = 0; port < ARRAY_SIZE(devr->ports); ++port)
 		cancel_work_sync(&devr->ports[port].pkey_change_work);
@@ -5233,12 +5253,15 @@ static const struct mlx5_ib_profile pf_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_SYS_ERROR_NOTIFIER,
 		     mlx5_ib_stage_sys_error_notifier_init,
 		     mlx5_ib_stage_sys_error_notifier_cleanup),
-	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
-		     mlx5_ib_stage_ib_reg_init,
-		     mlx5_ib_stage_ib_reg_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
 		     mlx5_ib_stage_dev_notifier_init,
 		     mlx5_ib_stage_dev_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
+		     mlx5_ib_stage_ib_reg_init,
+		     mlx5_ib_stage_ib_reg_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_MACSEC_NOTIFIER,
+		     mlx5_ib_stage_macsec_notifier_init,
+		     mlx5_ib_stage_macsec_notifier_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_POST_IB_REG_UMR,
 		     mlx5_ib_stage_post_ib_reg_umr_init,
 		     NULL),
@@ -5248,6 +5271,9 @@ static const struct mlx5_ib_profile pf_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_RESTRACK,
 		     mlx5_ib_restrack_init,
 		     NULL),
+	STAGE_CREATE(MLX5_IB_STAGE_EVENT_FLUSH,
+		     NULL,
+		     mlx5_ib_stage_event_flush_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_ACTIVE,
 		     mlx5_ib_stage_active_init,
 		     mlx5_ib_stage_active_cleanup),
@@ -5296,12 +5322,15 @@ const struct mlx5_ib_profile raw_eth_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_SYS_ERROR_NOTIFIER,
 		     mlx5_ib_stage_sys_error_notifier_init,
 		     mlx5_ib_stage_sys_error_notifier_cleanup),
-	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
-		     mlx5_ib_stage_ib_reg_init,
-		     mlx5_ib_stage_ib_reg_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_DEVICE_NOTIFIER,
 		     mlx5_ib_stage_dev_notifier_init,
 		     mlx5_ib_stage_dev_notifier_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_IB_REG,
+		     mlx5_ib_stage_ib_reg_init,
+		     mlx5_ib_stage_ib_reg_cleanup),
+	STAGE_CREATE(MLX5_IB_STAGE_MACSEC_NOTIFIER,
+		     mlx5_ib_stage_macsec_notifier_init,
+		     mlx5_ib_stage_macsec_notifier_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_POST_IB_REG_UMR,
 		     mlx5_ib_stage_post_ib_reg_umr_init,
 		     NULL),
@@ -5311,6 +5340,9 @@ const struct mlx5_ib_profile raw_eth_profile = {
 	STAGE_CREATE(MLX5_IB_STAGE_RESTRACK,
 		     mlx5_ib_restrack_init,
 		     NULL),
+	STAGE_CREATE(MLX5_IB_STAGE_EVENT_FLUSH,
+		     NULL,
+		     mlx5_ib_stage_event_flush_cleanup),
 	STAGE_CREATE(MLX5_IB_STAGE_ACTIVE,
 		     mlx5_ib_stage_active_init,
 		     mlx5_ib_stage_active_cleanup),
