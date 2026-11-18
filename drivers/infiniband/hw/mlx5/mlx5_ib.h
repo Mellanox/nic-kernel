@@ -854,6 +854,8 @@ struct mlx5_ib_port {
 	struct mlx5_ib_dbg_cc_params *dbg_cc_params;
 	struct mlx5_roce roce;
 	struct mlx5_eswitch_rep		*rep;
+	/* Port change subtypes to replay, protected by pending_events_lock */
+	unsigned long			pending_port_events;
 #ifdef CONFIG_MLX5_MACSEC
 	struct mlx5_reserved_gids *reserved_gids;
 #endif
@@ -1094,13 +1096,21 @@ struct mlx5_ib_dev {
 	 */
 	struct mutex			data_direct_lock;
 	struct notifier_block		mdev_events;
+	/* Protects ib_active writes and the ports' pending_port_events */
+	spinlock_t			pending_events_lock;
+	struct work_struct		pending_events_work;
 	struct notifier_block		sys_error_events;
 	struct notifier_block           lag_events;
 	int				num_ports;
 	/* serialize update of capability mask
 	 */
 	struct mutex			cap_mask_mutex;
-	u8				ib_active:1;
+	/*
+	 * Written under pending_events_lock, and read under it when the read
+	 * must be ordered with activation or with port event recording and
+	 * replay.
+	 */
+	bool				ib_active;
 	u8				is_rep:1;
 	u8				lag_active:1;
 	u8				fill_delay;
