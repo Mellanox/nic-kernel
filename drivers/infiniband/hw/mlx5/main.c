@@ -3118,6 +3118,73 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, u32 port, u8 sub_type,
 	return 0;
 }
 
+#define MLX5_IB_PORT_CONFIG_SUBTYPES			\
+	(BIT(MLX5_PORT_CHANGE_SUBTYPE_LID) |		\
+	 BIT(MLX5_PORT_CHANGE_SUBTYPE_PKEY) |		\
+	 BIT(MLX5_PORT_CHANGE_SUBTYPE_CLIENT_REREG))
+
+static void record_port_event(struct mlx5_ib_dev *dev, u32 port, u8 sub_type)
+{
+	lockdep_assert_held(&dev->pending_events_lock);
+
+	/*
+	 * Only InfiniBand ports are recorded, as all their port events come
+	 * through this notifier. Port state changes are not, as unlike
+	 * configuration changes they are sensitive to the order in which
+	 * ib_core delivers the replayed events.
+	 */
+	if (!rdma_is_port_valid(&dev->ib_dev, port) ||
+	    mlx5_ib_port_link_layer(&dev->ib_dev, port) !=
+		    IB_LINK_LAYER_INFINIBAND ||
+	    sub_type >= BITS_PER_LONG ||
+	    !(BIT(sub_type) & MLX5_IB_PORT_CONFIG_SUBTYPES))
+		return;
+
+	dev->port[port - 1].pending_port_events |= BIT(sub_type);
+}
+
+static bool mlx5_ib_dev_active(struct mlx5_ib_dev *dev)
+{
+	bool active;
+
+	spin_lock_irq(&dev->pending_events_lock);
+	active = dev->ib_active;
+	spin_unlock_irq(&dev->pending_events_lock);
+
+	return active;
+}
+
+static void mlx5_ib_replay_port_events(struct work_struct *_work)
+{
+	struct mlx5_ib_dev *dev = container_of(_work, struct mlx5_ib_dev,
+					       pending_events_work);
+	struct ib_event ibev = { .device = &dev->ib_dev };
+	unsigned long pending;
+	u32 port, sub_type;
+	int err;
+
+	rdma_for_each_port(&dev->ib_dev, port) {
+		spin_lock_irq(&dev->pending_events_lock);
+		pending = dev->port[port - 1].pending_port_events;
+		dev->port[port - 1].pending_port_events = 0;
+		spin_unlock_irq(&dev->pending_events_lock);
+
+		for_each_set_bit(sub_type, &pending, BITS_PER_LONG) {
+			if (!mlx5_ib_dev_active(dev))
+				return;
+
+			if (handle_port_change(dev, port, sub_type, &ibev))
+				continue;
+
+			/* Processed before events queued behind this work */
+			err = ib_dispatch_event_sync(&ibev);
+			if (err)
+				mlx5_ib_warn(dev, "replayed event %d on port %u failed, %d\n",
+					     ibev.event, port, err);
+		}
+	}
+}
+
 static void mlx5_ib_handle_event(struct work_struct *_work)
 {
 	struct mlx5_ib_event_work *work =
@@ -3161,14 +3228,31 @@ out:
 static int mlx5_ib_event(struct notifier_block *nb,
 			 unsigned long event, void *param)
 {
+	struct mlx5_ib_dev *dev =
+		container_of(nb, struct mlx5_ib_dev, mdev_events);
 	struct mlx5_ib_event_work *work;
+	unsigned long flags;
+
+	/* Until the device is active, keep only what is to be replayed */
+	spin_lock_irqsave(&dev->pending_events_lock, flags);
+	if (!dev->ib_active) {
+		if (event == MLX5_EVENT_TYPE_PORT_CHANGE) {
+			struct mlx5_eqe *eqe = param;
+
+			record_port_event(dev, mlx5_ib_eqe_port_num(eqe),
+					  eqe->sub_type);
+		}
+		spin_unlock_irqrestore(&dev->pending_events_lock, flags);
+		return NOTIFY_OK;
+	}
+	spin_unlock_irqrestore(&dev->pending_events_lock, flags);
 
 	work = kmalloc_obj(*work, GFP_ATOMIC);
 	if (!work)
 		return NOTIFY_DONE;
 
 	INIT_WORK(&work->work, mlx5_ib_handle_event);
-	work->dev = container_of(nb, struct mlx5_ib_dev, mdev_events);
+	work->dev = dev;
 	work->is_slave = false;
 	work->param = param;
 	work->event = event;
@@ -3203,6 +3287,7 @@ static void mlx5_ib_handle_sys_error_event(struct work_struct *_work)
 		container_of(_work, struct mlx5_ib_event_work, work);
 	struct mlx5_ib_dev *ibdev = work->dev;
 	struct ib_event ibev;
+	bool active;
 
 	ibev.event = IB_EVENT_DEVICE_FATAL;
 	mlx5_ib_handle_internal_error(ibdev);
@@ -3214,10 +3299,13 @@ static void mlx5_ib_handle_sys_error_event(struct work_struct *_work)
 		goto out;
 	}
 
-	if (ibdev->ib_active)
-		ib_dispatch_event(&ibev);
-
+	spin_lock_irq(&ibdev->pending_events_lock);
+	active = ibdev->ib_active;
 	ibdev->ib_active = false;
+	spin_unlock_irq(&ibdev->pending_events_lock);
+
+	if (active)
+		ib_dispatch_event(&ibev);
 out:
 	kfree(work);
 }
@@ -4460,6 +4548,8 @@ static int mlx5_ib_stage_init_init(struct mlx5_ib_dev *dev)
 	}
 
 	mutex_init(&dev->lb.mutex);
+	spin_lock_init(&dev->pending_events_lock);
+	INIT_WORK(&dev->pending_events_work, mlx5_ib_replay_port_events);
 
 	err = mlx5r_cmd_query_special_mkeys(dev);
 	if (err)
@@ -5027,13 +5117,31 @@ static void mlx5_ib_stage_dev_notifier_cleanup(struct mlx5_ib_dev *dev)
 
 static int mlx5_ib_stage_active_init(struct mlx5_ib_dev *dev)
 {
+	/*
+	 * Fail a device that hit a system error during probe, as the error
+	 * handler may already have run. The replay is queued in the same
+	 * critical section, so that it runs before any event the notifier
+	 * queues once it sees the device active.
+	 */
+	spin_lock_irq(&dev->pending_events_lock);
+	if (dev->mdev->state == MLX5_DEVICE_STATE_INTERNAL_ERROR) {
+		spin_unlock_irq(&dev->pending_events_lock);
+		return -EIO;
+	}
 	dev->ib_active = true;
+	queue_work(mlx5_ib_event_wq, &dev->pending_events_work);
+	spin_unlock_irq(&dev->pending_events_lock);
+
 	return 0;
 }
 
 static void mlx5_ib_stage_active_cleanup(struct mlx5_ib_dev *dev)
 {
+	spin_lock_irq(&dev->pending_events_lock);
 	dev->ib_active = false;
+	spin_unlock_irq(&dev->pending_events_lock);
+
+	cancel_work_sync(&dev->pending_events_work);
 }
 
 void __mlx5_ib_remove(struct mlx5_ib_dev *dev,
