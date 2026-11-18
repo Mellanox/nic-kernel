@@ -3041,10 +3041,15 @@ static void delay_drop_handler(struct work_struct *work)
 	mutex_unlock(&delay_drop->lock);
 }
 
+static u32 mlx5_ib_eqe_port_num(struct mlx5_eqe *eqe)
+{
+	return (eqe->data.port.port >> 4) & 0xf;
+}
+
 static void handle_general_event(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 				 struct ib_event *ibev)
 {
-	u32 port = (eqe->data.port.port >> 4) & 0xf;
+	u32 port = mlx5_ib_eqe_port_num(eqe);
 
 	switch (eqe->sub_type) {
 	case MLX5_GENERAL_SUBTYPE_DELAY_DROP_TIMEOUT:
@@ -3057,11 +3062,9 @@ static void handle_general_event(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe
 	}
 }
 
-static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
+static int handle_port_change(struct mlx5_ib_dev *ibdev, u32 port, u8 sub_type,
 			      struct ib_event *ibev)
 {
-	u32 port = (eqe->data.port.port >> 4) & 0xf;
-
 	if (!rdma_is_port_valid(&ibdev->ib_dev, port)) {
 		mlx5_ib_warn(ibdev, "warning: event on port %d\n", port);
 		return -EINVAL;
@@ -3069,7 +3072,7 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 
 	ibev->element.port_num = port;
 
-	switch (eqe->sub_type) {
+	switch (sub_type) {
 	case MLX5_PORT_CHANGE_SUBTYPE_ACTIVE:
 	case MLX5_PORT_CHANGE_SUBTYPE_DOWN:
 	case MLX5_PORT_CHANGE_SUBTYPE_INITIALIZED:
@@ -3088,7 +3091,7 @@ static int handle_port_change(struct mlx5_ib_dev *ibdev, struct mlx5_eqe *eqe,
 					    IB_LINK_LAYER_ETHERNET)
 			return -EINVAL;
 
-		ibev->event = (eqe->sub_type == MLX5_PORT_CHANGE_SUBTYPE_ACTIVE) ?
+		ibev->event = (sub_type == MLX5_PORT_CHANGE_SUBTYPE_ACTIVE) ?
 				IB_EVENT_PORT_ACTIVE : IB_EVENT_PORT_ERR;
 		break;
 
@@ -3131,10 +3134,14 @@ static void mlx5_ib_handle_event(struct work_struct *_work)
 	}
 
 	switch (work->event) {
-	case MLX5_EVENT_TYPE_PORT_CHANGE:
-		if (handle_port_change(ibdev, work->param, &ibev))
+	case MLX5_EVENT_TYPE_PORT_CHANGE: {
+		struct mlx5_eqe *eqe = work->param;
+
+		if (handle_port_change(ibdev, mlx5_ib_eqe_port_num(eqe),
+				       eqe->sub_type, &ibev))
 			goto out;
 		break;
+	}
 	case MLX5_EVENT_TYPE_GENERAL_EVENT:
 		handle_general_event(ibdev, work->param, &ibev);
 		fallthrough;
