@@ -291,6 +291,9 @@ void mlx5_data_direct_unregister(struct mlx5_core_dev *mdev,
 	if (!mlx5_data_direct_supported(mdev))
 		return;
 
+	if (!mdev->data_direct)
+		return;
+
 	reg = container_of(mdev->data_direct,
 			   struct mlx5_data_direct_registration, dd);
 	blocking_notifier_chain_unregister(&reg->users, nb);
