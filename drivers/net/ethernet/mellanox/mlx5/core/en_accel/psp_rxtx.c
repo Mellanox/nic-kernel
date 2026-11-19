@@ -118,12 +118,28 @@ bool mlx5e_psp_offload_handle_rx_skb(struct net_device *netdev, struct sk_buff *
 {
 	struct mlx5e_priv *priv = netdev_priv(netdev);
 	u16 dev_id = priv->psp->psd->id;
-	bool strip_icv = true;
-	u8 generation = 0;
+	struct psp_skb_ext *pse;
 
-	if (psp_dev_rcv(skb, dev_id, generation, strip_icv))
+	if (likely(mlx5e_psp_is_decap(cqe))) {
+		/* UDP + PSP headers and PSP trailer were removed by HW.
+		 * Construct the PSP extension from CQE metadata.
+		 */
+		pse = skb_ext_add(skb, SKB_EXT_PSP);
+		if (unlikely(!pse))
+			goto drop;
+
+		pse->spi = mlx5e_psp_get_spi(cqe);
+		pse->version = mlx5e_psp_get_version(cqe);
+		pse->dev_id = dev_id;
+		pse->generation = 0;
+		goto success;
+	}
+
+	/* HW couldn't decap, do it in SW. */
+	if (psp_dev_rcv(skb, dev_id, 0, true))
 		goto drop;
 
+success:
 	skb->decrypted = 1;
 	return false;
 
