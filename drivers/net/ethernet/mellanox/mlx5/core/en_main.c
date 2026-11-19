@@ -4628,6 +4628,11 @@ static netdev_features_t mlx5e_fix_features(struct net_device *netdev,
 		}
 	}
 
+	if (mlx5e_psp_rx_decap_is_active(priv) && (features & NETIF_F_LRO)) {
+		netdev_warn(netdev, "LRO is incompatible with PSP\n");
+		features &= ~NETIF_F_LRO;
+	}
+
 	if (MLX5E_GET_PFLAG(params, MLX5E_PFLAG_RX_CQE_COMPRESS)) {
 		features &= ~NETIF_F_RXHASH;
 		if (netdev->features & NETIF_F_RXHASH)
