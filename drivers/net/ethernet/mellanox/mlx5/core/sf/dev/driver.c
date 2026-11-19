@@ -40,6 +40,7 @@ static int mlx5_sf_dev_probe(struct auxiliary_device *adev, const struct auxilia
 	mdev->coredev_type = MLX5_COREDEV_SF;
 	mdev->priv.parent_mdev = sf_dev->parent_mdev;
 	mdev->priv.adev_idx = adev->id;
+	mdev->adv_mode = sf_dev->parent_mdev->adv_mode;
 	sf_dev->mdev = mdev;
 
 	/* Only local SFs do light probe */

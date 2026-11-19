@@ -216,7 +216,7 @@ void mlx5r_macsec_dealloc_gids(struct mlx5_ib_dev *dev)
 
 int mlx5r_add_gid_macsec_operations(const struct ib_gid_attr *attr)
 {
-	struct mlx5_ib_dev *dev = to_mdev(attr->device);
+	struct mlx5_ib_dev *dev = to_dev(attr->device);
 	struct mlx5_macsec_device *macsec_device;
 	const struct ib_gid_attr *physical_gid;
 	struct mlx5_reserved_gids *mgids;
@@ -259,7 +259,7 @@ int mlx5r_add_gid_macsec_operations(const struct ib_gid_attr *attr)
 	physical_gid = rdma_find_gid(attr->device, &attr->gid,
 				     attr->gid_type, NULL);
 	if (!IS_ERR(physical_gid)) {
-		ret = set_roce_addr(to_mdev(physical_gid->device),
+		ret = set_roce_addr(to_dev(physical_gid->device),
 				    physical_gid->port_num,
 				    physical_gid->index, NULL,
 				    physical_gid);
@@ -286,7 +286,7 @@ int mlx5r_add_gid_macsec_operations(const struct ib_gid_attr *attr)
 	return ret;
 
 rule_err:
-	set_roce_addr(to_mdev(physical_gid->device), physical_gid->port_num,
+	set_roce_addr(to_dev(physical_gid->device), physical_gid->port_num,
 		      physical_gid->index, &physical_gid->gid, physical_gid);
 	mgids->macsec_index = -1;
 gid_err:
@@ -300,7 +300,7 @@ dev_err:
 
 void mlx5r_del_gid_macsec_operations(const struct ib_gid_attr *attr)
 {
-	struct mlx5_ib_dev *dev = to_mdev(attr->device);
+	struct mlx5_ib_dev *dev = to_dev(attr->device);
 	struct mlx5_macsec_device *macsec_device;
 	struct mlx5_reserved_gids *mgids;
 	struct net_device *ndev;
@@ -342,7 +342,7 @@ void mlx5r_del_gid_macsec_operations(const struct ib_gid_attr *attr)
 		if (mgids->macsec_index == attr->index) {
 			const struct ib_gid_attr *physical_gid = mgids->physical_gid;
 
-			set_roce_addr(to_mdev(physical_gid->device),
+			set_roce_addr(to_dev(physical_gid->device),
 				      physical_gid->port_num,
 				      physical_gid->index,
 				      &physical_gid->gid, physical_gid);
