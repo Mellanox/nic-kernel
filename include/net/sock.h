@@ -1562,7 +1562,10 @@ static inline struct inode *SOCK_INODE(struct socket *socket)
 /*
  * Functions for memory accounting
  */
-int __sk_mem_raise_allocated(struct sock *sk, int size, int amt, int kind);
+enum skb_drop_reason __sk_mem_raise_allocated_reason(struct sock *sk, int size,
+						     int amt, int kind);
+enum skb_drop_reason __sk_mem_schedule_reason(struct sock *sk, int size,
+					      int kind);
 int __sk_mem_schedule(struct sock *sk, int size, int kind);
 void __sk_mem_reduce_allocated(struct sock *sk, int amount);
 void __sk_mem_reclaim(struct sock *sk, int amount);
@@ -1597,16 +1600,35 @@ static inline bool sk_wmem_schedule(struct sock *sk, int size)
 	return delta <= 0 || __sk_mem_schedule(sk, delta, SK_MEM_SEND);
 }
 
-static inline bool
-__sk_rmem_schedule(struct sock *sk, int size, bool pfmemalloc)
+/* Return SKB_NOT_DROPPED_YET on success, or the drop reason. */
+static inline enum skb_drop_reason
+__sk_rmem_schedule_reason(struct sock *sk, int size, bool pfmemalloc)
 {
+	enum skb_drop_reason reason;
 	int delta;
 
 	if (!sk_has_account(sk))
-		return true;
+		return SKB_NOT_DROPPED_YET;
 	delta = size - sk->sk_forward_alloc;
-	return delta <= 0 || __sk_mem_schedule(sk, delta, SK_MEM_RECV) ||
-	       pfmemalloc;
+	if (delta <= 0)
+		return SKB_NOT_DROPPED_YET;
+	reason = __sk_mem_schedule_reason(sk, delta, SK_MEM_RECV);
+	if (reason && pfmemalloc)
+		return SKB_NOT_DROPPED_YET;
+	return reason;
+}
+
+static inline bool
+__sk_rmem_schedule(struct sock *sk, int size, bool pfmemalloc)
+{
+	return __sk_rmem_schedule_reason(sk, size, pfmemalloc) ==
+	       SKB_NOT_DROPPED_YET;
+}
+
+static inline enum skb_drop_reason
+sk_rmem_schedule_reason(struct sock *sk, const struct sk_buff *skb, int size)
+{
+	return __sk_rmem_schedule_reason(sk, size, skb_pfmemalloc(skb));
 }
 
 static inline bool
@@ -2250,10 +2272,13 @@ sk_dst_get(const struct sock *sk)
 
 static inline void __dst_negative_advice(struct sock *sk)
 {
-	struct dst_entry *dst = __sk_dst_get(sk);
+	struct dst_entry *dst;
 
+	rcu_read_lock();
+	dst = __sk_dst_get(sk);
 	if (dst && dst->ops->negative_advice)
 		dst->ops->negative_advice(sk, dst);
+	rcu_read_unlock();
 }
 
 static inline void dst_negative_advice(struct sock *sk)
@@ -2316,6 +2341,14 @@ struct dst_entry *__sk_dst_check(struct sock *sk, u32 cookie);
 
 struct dst_entry *sk_dst_check(struct sock *sk, u32 cookie);
 
+/* This helper checks if a socket is a full socket,
+ * ie _not_ a timewait or request socket.
+ */
+static inline bool sk_fullsock(const struct sock *sk)
+{
+	return (1 << sk->sk_state) & ~(TCPF_TIME_WAIT | TCPF_NEW_SYN_RECV);
+}
+
 static inline void sk_dst_confirm(struct sock *sk)
 {
 	if (!READ_ONCE(sk->sk_dst_pending_confirm))
@@ -2327,7 +2360,8 @@ static inline void sock_confirm_neigh(struct sk_buff *skb, struct neighbour *n)
 	if (skb_get_dst_pending_confirm(skb)) {
 		struct sock *sk = skb->sk;
 
-		if (sk && READ_ONCE(sk->sk_dst_pending_confirm))
+		if (sk && sk_fullsock(sk) &&
+		    READ_ONCE(sk->sk_dst_pending_confirm))
 			WRITE_ONCE(sk->sk_dst_pending_confirm, 0);
 		neigh_confirm(n);
 	}
@@ -3057,14 +3091,6 @@ skb_sk_is_prefetched(struct sk_buff *skb)
 #else
 	return false;
 #endif /* CONFIG_INET */
-}
-
-/* This helper checks if a socket is a full socket,
- * ie _not_ a timewait or request socket.
- */
-static inline bool sk_fullsock(const struct sock *sk)
-{
-	return (1 << sk->sk_state) & ~(TCPF_TIME_WAIT | TCPF_NEW_SYN_RECV);
 }
 
 static inline bool

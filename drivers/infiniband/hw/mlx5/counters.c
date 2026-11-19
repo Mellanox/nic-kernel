@@ -174,8 +174,7 @@ static int mlx5_ib_read_counters(struct ib_counters *counters,
 		goto err_bound;
 	}
 
-	mread_attr.out = kcalloc(mcounters->counters_num, sizeof(u64),
-				 GFP_KERNEL);
+	mread_attr.out = kzalloc_objs(u64, mcounters->counters_num);
 	if (!mread_attr.out) {
 		ret = -ENOMEM;
 		goto err_bound;
@@ -207,7 +206,7 @@ static int mlx5_ib_destroy_counters(struct ib_counters *counters)
 
 	mlx5_ib_counters_clear_description(counters);
 	if (mcounters->hw_cntrs_hndl)
-		mlx5_fc_destroy(to_mdev(counters->device)->mdev,
+		mlx5_fc_destroy(to_dev(counters->device)->mdev,
 				mcounters->hw_cntrs_hndl);
 	return 0;
 }
@@ -278,7 +277,7 @@ static struct rdma_hw_stats *do_alloc_stats(const struct mlx5_ib_counters *cnts)
 static struct rdma_hw_stats *
 mlx5_ib_alloc_hw_device_stats(struct ib_device *ibdev)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	const struct mlx5_ib_counters *cnts = &dev->port[0].cnts;
 
 	return do_alloc_stats(cnts);
@@ -287,7 +286,7 @@ mlx5_ib_alloc_hw_device_stats(struct ib_device *ibdev)
 static struct rdma_hw_stats *
 mlx5_ib_alloc_hw_port_stats(struct ib_device *ibdev, u32 port_num)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	const struct mlx5_ib_counters *cnts = get_counters(dev, port_num);
 
 	return do_alloc_stats(cnts);
@@ -388,7 +387,7 @@ static int do_get_hw_stats(struct ib_device *ibdev,
 			   struct rdma_hw_stats *stats,
 			   u32 port_num, int index)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	const struct mlx5_ib_counters *cnts = get_counters(dev, port_num);
 	struct mlx5_core_dev *mdev;
 	int ret, num_counters;
@@ -459,7 +458,7 @@ static bool is_rdma_bytes_counter(u32 type)
 
 static int do_per_qp_get_op_stat(struct rdma_counter *counter)
 {
-	struct mlx5_ib_dev *dev = to_mdev(counter->device);
+	struct mlx5_ib_dev *dev = to_dev(counter->device);
 	const struct mlx5_ib_counters *cnts = get_counters(dev, counter->port);
 	struct mlx5_rdma_counter *mcounter = to_mcounter(counter);
 	int i, ret, index, num_hw_counters;
@@ -496,7 +495,7 @@ static int do_get_op_stat(struct ib_device *ibdev,
 			  struct rdma_hw_stats *stats,
 			  u32 port_num, int index)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	const struct mlx5_ib_counters *cnts;
 	const struct mlx5_ib_op_fc *opfcs;
 	u64 packets, bytes;
@@ -530,7 +529,7 @@ static int do_get_op_stats(struct ib_device *ibdev,
 			   struct rdma_hw_stats *stats,
 			   u32 port_num)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	const struct mlx5_ib_counters *cnts;
 	int index, ret, num_hw_counters;
 
@@ -552,7 +551,7 @@ static int mlx5_ib_get_hw_stats(struct ib_device *ibdev,
 				u32 port_num, int index)
 {
 	int num_counters, num_hw_counters, num_op_counters;
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 	const struct mlx5_ib_counters *cnts;
 
 	cnts = get_counters(dev, port_num);
@@ -581,7 +580,7 @@ static int mlx5_ib_get_hw_stats(struct ib_device *ibdev,
 static struct rdma_hw_stats *
 mlx5_ib_counter_alloc_stats(struct rdma_counter *counter)
 {
-	struct mlx5_ib_dev *dev = to_mdev(counter->device);
+	struct mlx5_ib_dev *dev = to_dev(counter->device);
 	const struct mlx5_ib_counters *cnts = get_counters(dev, counter->port);
 
 	return do_alloc_stats(cnts);
@@ -589,7 +588,7 @@ mlx5_ib_counter_alloc_stats(struct rdma_counter *counter)
 
 static int mlx5_ib_counter_update_stats(struct rdma_counter *counter)
 {
-	struct mlx5_ib_dev *dev = to_mdev(counter->device);
+	struct mlx5_ib_dev *dev = to_dev(counter->device);
 	const struct mlx5_ib_counters *cnts = get_counters(dev, counter->port);
 	int ret;
 
@@ -607,7 +606,7 @@ static int mlx5_ib_counter_update_stats(struct rdma_counter *counter)
 static int mlx5_ib_counter_dealloc(struct rdma_counter *counter)
 {
 	struct mlx5_rdma_counter *mcounter = to_mcounter(counter);
-	struct mlx5_ib_dev *dev = to_mdev(counter->device);
+	struct mlx5_ib_dev *dev = to_dev(counter->device);
 	u32 in[MLX5_ST_SZ_DW(dealloc_q_counter_in)] = {};
 
 	if (!counter->id)
@@ -625,7 +624,7 @@ static int mlx5_ib_counter_bind_qp(struct rdma_counter *counter,
 				   struct ib_qp *qp, u32 port)
 {
 	struct mlx5_rdma_counter *mcounter = to_mcounter(counter);
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	bool new = false;
 	int err;
 
@@ -1012,7 +1011,7 @@ static int read_flow_counters(struct ib_device *ibdev,
 			      struct mlx5_read_counters_attr *read_attr)
 {
 	struct mlx5_fc *fc = read_attr->hw_cntrs_hndl;
-	struct mlx5_ib_dev *dev = to_mdev(ibdev);
+	struct mlx5_ib_dev *dev = to_dev(ibdev);
 
 	return mlx5_fc_query(dev->mdev, fc,
 			     &read_attr->out[IB_COUNTER_PACKETS],
@@ -1039,7 +1038,8 @@ static int counters_set_description(
 	mcounters->ncounters = ncounters;
 	/* each counter entry have both description and index pair */
 	for (i = 0; i < ncounters; i++) {
-		if (desc_data[i].description > IB_COUNTER_BYTES)
+		if (desc_data[i].description > IB_COUNTER_BYTES ||
+		    desc_data[i].index == U32_MAX)
 			return -EINVAL;
 
 		if (cntrs_max_index <= desc_data[i].index)
@@ -1083,7 +1083,7 @@ int mlx5_ib_flow_counters_set_data(struct ib_counters *ibcounters,
 
 	if (!mcounters->hw_cntrs_hndl) {
 		mcounters->hw_cntrs_hndl = mlx5_fc_create(
-			to_mdev(ibcounters->device)->mdev, false);
+			to_dev(ibcounters->device)->mdev, false);
 		if (IS_ERR(mcounters->hw_cntrs_hndl)) {
 			ret = PTR_ERR(mcounters->hw_cntrs_hndl);
 			goto free;
@@ -1115,7 +1115,7 @@ int mlx5_ib_flow_counters_set_data(struct ib_counters *ibcounters,
 
 free_hndl:
 	if (hw_hndl) {
-		mlx5_fc_destroy(to_mdev(ibcounters->device)->mdev,
+		mlx5_fc_destroy(to_dev(ibcounters->device)->mdev,
 				mcounters->hw_cntrs_hndl);
 		mcounters->hw_cntrs_hndl = NULL;
 	}
@@ -1143,7 +1143,7 @@ void mlx5_ib_counters_clear_description(struct ib_counters *counters)
 static int mlx5_ib_modify_stat(struct ib_device *device, u32 port,
 			       unsigned int index, bool enable)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	struct mlx5_ib_op_fc *opfc, *in_use_opfc;
 	struct mlx5_ib_counters *cnts;
 	u32 num_hw_counters, type;

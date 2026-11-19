@@ -111,7 +111,7 @@ static int __set_srq_page_size(struct mlx5_srq_attr *in,
 					MLX5_ADAPTER_PAGE_SHIFT, page_offset,  \
 					64, &(in)->page_offset))
 
-static int create_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int create_srq_cmd(struct mlx5_core_srq *srq,
 			  struct mlx5_srq_attr *in)
 {
 	u32 create_out[MLX5_ST_SZ_DW(create_srq_out)] = {0};
@@ -150,7 +150,7 @@ static int create_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	MLX5_SET(create_srq_in, create_in, opcode,
 		 MLX5_CMD_OP_CREATE_SRQ);
 
-	err = mlx5_cmd_exec(dev->mdev, create_in, inlen, create_out,
+	err = mlx5_cmd_exec(srq_to_mdev(srq), create_in, inlen, create_out,
 			    sizeof(create_out));
 	kvfree(create_in);
 	if (!err) {
@@ -161,7 +161,7 @@ static int create_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	return err;
 }
 
-static int destroy_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
+static int destroy_srq_cmd(struct mlx5_core_srq *srq)
 {
 	u32 in[MLX5_ST_SZ_DW(destroy_srq_in)] = {};
 
@@ -169,10 +169,10 @@ static int destroy_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
 	MLX5_SET(destroy_srq_in, in, srqn, srq->srqn);
 	MLX5_SET(destroy_srq_in, in, uid, srq->uid);
 
-	return mlx5_cmd_exec_in(dev->mdev, destroy_srq, in);
+	return mlx5_cmd_exec_in(srq_to_mdev(srq), destroy_srq, in);
 }
 
-static int arm_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int arm_srq_cmd(struct mlx5_core_srq *srq,
 		       u16 lwm, int is_srq)
 {
 	u32 in[MLX5_ST_SZ_DW(arm_rq_in)] = {};
@@ -183,10 +183,10 @@ static int arm_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	MLX5_SET(arm_rq_in, in, lwm, lwm);
 	MLX5_SET(arm_rq_in, in, uid, srq->uid);
 
-	return mlx5_cmd_exec_in(dev->mdev, arm_rq, in);
+	return mlx5_cmd_exec_in(srq_to_mdev(srq), arm_rq, in);
 }
 
-static int query_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int query_srq_cmd(struct mlx5_core_srq *srq,
 			 struct mlx5_srq_attr *out)
 {
 	u32 in[MLX5_ST_SZ_DW(query_srq_in)] = {};
@@ -200,7 +200,7 @@ static int query_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 
 	MLX5_SET(query_srq_in, in, opcode, MLX5_CMD_OP_QUERY_SRQ);
 	MLX5_SET(query_srq_in, in, srqn, srq->srqn);
-	err = mlx5_cmd_exec_inout(dev->mdev, query_srq, in, srq_out);
+	err = mlx5_cmd_exec_inout(srq_to_mdev(srq), query_srq, in, srq_out);
 	if (err)
 		goto out;
 
@@ -213,8 +213,7 @@ out:
 	return err;
 }
 
-static int create_xrc_srq_cmd(struct mlx5_ib_dev *dev,
-			      struct mlx5_core_srq *srq,
+static int create_xrc_srq_cmd(struct mlx5_core_srq *srq,
 			      struct mlx5_srq_attr *in)
 {
 	u32 create_out[MLX5_ST_SZ_DW(create_xrc_srq_out)];
@@ -255,7 +254,7 @@ static int create_xrc_srq_cmd(struct mlx5_ib_dev *dev,
 		 MLX5_CMD_OP_CREATE_XRC_SRQ);
 
 	memset(create_out, 0, sizeof(create_out));
-	err = mlx5_cmd_exec(dev->mdev, create_in, inlen, create_out,
+	err = mlx5_cmd_exec(srq_to_mdev(srq), create_in, inlen, create_out,
 			    sizeof(create_out));
 	if (err)
 		goto out;
@@ -267,8 +266,7 @@ out:
 	return err;
 }
 
-static int destroy_xrc_srq_cmd(struct mlx5_ib_dev *dev,
-			       struct mlx5_core_srq *srq)
+static int destroy_xrc_srq_cmd(struct mlx5_core_srq *srq)
 {
 	u32 in[MLX5_ST_SZ_DW(destroy_xrc_srq_in)] = {};
 
@@ -276,10 +274,10 @@ static int destroy_xrc_srq_cmd(struct mlx5_ib_dev *dev,
 	MLX5_SET(destroy_xrc_srq_in, in, xrc_srqn, srq->srqn);
 	MLX5_SET(destroy_xrc_srq_in, in, uid, srq->uid);
 
-	return mlx5_cmd_exec_in(dev->mdev, destroy_xrc_srq, in);
+	return mlx5_cmd_exec_in(srq_to_mdev(srq), destroy_xrc_srq, in);
 }
 
-static int arm_xrc_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int arm_xrc_srq_cmd(struct mlx5_core_srq *srq,
 			   u16 lwm)
 {
 	u32 in[MLX5_ST_SZ_DW(arm_xrc_srq_in)] = {};
@@ -291,11 +289,10 @@ static int arm_xrc_srq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	MLX5_SET(arm_xrc_srq_in, in, lwm, lwm);
 	MLX5_SET(arm_xrc_srq_in, in, uid, srq->uid);
 
-	return  mlx5_cmd_exec_in(dev->mdev, arm_xrc_srq, in);
+	return  mlx5_cmd_exec_in(srq_to_mdev(srq), arm_xrc_srq, in);
 }
 
-static int query_xrc_srq_cmd(struct mlx5_ib_dev *dev,
-			     struct mlx5_core_srq *srq,
+static int query_xrc_srq_cmd(struct mlx5_core_srq *srq,
 			     struct mlx5_srq_attr *out)
 {
 	u32 in[MLX5_ST_SZ_DW(query_xrc_srq_in)] = {};
@@ -310,7 +307,8 @@ static int query_xrc_srq_cmd(struct mlx5_ib_dev *dev,
 	MLX5_SET(query_xrc_srq_in, in, opcode, MLX5_CMD_OP_QUERY_XRC_SRQ);
 	MLX5_SET(query_xrc_srq_in, in, xrc_srqn, srq->srqn);
 
-	err = mlx5_cmd_exec_inout(dev->mdev, query_xrc_srq, in, xrcsrq_out);
+	err = mlx5_cmd_exec_inout(srq_to_mdev(srq), query_xrc_srq, in,
+				  xrcsrq_out);
 	if (err)
 		goto out;
 
@@ -325,7 +323,7 @@ out:
 	return err;
 }
 
-static int create_rmp_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int create_rmp_cmd(struct mlx5_core_srq *srq,
 			  struct mlx5_srq_attr *in)
 {
 	void *create_out = NULL;
@@ -371,7 +369,8 @@ static int create_rmp_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 		memcpy(pas, in->pas, pas_size);
 
 	MLX5_SET(create_rmp_in, create_in, opcode, MLX5_CMD_OP_CREATE_RMP);
-	err = mlx5_cmd_exec(dev->mdev, create_in, inlen, create_out, outlen);
+	err = mlx5_cmd_exec(srq_to_mdev(srq), create_in, inlen, create_out,
+			    outlen);
 	if (!err) {
 		srq->srqn = MLX5_GET(create_rmp_out, create_out, rmpn);
 		srq->uid = in->uid;
@@ -383,17 +382,17 @@ out:
 	return err;
 }
 
-static int destroy_rmp_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
+static int destroy_rmp_cmd(struct mlx5_core_srq *srq)
 {
 	u32 in[MLX5_ST_SZ_DW(destroy_rmp_in)] = {};
 
 	MLX5_SET(destroy_rmp_in, in, opcode, MLX5_CMD_OP_DESTROY_RMP);
 	MLX5_SET(destroy_rmp_in, in, rmpn, srq->srqn);
 	MLX5_SET(destroy_rmp_in, in, uid, srq->uid);
-	return mlx5_cmd_exec_in(dev->mdev, destroy_rmp, in);
+	return mlx5_cmd_exec_in(srq_to_mdev(srq), destroy_rmp, in);
 }
 
-static int arm_rmp_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int arm_rmp_cmd(struct mlx5_core_srq *srq,
 		       u16 lwm)
 {
 	void *out = NULL;
@@ -427,7 +426,7 @@ static int arm_rmp_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	MLX5_SET(rmpc, rmpc, state, MLX5_RMPC_STATE_RDY);
 	MLX5_SET(modify_rmp_in, in, opcode, MLX5_CMD_OP_MODIFY_RMP);
 
-	err = mlx5_cmd_exec_inout(dev->mdev, modify_rmp, in, out);
+	err = mlx5_cmd_exec_inout(srq_to_mdev(srq), modify_rmp, in, out);
 
 out:
 	kvfree(in);
@@ -435,7 +434,7 @@ out:
 	return err;
 }
 
-static int query_rmp_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int query_rmp_cmd(struct mlx5_core_srq *srq,
 			 struct mlx5_srq_attr *out)
 {
 	u32 *rmp_out = NULL;
@@ -457,7 +456,7 @@ static int query_rmp_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 
 	MLX5_SET(query_rmp_in, rmp_in, opcode, MLX5_CMD_OP_QUERY_RMP);
 	MLX5_SET(query_rmp_in, rmp_in, rmpn,   srq->srqn);
-	err = mlx5_cmd_exec_inout(dev->mdev, query_rmp, rmp_in, rmp_out);
+	err = mlx5_cmd_exec_inout(srq_to_mdev(srq), query_rmp, rmp_in, rmp_out);
 	if (err)
 		goto out;
 
@@ -472,7 +471,7 @@ out:
 	return err;
 }
 
-static int create_xrq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int create_xrq_cmd(struct mlx5_core_srq *srq,
 			  struct mlx5_srq_attr *in)
 {
 	u32 create_out[MLX5_ST_SZ_DW(create_xrq_out)] = {0};
@@ -521,7 +520,7 @@ static int create_xrq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	MLX5_SET(xrqc, xrqc, cqn, in->cqn);
 	MLX5_SET(create_xrq_in, create_in, opcode, MLX5_CMD_OP_CREATE_XRQ);
 	MLX5_SET(create_xrq_in, create_in, uid, in->uid);
-	err = mlx5_cmd_exec(dev->mdev, create_in, inlen, create_out,
+	err = mlx5_cmd_exec(srq_to_mdev(srq), create_in, inlen, create_out,
 			    sizeof(create_out));
 	kvfree(create_in);
 	if (!err) {
@@ -532,7 +531,7 @@ static int create_xrq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	return err;
 }
 
-static int destroy_xrq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
+static int destroy_xrq_cmd(struct mlx5_core_srq *srq)
 {
 	u32 in[MLX5_ST_SZ_DW(destroy_xrq_in)] = {};
 
@@ -540,11 +539,10 @@ static int destroy_xrq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
 	MLX5_SET(destroy_xrq_in, in, xrqn, srq->srqn);
 	MLX5_SET(destroy_xrq_in, in, uid, srq->uid);
 
-	return mlx5_cmd_exec_in(dev->mdev, destroy_xrq, in);
+	return mlx5_cmd_exec_in(srq_to_mdev(srq), destroy_xrq, in);
 }
 
-static int arm_xrq_cmd(struct mlx5_ib_dev *dev,
-		       struct mlx5_core_srq *srq,
+static int arm_xrq_cmd(struct mlx5_core_srq *srq,
 		       u16 lwm)
 {
 	u32 in[MLX5_ST_SZ_DW(arm_rq_in)] = {};
@@ -555,10 +553,10 @@ static int arm_xrq_cmd(struct mlx5_ib_dev *dev,
 	MLX5_SET(arm_rq_in, in, lwm, lwm);
 	MLX5_SET(arm_rq_in, in, uid, srq->uid);
 
-	return mlx5_cmd_exec_in(dev->mdev, arm_rq, in);
+	return mlx5_cmd_exec_in(srq_to_mdev(srq), arm_rq, in);
 }
 
-static int query_xrq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int query_xrq_cmd(struct mlx5_core_srq *srq,
 			 struct mlx5_srq_attr *out)
 {
 	u32 in[MLX5_ST_SZ_DW(query_xrq_in)] = {};
@@ -574,7 +572,7 @@ static int query_xrq_cmd(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	MLX5_SET(query_xrq_in, in, opcode, MLX5_CMD_OP_QUERY_XRQ);
 	MLX5_SET(query_xrq_in, in, xrqn, srq->srqn);
 
-	err = mlx5_cmd_exec_inout(dev->mdev, query_xrq, in, xrq_out);
+	err = mlx5_cmd_exec_inout(srq_to_mdev(srq), query_xrq, in, xrq_out);
 	if (err)
 		goto out;
 
@@ -597,32 +595,32 @@ out:
 	return err;
 }
 
-static int create_srq_split(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+static int create_srq_split(struct mlx5_core_srq *srq,
 			    struct mlx5_srq_attr *in)
 {
-	if (!dev->mdev->issi)
-		return create_srq_cmd(dev, srq, in);
+	if (!srq_to_mdev(srq)->issi)
+		return create_srq_cmd(srq, in);
 	switch (srq->common.res) {
 	case MLX5_RES_XSRQ:
-		return create_xrc_srq_cmd(dev, srq, in);
+		return create_xrc_srq_cmd(srq, in);
 	case MLX5_RES_XRQ:
-		return create_xrq_cmd(dev, srq, in);
+		return create_xrq_cmd(srq, in);
 	default:
-		return create_rmp_cmd(dev, srq, in);
+		return create_rmp_cmd(srq, in);
 	}
 }
 
-static int destroy_srq_split(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
+static int destroy_srq_split(struct mlx5_core_srq *srq)
 {
-	if (!dev->mdev->issi)
-		return destroy_srq_cmd(dev, srq);
+	if (!srq_to_mdev(srq)->issi)
+		return destroy_srq_cmd(srq);
 	switch (srq->common.res) {
 	case MLX5_RES_XSRQ:
-		return destroy_xrc_srq_cmd(dev, srq);
+		return destroy_xrc_srq_cmd(srq);
 	case MLX5_RES_XRQ:
-		return destroy_xrq_cmd(dev, srq);
+		return destroy_xrq_cmd(srq);
 	default:
-		return destroy_rmp_cmd(dev, srq);
+		return destroy_rmp_cmd(srq);
 	}
 }
 
@@ -643,7 +641,7 @@ int mlx5_cmd_create_srq(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 		srq->common.res = MLX5_RES_SRQ;
 	}
 
-	err = create_srq_split(dev, srq, in);
+	err = create_srq_split(srq, in);
 	if (err)
 		return err;
 
@@ -657,7 +655,7 @@ int mlx5_cmd_create_srq(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
 	return 0;
 
 err_destroy_srq_split:
-	destroy_srq_split(dev, srq);
+	destroy_srq_split(srq);
 
 	return err;
 }
@@ -673,7 +671,7 @@ int mlx5_cmd_destroy_srq(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
 	if (WARN_ON(tmp != srq))
 		return xa_err(tmp) ?: -EINVAL;
 
-	err = destroy_srq_split(dev, srq);
+	err = destroy_srq_split(srq);
 	if (err) {
 		/*
 		 * We don't need to check returned result for an error,
@@ -697,33 +695,33 @@ int mlx5_cmd_destroy_srq(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq)
 	return 0;
 }
 
-int mlx5_cmd_query_srq(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+int mlx5_cmd_query_srq(struct mlx5_core_srq *srq,
 		       struct mlx5_srq_attr *out)
 {
-	if (!dev->mdev->issi)
-		return query_srq_cmd(dev, srq, out);
+	if (!srq_to_mdev(srq)->issi)
+		return query_srq_cmd(srq, out);
 	switch (srq->common.res) {
 	case MLX5_RES_XSRQ:
-		return query_xrc_srq_cmd(dev, srq, out);
+		return query_xrc_srq_cmd(srq, out);
 	case MLX5_RES_XRQ:
-		return query_xrq_cmd(dev, srq, out);
+		return query_xrq_cmd(srq, out);
 	default:
-		return query_rmp_cmd(dev, srq, out);
+		return query_rmp_cmd(srq, out);
 	}
 }
 
-int mlx5_cmd_arm_srq(struct mlx5_ib_dev *dev, struct mlx5_core_srq *srq,
+int mlx5_cmd_arm_srq(struct mlx5_core_srq *srq,
 		     u16 lwm, int is_srq)
 {
-	if (!dev->mdev->issi)
-		return arm_srq_cmd(dev, srq, lwm, is_srq);
+	if (!srq_to_mdev(srq)->issi)
+		return arm_srq_cmd(srq, lwm, is_srq);
 	switch (srq->common.res) {
 	case MLX5_RES_XSRQ:
-		return arm_xrc_srq_cmd(dev, srq, lwm);
+		return arm_xrc_srq_cmd(srq, lwm);
 	case MLX5_RES_XRQ:
-		return arm_xrq_cmd(dev, srq, lwm);
+		return arm_xrq_cmd(srq, lwm);
 	default:
-		return arm_rmp_cmd(dev, srq, lwm);
+		return arm_rmp_cmd(srq, lwm);
 	}
 }
 

@@ -483,7 +483,6 @@ static int tas2562_volume_control_put(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 
 	reg_val = float_vol_db_lookup[index];
-
 	/*
 	 * The device applies the 32-bit coefficient to the playback path on
 	 * the write to DVC_CFG4 (the LSB, book 0 page 2 reg 0x0F), so the
@@ -751,7 +750,7 @@ static int tas2562_probe(struct i2c_client *client)
 	struct tas2562_data *data;
 	int ret;
 
-	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+	data = devm_kzalloc_obj(dev, *data);
 	if (!data)
 		return -ENOMEM;
 

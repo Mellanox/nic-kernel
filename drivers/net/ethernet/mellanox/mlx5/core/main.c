@@ -31,6 +31,7 @@
  */
 
 #include <linux/highmem.h>
+#include <linux/cc_platform.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/errno.h>
@@ -88,6 +89,10 @@ MODULE_PARM_DESC(debug_mask, "debug mask: 1 = dump cmd data, 2 = dump cmd exec t
 static unsigned int prof_sel = MLX5_DEFAULT_PROF;
 module_param_named(prof_sel, prof_sel, uint, 0444);
 MODULE_PARM_DESC(prof_sel, "profile selector. Valid range 0 - 2");
+
+static bool adversarial;
+module_param(adversarial, bool, 0444);
+MODULE_PARM_DESC(adversarial, "Adversarial mode: treat the NIC as untrusted even outside a confidential guest");
 
 static u32 sw_owner_id[4];
 #define MAX_SW_VHCA_ID (BIT(__mlx5_bit_sz(cmd_hca_cap_2, sw_vhca_id)) - 1)
@@ -328,12 +333,12 @@ int mlx5_core_get_caps_mode(struct mlx5_core_dev *dev, enum mlx5_cap_type cap_ty
 
 	switch (cap_mode) {
 	case HCA_CAP_OPMOD_GET_MAX:
-		memcpy(dev->caps.hca[cap_type]->max, hca_caps,
-		       MLX5_UN_SZ_BYTES(hca_cap_union));
+		err = mlx5_store_caps(dev, cap_type,
+				      dev->caps.hca[cap_type]->max, hca_caps);
 		break;
 	case HCA_CAP_OPMOD_GET_CUR:
-		memcpy(dev->caps.hca[cap_type]->cur, hca_caps,
-		       MLX5_UN_SZ_BYTES(hca_cap_union));
+		err = mlx5_store_caps(dev, cap_type,
+				      dev->caps.hca[cap_type]->cur, hca_caps);
 		break;
 	default:
 		mlx5_core_warn(dev,
@@ -487,6 +492,12 @@ bool mlx5_is_roce_on(struct mlx5_core_dev *dev)
 	return MLX5_CAP_GEN(dev, roce);
 }
 EXPORT_SYMBOL(mlx5_is_roce_on);
+
+bool mlx5_is_adversarial(struct mlx5_core_dev *dev)
+{
+	return dev->adv_mode;
+}
+EXPORT_SYMBOL_GPL(mlx5_is_adversarial);
 
 static int handle_hca_cap_2(struct mlx5_core_dev *dev, void *set_ctx)
 {
@@ -1828,8 +1839,6 @@ int mlx5_mdev_init(struct mlx5_core_dev *dev, int profile_idx)
 	INIT_LIST_HEAD(&priv->bfregs.reg_head.list);
 	INIT_LIST_HEAD(&priv->bfregs.wc_head.list);
 
-	mutex_init(&priv->alloc_mutex);
-
 	priv->numa_node = dev_to_node(mlx5_core_dma_dev(dev));
 	priv->dbg.dbg_root = debugfs_create_dir(dev_name(dev->device),
 						mlx5_debugfs_root);
@@ -1908,7 +1917,6 @@ err_db_pools_init:
 	mlx5_frag_buf_pools_cleanup(dev);
 err_frag_buf_pools_init:
 	debugfs_remove(dev->priv.dbg.dbg_root);
-	mutex_destroy(&priv->alloc_mutex);
 	mutex_destroy(&priv->bfregs.wc_head.lock);
 	mutex_destroy(&priv->bfregs.reg_head.lock);
 	mutex_destroy(&dev->intf_state_mutex);
@@ -1933,7 +1941,6 @@ void mlx5_mdev_uninit(struct mlx5_core_dev *dev)
 	mlx5_db_pools_cleanup(dev);
 	mlx5_frag_buf_pools_cleanup(dev);
 	debugfs_remove_recursive(dev->priv.dbg.dbg_root);
-	mutex_destroy(&priv->alloc_mutex);
 	mutex_destroy(&priv->bfregs.wc_head.lock);
 	mutex_destroy(&priv->bfregs.reg_head.lock);
 	mutex_destroy(&dev->wc_state_lock);
@@ -1966,6 +1973,8 @@ static int probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		err = dev->priv.adev_idx;
 		goto adev_init_err;
 	}
+
+	dev->adv_mode = cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT) || adversarial;
 
 	err = mlx5_mdev_init(dev, prof_sel);
 	if (err)

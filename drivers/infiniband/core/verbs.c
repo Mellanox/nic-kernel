@@ -2291,7 +2291,7 @@ struct ib_mr *ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 		if (!(pd->device->attrs.kernel_cap_flags &
 		      IBK_ON_DEMAND_PAGING)) {
 			pr_debug("ODP support not available\n");
-			return ERR_PTR(-EINVAL);
+			return ERR_PTR(-EOPNOTSUPP);
 		}
 	}
 
@@ -3186,8 +3186,8 @@ struct rdma_hw_stats *rdma_alloc_hw_stats_struct(
 	if (!stats)
 		return NULL;
 
-	stats->is_disabled = kcalloc(BITS_TO_LONGS(num_counters),
-				     sizeof(*stats->is_disabled), GFP_KERNEL);
+	stats->is_disabled = kzalloc_objs(*stats->is_disabled,
+					  BITS_TO_LONGS(num_counters));
 	if (!stats->is_disabled)
 		goto err;
 
