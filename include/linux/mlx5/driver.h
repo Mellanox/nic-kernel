@@ -325,6 +325,10 @@ struct mlx5_cmd {
 	 */
 	spinlock_t	token_lock;
 	u8		token;
+
+	/* serialize command interface flush
+	 */
+	struct mutex	flush_lock;
 	char		wq_name[MLX5_CMD_WQ_MAX_NAME];
 	struct workqueue_struct *wq;
 	int	mode;
