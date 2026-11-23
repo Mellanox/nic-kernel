@@ -38,9 +38,9 @@ struct mlx5_ib_gsi_wr {
 	bool completed:1;
 };
 
-static bool mlx5_ib_deth_sqpn_cap(struct mlx5_ib_dev *dev)
+static bool mlx5_ib_deth_sqpn_cap(struct mlx5_core_dev *mdev)
 {
-	return MLX5_CAP_GEN(dev->mdev, set_deth_sqpn);
+	return MLX5_CAP_GEN(mdev, set_deth_sqpn);
 }
 
 /* Call with gsi->lock locked */
@@ -88,16 +88,20 @@ static void handle_single_completion(struct ib_cq *cq, struct ib_wc *wc)
 int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 		       struct ib_qp_init_attr *attr)
 {
-	struct mlx5_ib_dev *dev = to_mdev(pd->device);
+	struct mlx5_ib_dev *dev = to_dev(pd->device);
+	struct mlx5_core_dev *mdev = pd_to_mdev(pd);
 	struct mlx5_ib_gsi_qp *gsi;
 	struct ib_qp_init_attr hw_init_attr = *attr;
 	const u8 port_num = attr->port_num;
 	int num_qps = 0;
 	int ret;
 
-	if (mlx5_ib_deth_sqpn_cap(dev)) {
-		if (MLX5_CAP_GEN(dev->mdev,
-				 port_type) == MLX5_CAP_PORT_TYPE_IB)
+	if (!rdma_is_port_valid(&dev->ib_dev, port_num) ||
+	    port_num > ARRAY_SIZE(dev->devr.ports))
+		return -EINVAL;
+
+	if (mlx5_ib_deth_sqpn_cap(mdev)) {
+		if (MLX5_CAP_GEN(mdev, port_type) == MLX5_CAP_PORT_TYPE_IB)
 			num_qps = pd->device->attrs.max_pkeys;
 		else if (dev->lag_active)
 			num_qps = dev->lag_ports;
@@ -168,7 +172,7 @@ err_free_tx:
 
 int mlx5_ib_destroy_gsi(struct mlx5_ib_qp *mqp)
 {
-	struct mlx5_ib_dev *dev = to_mdev(mqp->ibqp.device);
+	struct mlx5_ib_dev *dev = to_dev(mqp->ibqp.device);
 	struct mlx5_ib_gsi_qp *gsi = &mqp->gsi;
 	const int port_num = gsi->port_num;
 	int qp_index;
@@ -220,7 +224,7 @@ static struct ib_qp *create_gsi_ud_qp(struct mlx5_ib_gsi_qp *gsi)
 static int modify_to_rts(struct mlx5_ib_gsi_qp *gsi, struct ib_qp *qp,
 			 u16 pkey_index)
 {
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	struct ib_qp_attr attr;
 	int mask;
 	int ret;
@@ -260,7 +264,7 @@ static int modify_to_rts(struct mlx5_ib_gsi_qp *gsi, struct ib_qp *qp,
 static void setup_qp(struct mlx5_ib_gsi_qp *gsi, u16 qp_index)
 {
 	struct ib_device *device = gsi->rx_qp->device;
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	int pkey_index = qp_index;
 	struct mlx5_ib_qp *mqp;
 	struct ib_qp *qp;
@@ -268,7 +272,8 @@ static void setup_qp(struct mlx5_ib_gsi_qp *gsi, u16 qp_index)
 	u16 pkey;
 	int ret;
 
-	if (MLX5_CAP_GEN(dev->mdev,  port_type) != MLX5_CAP_PORT_TYPE_IB)
+	if (MLX5_CAP_GEN(qp_to_mdev(gsi->rx_qp), port_type) !=
+	    MLX5_CAP_PORT_TYPE_IB)
 		pkey_index = 0;
 
 	ret = ib_query_pkey(device, gsi->port_num, pkey_index, &pkey);
@@ -322,7 +327,7 @@ err_destroy_qp:
 int mlx5_ib_gsi_modify_qp(struct ib_qp *qp, struct ib_qp_attr *attr,
 			  int attr_mask)
 {
-	struct mlx5_ib_dev *dev = to_mdev(qp->device);
+	struct mlx5_ib_dev *dev = to_dev(qp->device);
 	struct mlx5_ib_qp *mqp = to_mqp(qp);
 	struct mlx5_ib_gsi_qp *gsi = &mqp->gsi;
 	u16 qp_index;
@@ -362,7 +367,7 @@ static int mlx5_ib_add_outstanding_wr(struct mlx5_ib_qp *mqp,
 				      struct ib_ud_wr *wr, struct ib_wc *wc)
 {
 	struct mlx5_ib_gsi_qp *gsi = &mqp->gsi;
-	struct mlx5_ib_dev *dev = to_mdev(gsi->rx_qp->device);
+	struct mlx5_ib_dev *dev = to_dev(gsi->rx_qp->device);
 	struct mlx5_ib_gsi_wr *gsi_wr;
 
 	if (gsi->outstanding_pi == gsi->outstanding_ci + gsi->cap.max_send_wr) {
@@ -412,7 +417,7 @@ static int mlx5_ib_gsi_silent_drop(struct mlx5_ib_qp *mqp, struct ib_ud_wr *wr)
 /* Call with gsi->lock locked */
 static struct ib_qp *get_tx_qp(struct mlx5_ib_gsi_qp *gsi, struct ib_ud_wr *wr)
 {
-	struct mlx5_ib_dev *dev = to_mdev(gsi->rx_qp->device);
+	struct mlx5_ib_dev *dev = to_dev(gsi->rx_qp->device);
 	struct mlx5_ib_ah *ah = to_mah(wr->ah);
 	int qp_index = wr->pkey_index;
 

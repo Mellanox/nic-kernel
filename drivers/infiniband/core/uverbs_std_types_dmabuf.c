@@ -18,6 +18,9 @@ static int uverbs_dmabuf_attach(struct dma_buf *dmabuf,
 	if (!attachment->peer2peer)
 		return -EOPNOTSUPP;
 
+	if (!dma_buf_attach_revocable(attachment))
+		return -EOPNOTSUPP;
+
 	return 0;
 }
 
@@ -52,15 +55,6 @@ static void uverbs_dmabuf_unmap(struct dma_buf_attachment *attachment,
 	dma_resv_assert_held(attachment->dmabuf->resv);
 	dma_buf_free_sgt(attachment, sgt, dir);
 	kref_put(&priv->kref, ib_uverbs_dmabuf_done);
-}
-
-static int uverbs_dmabuf_pin(struct dma_buf_attachment *attach)
-{
-	return -EOPNOTSUPP;
-}
-
-static void uverbs_dmabuf_unpin(struct dma_buf_attachment *attach)
-{
 }
 
 static void uverbs_dmabuf_release(struct dma_buf *dmabuf)
@@ -99,8 +93,6 @@ static const struct dma_buf_ops uverbs_dmabuf_ops = {
 	.attach = uverbs_dmabuf_attach,
 	.map_dma_buf = uverbs_dmabuf_map,
 	.unmap_dma_buf = uverbs_dmabuf_unmap,
-	.pin = uverbs_dmabuf_pin,
-	.unpin = uverbs_dmabuf_unpin,
 	.release = uverbs_dmabuf_release,
 };
 

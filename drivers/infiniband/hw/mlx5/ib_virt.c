@@ -50,7 +50,7 @@ static inline u32 mlx_to_net_policy(enum port_state_policy mlx_policy)
 int mlx5_ib_get_vf_config(struct ib_device *device, int vf, u32 port,
 			  struct ifla_vf_info *info)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	struct mlx5_hca_vport_context *rep;
 	int err;
@@ -92,7 +92,7 @@ static inline enum port_state_policy net_to_mlx_policy(int policy)
 int mlx5_ib_set_vf_link_state(struct ib_device *device, int vf,
 			      u32 port, int state)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	struct mlx5_hca_vport_context *in;
 	struct mlx5_vf_context *vfs_ctx = mdev->priv.sriov.vfs_ctx;
@@ -126,7 +126,7 @@ int mlx5_ib_get_vf_stats(struct ib_device *device, int vf,
 	void *out;
 	int err;
 
-	dev = to_mdev(device);
+	dev = to_dev(device);
 	mdev = dev->mdev;
 
 	out = kzalloc(out_sz, GFP_KERNEL);
@@ -151,7 +151,7 @@ ex:
 static int set_vf_node_guid(struct ib_device *device, int vf, u32 port,
 			    u64 guid)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	struct mlx5_hca_vport_context *in;
 	struct mlx5_vf_context *vfs_ctx = mdev->priv.sriov.vfs_ctx;
@@ -175,7 +175,7 @@ static int set_vf_node_guid(struct ib_device *device, int vf, u32 port,
 static int set_vf_port_guid(struct ib_device *device, int vf, u32 port,
 			    u64 guid)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	struct mlx5_hca_vport_context *in;
 	struct mlx5_vf_context *vfs_ctx = mdev->priv.sriov.vfs_ctx;
@@ -211,7 +211,7 @@ int mlx5_ib_get_vf_guid(struct ib_device *device, int vf, u32 port,
 			struct ifla_vf_guid *node_guid,
 			struct ifla_vf_guid *port_guid)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 	struct mlx5_core_dev *mdev = dev->mdev;
 	struct mlx5_vf_context *vfs_ctx = mdev->priv.sriov.vfs_ctx;
 

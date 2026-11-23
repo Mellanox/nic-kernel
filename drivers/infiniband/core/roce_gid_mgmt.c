@@ -141,6 +141,29 @@ static enum bonding_slave_state is_eth_active_slave_of_bonding_rcu(struct net_de
 	return BONDING_SLAVE_STATE_NA;
 }
 
+static bool bond_preserves_gids(struct ib_device *ib_dev, u32 port,
+				struct net_device *rdma_ndev,
+				struct net_device *ndev)
+{
+	const struct ib_port_immutable *immutable;
+	struct bonding *bond;
+	bool preserves;
+
+	immutable = ib_port_immutable_read(ib_dev, port);
+	if (!(immutable->core_cap_flags & RDMA_CORE_CAP_BONDING_FAILOVER) ||
+	    !netif_is_bond_master(ndev))
+		return false;
+
+	rcu_read_lock();
+	bond = netdev_priv(ndev);
+	preserves = netdev_master_upper_dev_get_rcu(rdma_ndev) == ndev &&
+		    READ_ONCE(bond->params.mode) == BOND_MODE_ACTIVEBACKUP &&
+		    READ_ONCE(bond->params.fail_over_mac) == BOND_FOM_NONE;
+	rcu_read_unlock();
+
+	return preserves;
+}
+
 #define REQUIRED_BOND_STATES		(BONDING_SLAVE_STATE_ACTIVE |	\
 					 BONDING_SLAVE_STATE_NA)
 static bool
@@ -159,8 +182,9 @@ is_eth_port_of_netdev_filter(struct ib_device *ib_dev, u32 port,
 		real_dev = cookie;
 
 	res = ((rdma_is_upper_dev_rcu(rdma_ndev, cookie) &&
-	       (is_eth_active_slave_of_bonding_rcu(rdma_ndev, real_dev) &
-		REQUIRED_BOND_STATES)) ||
+	       (bond_preserves_gids(ib_dev, port, rdma_ndev, real_dev) ||
+		(is_eth_active_slave_of_bonding_rcu(rdma_ndev, real_dev) &
+		 REQUIRED_BOND_STATES))) ||
 	       real_dev == rdma_ndev);
 
 	rcu_read_unlock();
@@ -246,6 +270,22 @@ static bool upper_device_filter(struct ib_device *ib_dev, u32 port,
 	rcu_read_unlock();
 
 	return res;
+}
+
+static bool bonding_failover_filter(struct ib_device *ib_dev, u32 port,
+				    struct net_device *rdma_ndev, void *cookie)
+{
+	/*
+	 * Skip deletion when the provider moves existing QPs to the new
+	 * active member and preserves the bond's GIDs. Deleting them would
+	 * clear hardware entries still used by live QPs.
+	 *
+	 * This can run before the provider associates the RDMA port with the
+	 * new active member, so check bond membership without requiring the
+	 * associated member to be active.
+	 */
+	return upper_device_filter(ib_dev, port, rdma_ndev, cookie) &&
+	       !bond_preserves_gids(ib_dev, port, rdma_ndev, cookie);
 }
 
 /**
@@ -771,7 +811,7 @@ static int netdevice_event(struct notifier_block *this, unsigned long event,
 				.filter = is_eth_port_of_netdev_filter
 			};
 	static const struct netdev_event_work_cmd bonding_event_ips_del_cmd = {
-		.cb = del_netdev_upper_ips, .filter = upper_device_filter};
+		.cb = del_netdev_upper_ips, .filter = bonding_failover_filter};
 	struct net_device *ndev = netdev_notifier_info_to_dev(ptr);
 	struct netdev_event_work_cmd cmds[ROCE_NETDEV_CALLBACK_SZ] = { {NULL} };
 

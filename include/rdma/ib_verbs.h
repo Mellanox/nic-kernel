@@ -650,6 +650,8 @@ void rdma_free_hw_stats_struct(struct rdma_hw_stats *stats);
 #define RDMA_CORE_CAP_IW_CM             0x00000008
 #define RDMA_CORE_CAP_IB_SA             0x00000010
 #define RDMA_CORE_CAP_OPA_MAD           0x00000020
+/* Existing QPs can switch bond members without replacing their GIDs. */
+#define RDMA_CORE_CAP_BONDING_FAILOVER  0x00000040
 
 /* Address format                       0x000FF000 */
 #define RDMA_CORE_CAP_AF_IB             0x00001000
@@ -1505,6 +1507,7 @@ enum ib_access_flags {
 	IB_ACCESS_ON_DEMAND = IB_UVERBS_ACCESS_ON_DEMAND,
 	IB_ACCESS_HUGETLB = IB_UVERBS_ACCESS_HUGETLB,
 	IB_ACCESS_RELAXED_ORDERING = IB_UVERBS_ACCESS_RELAXED_ORDERING,
+	IB_ACCESS_UNORDERED = IB_UVERBS_ACCESS_UNORDERED,
 	IB_ACCESS_FLUSH_GLOBAL = IB_UVERBS_ACCESS_FLUSH_GLOBAL,
 	IB_ACCESS_FLUSH_PERSISTENT = IB_UVERBS_ACCESS_FLUSH_PERSISTENT,
 
@@ -3008,6 +3011,8 @@ struct ib_device {
 	u16                          use_cq_dim:1;
 	/* CoCo guest with DMA bounce buffering required */
 	u16                          cc_dma_bounce:1;
+	/* Untrusted-NIC, adversarial mode is required */
+	u8			     adversarial_mode;
 	u8                           node_type;
 	u32			     phys_port_cnt;
 	struct ib_device_attr        attrs;
@@ -3307,6 +3312,7 @@ bool ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
 void ib_register_event_handler(struct ib_event_handler *event_handler);
 void ib_unregister_event_handler(struct ib_event_handler *event_handler);
 void ib_dispatch_event(const struct ib_event *event);
+int ib_dispatch_event_sync(const struct ib_event *event);
 
 int ib_query_port(struct ib_device *device,
 		  u32 port_num, struct ib_port_attr *port_attr);

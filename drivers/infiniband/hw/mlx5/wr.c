@@ -639,7 +639,6 @@ static int set_reg_wr(struct mlx5_ib_qp *qp,
 {
 	struct mlx5_ib_mr *mr = to_mmr(wr->mr);
 	struct mlx5_ib_pd *pd = to_mpd(qp->ibqp.pd);
-	struct mlx5_ib_dev *dev = to_mdev(pd->ibpd.device);
 	int mr_list_size = (mr->mmkey.ndescs + mr->meta_ndescs) * mr->desc_size;
 	bool umr_inline = mr_list_size <= MLX5_IB_SQ_UMR_INLINE_THRESHOLD;
 	bool atomic = wr->access & IB_ACCESS_REMOTE_ATOMIC;
@@ -649,15 +648,15 @@ static int set_reg_wr(struct mlx5_ib_qp *qp,
 	 * Relaxed Ordering is set implicitly in mlx5_set_umr_free_mkey() and
 	 * kernel ULPs are not aware of it, so we don't set it here.
 	 */
-	if (!mlx5r_umr_can_reconfig(dev, 0, wr->access)) {
+	if (!mlx5r_umr_can_reconfig(mr_to_mdev(mr), 0, wr->access)) {
 		mlx5_ib_warn(
-			to_mdev(qp->ibqp.device),
+			to_dev(qp->ibqp.device),
 			"Fast update for MR access flags is not possible\n");
 		return -EINVAL;
 	}
 
 	if (unlikely(wr->wr.send_flags & IB_SEND_INLINE)) {
-		mlx5_ib_warn(to_mdev(qp->ibqp.device),
+		mlx5_ib_warn(to_dev(qp->ibqp.device),
 			     "Invalid IB_SEND_INLINE send flag\n");
 		return -EINVAL;
 	}
@@ -1055,8 +1054,8 @@ int mlx5_ib_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,
 		      const struct ib_send_wr **bad_wr, bool drain)
 {
 	struct mlx5_wqe_ctrl_seg *ctrl = NULL;  /* compiler warning */
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
-	struct mlx5_core_dev *mdev = dev->mdev;
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
+	struct mlx5_core_dev *mdev = qp_to_mdev(ibqp);
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	struct mlx5_wqe_xrc_seg *xrc;
 	void *cur_edge;
@@ -1212,8 +1211,8 @@ int mlx5_ib_post_recv(struct ib_qp *ibqp, const struct ib_recv_wr *wr,
 	struct mlx5_ib_qp *qp = to_mqp(ibqp);
 	struct mlx5_wqe_data_seg *scat;
 	struct mlx5_rwqe_sig *sig;
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
-	struct mlx5_core_dev *mdev = dev->mdev;
+	struct mlx5_ib_dev *dev = to_dev(ibqp->device);
+	struct mlx5_core_dev *mdev = qp_to_mdev(ibqp);
 	unsigned long flags;
 	int err = 0;
 	int nreq;
