@@ -1049,8 +1049,10 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 	return x;
 
 error:
+	spin_lock_bh(&x->lock);
 	x->km.state = XFRM_STATE_DEAD;
 	xfrm_dev_state_delete(x);
+	spin_unlock_bh(&x->lock);
 	xfrm_state_put(x);
 error_no_put:
 	*errp = err;
@@ -1083,8 +1085,10 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	xfrm_audit_state_add(x, err ? 0 : 1, true);
 
 	if (err < 0) {
+		spin_lock_bh(&x->lock);
 		x->km.state = XFRM_STATE_DEAD;
 		xfrm_dev_state_delete(x);
+		spin_unlock_bh(&x->lock);
 		__xfrm_state_put(x);
 		goto out;
 	}
