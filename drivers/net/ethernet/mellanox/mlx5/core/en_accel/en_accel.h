@@ -218,11 +218,18 @@ static inline void mlx5e_accel_tx_finish(struct mlx5e_txqsq *sq,
 #endif
 }
 
+/* Whether the RX handlers set skb->decrypted for the packet of this CQE */
+static inline bool mlx5e_accel_rx_is_decrypted(struct mlx5_cqe64 *cqe)
+{
+	return mlx5e_ktls_rx_is_decrypted(cqe) || mlx5e_psp_is_rx_flow(cqe);
+}
+
 static inline bool
 mlx5e_accel_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
 {
-	return mlx5e_psp_shampo_can_merge(skb, cqe) &&
-	       mlx5e_ktls_shampo_can_merge(skb, cqe);
+	return mlx5e_accel_rx_is_decrypted(cqe) == skb_is_decrypted(skb) &&
+	       mlx5e_psp_shampo_can_merge(skb, cqe) &&
+	       mlx5e_ktls_shampo_can_merge(cqe);
 }
 
 static inline int mlx5e_accel_block_tc_offload(struct mlx5_core_dev *mdev)

@@ -61,19 +61,17 @@ mlx5e_ktls_handle_tx_wqe(struct mlx5_wqe_ctrl_seg *cseg,
 	cseg->tis_tir_num = cpu_to_be32(state->tls_tisn << 8);
 }
 
-/* The first CQE of a HW-GRO session sets skb->decrypted. A resync request or
- * a TLS error is handled on the first CQE only, so it starts a new session.
- */
-static inline bool
-mlx5e_ktls_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
+static inline bool mlx5e_ktls_rx_is_decrypted(struct mlx5_cqe64 *cqe)
 {
-	u8 tls_offload = get_cqe_tls_offload(cqe);
+	return get_cqe_tls_offload(cqe) == CQE_TLS_OFFLOAD_DECRYPTED;
+}
 
-	if (unlikely(tls_offload > CQE_TLS_OFFLOAD_DECRYPTED))
-		return false;
-
-	return (tls_offload == CQE_TLS_OFFLOAD_DECRYPTED) ==
-	       skb_is_decrypted(skb);
+/* A resync request or a TLS error is handled on the first CQE of a HW-GRO
+ * session only, so it starts a new session.
+ */
+static inline bool mlx5e_ktls_shampo_can_merge(struct mlx5_cqe64 *cqe)
+{
+	return get_cqe_tls_offload(cqe) <= CQE_TLS_OFFLOAD_DECRYPTED;
 }
 #else
 static inline bool
@@ -109,8 +107,12 @@ static inline void mlx5e_ktls_handle_rx_skb(struct mlx5e_rq *rq,
 {
 }
 
-static inline bool
-mlx5e_ktls_shampo_can_merge(struct sk_buff *skb, struct mlx5_cqe64 *cqe)
+static inline bool mlx5e_ktls_rx_is_decrypted(struct mlx5_cqe64 *cqe)
+{
+	return false;
+}
+
+static inline bool mlx5e_ktls_shampo_can_merge(struct mlx5_cqe64 *cqe)
 {
 	return true;
 }
