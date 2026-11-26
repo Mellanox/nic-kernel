@@ -15,8 +15,11 @@ static void mlx5_rdma_disable_roce_steering(struct mlx5_core_dev *dev)
 	struct mlx5_core_roce *roce = &dev->priv.roce;
 
 	mlx5_del_flow_rules(roce->allow_rule);
+	roce->allow_rule = NULL;
 	mlx5_destroy_flow_group(roce->fg);
+	roce->fg = NULL;
 	mlx5_destroy_flow_table(roce->ft);
+	roce->ft = NULL;
 }
 
 static int mlx5_rdma_enable_roce_steering(struct mlx5_core_dev *dev)
