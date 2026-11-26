@@ -62,6 +62,9 @@ mlx5e_mpwrq_umr_mode(struct mlx5_core_dev *mdev,
 	bool unaligned = xsk ? xsk->unaligned : false;
 	bool oversized = false;
 
+	if (rqo && rqo->data_direct)
+		return MLX5E_MPWRQ_UMR_MODE_UNALIGNED;
+
 	if (xsk) {
 		oversized = xsk->chunk_size < (1 << page_shift);
 		WARN_ON_ONCE(xsk->chunk_size > (1 << page_shift));
@@ -1093,12 +1096,12 @@ static void mlx5e_build_ico_cq_param(struct mlx5_core_dev *mdev,
  * restriction we have about max packets for reservation that is equal to max
  * headers per reservation.
  */
-u32 mlx5e_shampo_hd_per_wqe(struct mlx5_core_dev *mdev,
-			    struct mlx5e_params *params,
-			    struct mlx5e_rq_param *rq_param)
+static u32 mlx5e_shampo_hd_per_wqe(struct mlx5_core_dev *mdev,
+				   struct mlx5e_params *params,
+				   struct mlx5e_rq_opt_param *rqo)
 {
-	u16 num_strides = BIT(mlx5e_mpwqe_get_log_num_strides(mdev, params, NULL));
-	u8 log_stride_sz = mlx5e_mpwqe_get_log_stride_size(mdev, params, NULL);
+	u16 num_strides = BIT(mlx5e_mpwqe_get_log_num_strides(mdev, params, rqo));
+	u8 log_stride_sz = mlx5e_mpwqe_get_log_stride_size(mdev, params, rqo);
 	int pkt_per_rsrv = BIT(mlx5e_shampo_get_log_pkt_per_rsrv(params));
 	int wqe_size = BIT(log_stride_sz) * num_strides;
 	int rsrv_size = MLX5E_SHAMPO_WQ_RESRV_SIZE;
@@ -1117,13 +1120,14 @@ u32 mlx5e_shampo_hd_per_wqe(struct mlx5_core_dev *mdev,
  */
 u32 mlx5e_shampo_hd_per_wq(struct mlx5_core_dev *mdev,
 			   struct mlx5e_params *params,
-			   struct mlx5e_rq_param *rq_param)
+			   struct mlx5e_rq_param *rq_param,
+			   struct mlx5e_rq_opt_param *rqo)
 {
 	void *wqc = MLX5_ADDR_OF(rqc, rq_param->rqc, wq);
 	int wq_size = BIT(MLX5_GET(wq, wqc, log_wq_sz));
 	u32 hd_per_wqe, hd_per_wq;
 
-	hd_per_wqe = mlx5e_shampo_hd_per_wqe(mdev, params, rq_param);
+	hd_per_wqe = mlx5e_shampo_hd_per_wqe(mdev, params, rqo);
 	hd_per_wq = roundup_pow_of_two(hd_per_wqe * wq_size);
 	return hd_per_wq;
 }
@@ -1214,8 +1218,14 @@ static u32 mlx5e_max_xsk_wqebbs(struct mlx5_core_dev *mdev,
 
 static u8 mlx5e_build_icosq_log_wq_sz(struct mlx5_core_dev *mdev,
 				      struct mlx5e_params *params,
-				      struct mlx5e_rq_param *rq_param)
+				      struct mlx5e_rq_opt_param *rqo)
 {
+	/* Only the UMR mode matters here. Leave qcfg out: sizing for
+	 * PAGE_SIZE is an upper bound for larger RX page sizes.
+	 */
+	struct mlx5e_rq_opt_param umr_rqo = {
+		.data_direct = rqo && rqo->data_direct,
+	};
 	u32 wqebbs, total_pages, useful_space;
 
 	/* MLX5_WQ_TYPE_CYCLIC */
@@ -1223,7 +1233,7 @@ static u8 mlx5e_build_icosq_log_wq_sz(struct mlx5_core_dev *mdev,
 		return MLX5E_PARAMS_MINIMUM_LOG_SQ_SIZE;
 
 	/* UMR WQEs for the regular RQ. */
-	wqebbs = mlx5e_mpwrq_total_umr_wqebbs(mdev, params, NULL);
+	wqebbs = mlx5e_mpwrq_total_umr_wqebbs(mdev, params, &umr_rqo);
 
 	wqebbs += mlx5e_max_xsk_wqebbs(mdev, params);
 
@@ -1297,18 +1307,21 @@ void mlx5e_build_xdpsq_param(struct mlx5_core_dev *mdev,
 int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 			      struct mlx5e_params *params,
 			      struct netdev_queue_config *qcfg,
+			      bool data_direct,
 			      struct mlx5e_channel_param *cparam)
 {
 	u8 icosq_log_wq_sz, async_icosq_log_wq_sz;
 	int err;
 
 	cparam->rq_opt.qcfg = qcfg;
+	cparam->rq_opt.data_direct = data_direct;
 
 	err = mlx5e_build_rq_param(mdev, params, &cparam->rq_opt, &cparam->rq);
 	if (err)
 		return err;
 
-	icosq_log_wq_sz = mlx5e_build_icosq_log_wq_sz(mdev, params, &cparam->rq);
+	icosq_log_wq_sz = mlx5e_build_icosq_log_wq_sz(mdev, params,
+						      &cparam->rq_opt);
 	async_icosq_log_wq_sz = mlx5e_build_async_icosq_log_wq_sz(mdev);
 
 	mlx5e_build_sq_param(mdev, params, &cparam->txq_sq);

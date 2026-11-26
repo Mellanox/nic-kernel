@@ -15,6 +15,7 @@ struct mlx5e_xsk_param {
 struct mlx5e_rq_opt_param {
 	struct mlx5e_xsk_param *xsk;
 	struct netdev_queue_config *qcfg;
+	bool data_direct;
 };
 
 struct mlx5e_cq_param {
@@ -104,12 +105,10 @@ bool mlx5e_rx_mpwqe_is_linear_skb(struct mlx5_core_dev *mdev,
 u8 mlx5e_mpwqe_get_log_rq_size(struct mlx5_core_dev *mdev,
 			       struct mlx5e_params *params,
 			       struct mlx5e_rq_opt_param *rqo);
-u32 mlx5e_shampo_hd_per_wqe(struct mlx5_core_dev *mdev,
-			    struct mlx5e_params *params,
-			    struct mlx5e_rq_param *rq_param);
 u32 mlx5e_shampo_hd_per_wq(struct mlx5_core_dev *mdev,
 			   struct mlx5e_params *params,
-			   struct mlx5e_rq_param *rq_param);
+			   struct mlx5e_rq_param *rq_param,
+			   struct mlx5e_rq_opt_param *rqo);
 u32 mlx5e_choose_lro_timeout(struct mlx5_core_dev *mdev, u32 wanted_timeout);
 u8 mlx5e_mpwqe_get_log_stride_size(struct mlx5_core_dev *mdev,
 				   struct mlx5e_params *params,
@@ -146,6 +145,7 @@ void mlx5e_build_xdpsq_param(struct mlx5_core_dev *mdev,
 int mlx5e_build_channel_param(struct mlx5_core_dev *mdev,
 			      struct mlx5e_params *params,
 			      struct netdev_queue_config *qcfg,
+			      bool data_direct,
 			      struct mlx5e_channel_param *cparam);
 
 void mlx5e_build_xsk_channel_param(struct mlx5_core_dev *mdev,

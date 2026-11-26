@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <net/netdev_lock.h>
 #include <net/netdev_queues.h>
 #include <net/netdev_rx_queue.h>
 #include <net/xdp_sock_drv.h>
 
 #include "dev.h"
+#include "devmem.h"
 
 static struct device *
 __netdev_queue_get_dma_dev(struct net_device *dev, unsigned int idx)
@@ -57,6 +59,67 @@ struct device *netdev_queue_get_dma_dev(struct net_device *dev,
 
 	return dma_dev;
 }
+
+/**
+ * netdev_unbind_dma_dev() - release a netdev's mappings on a DMA device
+ * @dev:	net_device, must be closed
+ * @dma_dev:	DMA device that is going away
+ *
+ * Uninstalls the memory provider of every RX queue for which the driver
+ * reports @dma_dev or no DMA device at all, and unmaps the devmem TX
+ * bindings and the RX bindings left without a queue that use @dma_dev.
+ * Providers and bindings stay allocated until their users release them.
+ *
+ * The driver must stop reporting @dma_dev from ndo_queue_get_dma_dev()
+ * first, otherwise new providers can map against it once the instance
+ * lock is released.
+ *
+ * Leased RX queues are skipped with a warning.
+ *
+ * Context: Caller must hold the instance lock of @dev.
+ *
+ * Return: 0 on success, -EINVAL if @dma_dev is NULL, -EBUSY if @dev is
+ * running.
+ */
+int netdev_unbind_dma_dev(struct net_device *dev, struct device *dma_dev)
+{
+	unsigned int i;
+
+	netdev_assert_locked(dev);
+
+	if (WARN_ON_ONCE(!dma_dev))
+		return -EINVAL;
+
+	if (netif_running(dev))
+		return -EBUSY;
+
+	for (i = 0; i < dev->real_num_rx_queues; i++) {
+		struct netdev_rx_queue *rxq = __netif_get_rx_queue(dev, i);
+		struct pp_memory_provider_params p = rxq->mp_params;
+		struct device *queue_dev;
+
+		if (!p.mp_ops)
+			continue;
+
+		queue_dev = __netdev_queue_get_dma_dev(dev, i);
+		if (queue_dev && queue_dev != dma_dev)
+			continue;
+
+		if (rxq->lease) {
+			netdev_warn(dev, "rxq %u is leased, not releasing its memory provider\n",
+				    i);
+			continue;
+		}
+
+		memset(&rxq->mp_params, 0, sizeof(rxq->mp_params));
+		__netif_mp_uninstall_rxq(rxq, &p);
+	}
+
+	net_devmem_unbind_dma_dev(dev, dma_dev);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(netdev_unbind_dma_dev);
 
 bool netdev_can_create_queue(const struct net_device *dev,
 			     struct netlink_ext_ack *extack)

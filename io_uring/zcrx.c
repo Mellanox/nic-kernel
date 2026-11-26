@@ -641,16 +641,22 @@ static void io_close_queue(struct io_zcrx_ifq *ifq)
 	}
 
 	if (netdev) {
+		u32 rxq;
+
 		netdev_lock(netdev);
-		if (ifq->if_rxq != -1)
-			netif_mp_close_rxq(netdev, ifq->if_rxq, &p);
+		/* io_pp_uninstall() may have run since ifq->netdev was read. */
+		scoped_guard(mutex, &ifq->pp_lock) {
+			rxq = ifq->if_rxq;
+			ifq->if_rxq = -1;
+		}
+		if (rxq != -1)
+			netif_mp_close_rxq(netdev, rxq, &p);
 
 		scoped_guard(mutex, &ifq->pp_lock)
 			io_zcrx_unmap_areas(ifq);
 		netdev_unlock(netdev);
 		netdev_put(netdev, &netdev_tracker);
 	}
-	ifq->if_rxq = -1;
 }
 
 static void io_zcrx_ifq_free(struct io_zcrx_ifq *ifq)
@@ -1465,6 +1471,7 @@ static void io_pp_uninstall(void *mp_priv, struct netdev_rx_queue *rxq)
 	guard(mutex)(&ifq->pp_lock);
 	io_zcrx_unmap_areas(ifq);
 	io_zcrx_drop_netdev(ifq);
+	ifq->if_rxq = -1;
 
 	p->mp_ops = NULL;
 	p->mp_priv = NULL;
