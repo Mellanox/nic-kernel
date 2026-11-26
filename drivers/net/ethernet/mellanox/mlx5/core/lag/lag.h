@@ -231,6 +231,7 @@ void mlx5_virt_lag_mark_master(struct mlx5_lag *ldev);
 void mlx5_lag_clear_master(struct mlx5_lag *ldev);
 bool mlx5_lag_is_sd(struct mlx5_core_dev *dev);
 bool mlx5_lag_is_sw_managed(struct mlx5_core_dev *dev);
+bool mlx5_lag_has_sd_group(struct mlx5_lag *ldev);
 int mlx5_lag_demux_init(struct mlx5_core_dev *dev,
 			struct mlx5_flow_table_attr *ft_attr);
 void mlx5_lag_demux_cleanup(struct mlx5_core_dev *dev);
