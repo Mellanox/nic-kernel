@@ -130,6 +130,13 @@ struct xfrm_state_walk {
 	struct xfrm_address_filter *filter;
 };
 
+#define XFRM_STATE_WALK_BATCH_SIZE	32
+
+struct xfrm_state_walk_batch {
+	struct xfrm_state	*states[XFRM_STATE_WALK_BATCH_SIZE];
+	unsigned int		count;
+};
+
 enum {
 	XFRM_DEV_OFFLOAD_IN = 1,
 	XFRM_DEV_OFFLOAD_OUT,
@@ -189,16 +196,14 @@ enum xfrm_replay_mode {
 /* Full description of state of transformer. */
 struct xfrm_state {
 	possible_net_t		xs_net;
-	union {
-		struct hlist_node	gclist;
-		struct hlist_node	bydst;
-	};
+	struct hlist_node	bydst;
+	struct hlist_node	bysrc;
+	struct hlist_node	gclist;
 	union {
 		struct hlist_node	dev_gclist;
-		struct hlist_node	bysrc;
+		struct hlist_node	byseq;
 	};
 	struct hlist_node	byspi;
-	struct hlist_node	byseq;
 	struct hlist_node	state_cache;
 	struct hlist_node	state_cache_input;
 
@@ -1718,6 +1723,9 @@ void xfrm_state_walk_init(struct xfrm_state_walk *walk, u8 proto,
 			  struct xfrm_address_filter *filter);
 int xfrm_state_walk(struct net *net, struct xfrm_state_walk *walk,
 		    int (*func)(struct xfrm_state *, int, void*), void *);
+bool xfrm_state_walk_batch(struct net *net, struct xfrm_state_walk *walk,
+			   struct xfrm_state_walk_batch *batch);
+bool xfrm_state_walk_rewind(struct xfrm_state_walk *walk, struct xfrm_state *x);
 void xfrm_state_walk_done(struct xfrm_state_walk *walk, struct net *net);
 struct xfrm_state *xfrm_state_alloc(struct net *net);
 void xfrm_state_free(struct xfrm_state *x);
@@ -1741,6 +1749,8 @@ static inline void xfrm_dev_state_update_stats(struct xfrm_state *x)
 {
 	struct xfrm_dev_offload *xdo = &x->xso;
 	struct net_device *dev = READ_ONCE(xdo->dev);
+
+	lockdep_assert_held(&x->lock);
 
 	if (dev && dev->xfrmdev_ops &&
 	    dev->xfrmdev_ops->xdo_dev_state_update_stats)

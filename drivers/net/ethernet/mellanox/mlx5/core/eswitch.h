@@ -235,7 +235,7 @@ struct mlx5_vport {
 
 	struct mlx5_vport_info  info;
 
-	/* Protected by either the shared devlink (dev->shd) lock or by
+	/* Protected by either the devlink_shd lock (when available) or by
 	 * esw->state_lock. See esw_assert_qos_lock_held() for more details.
 	 * The Vport QoS can either be disabled (sched_node is NULL) or in one
 	 * of three states:
@@ -416,9 +416,9 @@ struct mlx5_eswitch {
 	atomic64_t user_count;
 	wait_queue_head_t work_queue_wait;
 
-	/* QoS changes are serialized by either the shared devlink (dev->shd)
-	 * lock or by esw->state_lock. See esw_assert_qos_lock_held() for more
-	 * details.
+	/* QoS changes are serialized by either the devlink_shd lock (when
+	 * available) or by esw->state_lock. See esw_assert_qos_lock_held() for
+	 * more details.
 	 */
 	struct {
 		/* Initially 0, meaning no QoS users and QoS is disabled. */

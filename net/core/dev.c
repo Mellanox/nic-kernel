@@ -4915,7 +4915,8 @@ int sk_tx_queue_get(const struct sock *sk)
 
 	resel = READ_ONCE(sock_net(sk)->core.sysctl_txq_reselection);
 	if (resel && time_is_before_jiffies(
-			READ_ONCE(sk->sk_tx_queue_mapping_jiffies) + resel))
+			READ_ONCE(sk->sk_tx_queue_mapping_jiffies) + resel) &&
+	    !sk_tx_queue_pinned(sk))
 		return -1;
 
 	return val;
@@ -4937,8 +4938,10 @@ u16 netdev_pick_tx(struct net_device *dev, struct sk_buff *skb,
 		if (new_index < 0)
 			new_index = skb_tx_hash(dev, sb_dev, skb);
 
+		/* Sticky sockets keep their queue across dst resets. */
 		if (sk && sk_fullsock(sk) &&
-		    rcu_access_pointer(sk->sk_dst_cache))
+		    (rcu_access_pointer(sk->sk_dst_cache) ||
+		     sock_flag(sk, SOCK_STICKY_TXQ)))
 			sk_tx_queue_set(sk, new_index);
 
 		queue_index = new_index;

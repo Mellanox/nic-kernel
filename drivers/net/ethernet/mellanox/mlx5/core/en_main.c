@@ -2091,19 +2091,6 @@ void mlx5e_deactivate_txqsq_post_sync(struct mlx5e_txqsq *sq)
 	struct mlx5_wq_cyc *wq = &sq->wq;
 
 	mlx5e_tx_disable_queue(sq->txq);
-
-	/* last doorbell out, godspeed .. */
-	if (mlx5e_wqc_has_room_for(wq, sq->cc, sq->pc, 1)) {
-		u16 pi = mlx5_wq_cyc_ctr2ix(wq, sq->pc);
-		struct mlx5e_tx_wqe *nop;
-
-		sq->db.wqe_info[pi] = (struct mlx5e_tx_wqe_info) {
-			.num_wqebbs = 1,
-		};
-
-		nop = mlx5e_post_nop(wq, sq->sqn, &sq->pc);
-		mlx5e_notify_hw(wq, sq->pc, sq->uar_map, &nop->ctrl);
-	}
 }
 
 void mlx5e_deactivate_txqsq(struct mlx5e_txqsq *sq)
@@ -3638,6 +3625,97 @@ static int mlx5e_switch_priv_params(struct mlx5e_priv *priv,
 	return 0;
 }
 
+#define MLX5E_SQ_DRAIN_TIMEOUT 100 /* msecs */
+
+static int mlx5e_drain_txqsq(struct mlx5e_txqsq *sq,
+			     struct mlx5e_txqsq **pending)
+{
+	if (mlx5e_txqsq_drain(sq))
+		return 0;
+
+	if (!*pending)
+		*pending = sq;
+
+	return 1;
+}
+
+/* Returns the number of the channel's TX SQs that still have pending WQEs. */
+static int mlx5e_drain_channel_txqsqs(struct mlx5e_channel *c,
+				      struct mlx5e_txqsq **pending)
+{
+	struct mlx5e_txqsq __rcu **qos_sqs;
+	int num_pending = 0;
+	int i;
+
+	for (i = 0; i < c->num_tc; i++)
+		num_pending += mlx5e_drain_txqsq(&c->sq[i], pending);
+
+	qos_sqs = mlx5e_state_dereference(c->priv, c->qos_sqs);
+	if (!qos_sqs)
+		return num_pending;
+
+	for (i = 0; i < c->qos_sqs_size; i++) {
+		struct mlx5e_txqsq *sq;
+
+		sq = mlx5e_state_dereference(c->priv, qos_sqs[i]);
+		if (sq)
+			num_pending += mlx5e_drain_txqsq(sq, pending);
+	}
+
+	return num_pending;
+}
+
+/* Returns the number of the PTP channel's TX SQs with pending WQEs. */
+static int mlx5e_drain_ptp_txqsqs(struct mlx5e_ptp *ptp,
+				  struct mlx5e_txqsq **pending)
+{
+	int num_pending = 0;
+	int tc;
+
+	if (!test_bit(MLX5E_PTP_STATE_TX, ptp->state))
+		return 0;
+
+	for (tc = 0; tc < ptp->num_tc; tc++)
+		num_pending += mlx5e_drain_txqsq(&ptp->ptpsq[tc].txqsq,
+						 pending);
+
+	return num_pending;
+}
+
+/* Wait for the TX SQs of deactivated channels to complete all their WQEs. */
+static bool mlx5e_drain_channels_txqsqs(struct mlx5e_channels *chs)
+{
+	unsigned long exp_time;
+
+	exp_time = jiffies + msecs_to_jiffies(MLX5E_SQ_DRAIN_TIMEOUT);
+	for (;;) {
+		struct mlx5e_txqsq *pending = NULL;
+		int num_pending = 0;
+		int i;
+
+		for (i = 0; i < chs->num; i++)
+			num_pending += mlx5e_drain_channel_txqsqs(chs->c[i],
+								  &pending);
+		if (chs->ptp)
+			num_pending += mlx5e_drain_ptp_txqsqs(chs->ptp,
+							      &pending);
+
+		if (!num_pending)
+			return true;
+
+		if (time_after(jiffies, exp_time)) {
+			netdev_warn(pending->netdev,
+				    "Old TX SQs not drained in %d msecs (%d pending, e.g. SQ 0x%x txq %d cc 0x%x pc 0x%x), closing the old channels first\n",
+				    MLX5E_SQ_DRAIN_TIMEOUT, num_pending,
+				    pending->sqn, pending->txq_ix,
+				    pending->cc, pending->pc);
+			return false;
+		}
+
+		usleep_range(10, 20);
+	}
+}
+
 /* The old and the new channel of the same index are bound to the same
  * XSK pool, which is lockless and expects a single user at a time.
  * Close the old XSK queues before the new ones are activated, even
@@ -3662,6 +3740,7 @@ static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 				      void *context)
 {
 	struct net_device *netdev = priv->netdev;
+	bool defer_close = false;
 	int carrier_ok;
 	int err = 0;
 
@@ -3684,7 +3763,10 @@ static int mlx5e_switch_priv_channels(struct mlx5e_priv *priv,
 	}
 
 	mlx5e_set_xdp_feature(priv);
-	if (!MLX5_CAP_GEN(priv->mdev, tis_tir_td_order))
+
+	defer_close = MLX5_CAP_GEN(priv->mdev, tis_tir_td_order) &&
+		      mlx5e_drain_channels_txqsqs(old_chs);
+	if (!defer_close)
 		mlx5e_close_channels(old_chs);
 	else
 		mlx5e_close_channels_xsk(old_chs);
@@ -3697,6 +3779,9 @@ out:
 	/* return carrier back if needed */
 	if (carrier_ok)
 		netif_carrier_on(netdev);
+
+	if (defer_close)
+		mlx5e_close_channels(old_chs);
 
 	return err;
 }
@@ -3734,9 +3819,6 @@ int mlx5e_safe_switch_params(struct mlx5e_priv *priv,
 					 preactivate, context);
 	if (err)
 		goto err_close;
-
-	if (MLX5_CAP_GEN(priv->mdev, tis_tir_td_order))
-		mlx5e_close_channels(old_chs);
 
 	kfree(new_chs);
 	kfree(old_chs);
@@ -5654,6 +5736,10 @@ void mlx5e_build_nic_params(struct mlx5e_priv *priv, struct mlx5e_xsk *xsk, u16 
 				 MLX5_CAP_GEN(mdev, cq_period_mode_modify);
 	params->rx_moder_use_cqe_mode = !!MLX5_CAP_GEN(mdev, cq_period_start_from_cqe);
 	params->tx_moder_use_cqe_mode = false;
+	MLX5E_SET_PFLAG(params, MLX5E_PFLAG_RX_CQE_BASED_MODER,
+			params->rx_moder_use_cqe_mode);
+	MLX5E_SET_PFLAG(params, MLX5E_PFLAG_TX_CQE_BASED_MODER,
+			params->tx_moder_use_cqe_mode);
 	mlx5e_reset_rx_moderation(&params->rx_cq_moderation, params->rx_moder_use_cqe_mode,
 				  params->rx_dim_enabled);
 	mlx5e_reset_tx_moderation(&params->tx_cq_moderation, params->tx_moder_use_cqe_mode,

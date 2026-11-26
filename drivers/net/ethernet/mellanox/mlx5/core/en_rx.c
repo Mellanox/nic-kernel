@@ -625,7 +625,7 @@ mlx5e_free_rx_mpwqe(struct mlx5e_rq *rq, struct mlx5e_mpw_info *wi)
 	}
 }
 
-static void mlx5e_post_rx_mpwqe(struct mlx5e_rq *rq, u8 n)
+static void mlx5e_post_rx_mpwqe(struct mlx5e_rq *rq, u16 n)
 {
 	struct mlx5_wq_ll *wq = &rq->mpwqe.wq;
 
@@ -934,11 +934,11 @@ static void mlx5e_reclaim_mpwqe_pages(struct mlx5e_rq *rq, int head,
 INDIRECT_CALLABLE_SCOPE bool mlx5e_post_rx_mpwqes(struct mlx5e_rq *rq)
 {
 	struct mlx5_wq_ll *wq = &rq->mpwqe.wq;
-	u8  umr_completed = rq->mpwqe.umr_completed;
+	u16 umr_completed = rq->mpwqe.umr_completed;
 	struct mlx5e_icosq *sq = rq->icosq;
 	bool reclaimed = false;
 	int alloc_err = 0;
-	u8  missing, i;
+	u16 missing, i;
 	u16 head;
 
 	if (unlikely(!test_bit(MLX5E_RQ_STATE_ENABLED, &rq->state)))
@@ -1516,14 +1516,17 @@ static bool mlx5e_shampo_complete_rx_cqe(struct mlx5e_rq *rq,
 
 	stats->packets++;
 	stats->bytes += cqe_bcnt;
-	if (NAPI_GRO_CB(skb)->count != 1)
+	if (NAPI_GRO_CB(skb)->count != 1) {
+		mlx5e_ktls_shampo_count_merged(rq, cqe, cqe_bcnt);
 		return false;
+	}
 
 	if (mlx5e_build_rx_skb(cqe, cqe_bcnt, rq, skb))
 		return true;
 
 	skb_reset_network_header(skb);
 	if (!skb_flow_dissect_flow_keys(skb, &rq->hw_gro_data->fk, 0)) {
+		skb_shinfo(skb)->gso_size = 0;
 		napi_gro_receive(rq->cq.napi, skb);
 		rq->hw_gro_data->skb = NULL;
 	}
@@ -1621,6 +1624,15 @@ mlx5e_skb_from_cqe_linear(struct mlx5e_rq *rq, struct mlx5e_wqe_frag_info *wi,
 	return skb;
 }
 
+static void mlx5e_wqe_account_frags(struct mlx5e_wqe_frag_info *head_wi,
+				    struct mlx5e_wqe_frag_info *end_wi)
+{
+	struct mlx5e_wqe_frag_info *pwi;
+
+	for (pwi = head_wi; pwi < end_wi; pwi++)
+		pwi->frag_page->frags++;
+}
+
 static struct sk_buff *
 mlx5e_skb_from_cqe_nonlinear(struct mlx5e_rq *rq, struct mlx5e_wqe_frag_info *wi,
 			     struct mlx5_cqe64 *cqe, u32 cqe_bcnt)
@@ -1681,10 +1693,14 @@ mlx5e_skb_from_cqe_nonlinear(struct mlx5e_rq *rq, struct mlx5e_wqe_frag_info *wi
 		if (mlx5e_xdp_handle(rq, prog, mxbuf)) {
 			if (__test_and_clear_bit(MLX5E_RQ_FLAG_XDP_XMIT,
 						 rq->flags)) {
-				struct mlx5e_wqe_frag_info *pwi;
-
-				for (pwi = head_wi; pwi < wi; pwi++)
-					pwi->frag_page->frags++;
+				mlx5e_wqe_account_frags(head_wi, wi);
+			} else if (unlikely(old_nr_frags != sinfo->nr_frags)) {
+				/* xdp buffer geometry changed in XDP drop path.
+				 * Doesn't make sense but it is not impossible.
+				 * So this case needs full accounting.
+				 */
+				mlx5e_wqe_account_frags(head_wi, wi);
+				xdp_return_buff(&mxbuf->xdp);
 			}
 			return NULL; /* page/packet was consumed by XDP */
 		}
@@ -1699,20 +1715,22 @@ mlx5e_skb_from_cqe_nonlinear(struct mlx5e_rq *rq, struct mlx5e_wqe_frag_info *wi
 		mxbuf->xdp.data - mxbuf->xdp.data_hard_start,
 		mxbuf->xdp.data_end - mxbuf->xdp.data,
 		mxbuf->xdp.data - mxbuf->xdp.data_meta);
-	if (unlikely(!skb))
+	if (unlikely(!skb)) {
+		if (unlikely(nr_frags_free)) {
+			mlx5e_wqe_account_frags(head_wi, wi);
+			xdp_return_buff(&mxbuf->xdp);
+		}
 		return NULL;
+	}
 
 	skb_mark_for_recycle(skb);
-	head_wi->frag_page->frags++;
+	mlx5e_wqe_account_frags(head_wi, wi);
 
 	if (xdp_buff_has_frags(&mxbuf->xdp)) {
 		/* sinfo->nr_frags is reset by build_skb, calculate again. */
 		xdp_update_skb_frags_info(skb, wi - head_wi - nr_frags_free - 1,
 					  sinfo->xdp_frags_size, truesize,
 					  xdp_buff_get_skb_flags(&mxbuf->xdp));
-
-		for (struct mlx5e_wqe_frag_info *pwi = head_wi + 1; pwi < wi; pwi++)
-			pwi->frag_page->frags++;
 	}
 
 	return skb;
@@ -1907,6 +1925,18 @@ mlx5e_shampo_fill_skb_data(struct sk_buff *skb, struct mlx5e_rq *rq,
 	} while (data_bcnt);
 }
 
+static void mlx5e_mpwqe_account_pages(struct mlx5e_frag_page *head_page,
+				      struct mlx5e_frag_page *end_page,
+				      struct mlx5e_frag_page *linear_page)
+{
+	struct mlx5e_frag_page *pfp;
+
+	for (pfp = head_page; pfp < end_page; pfp++)
+		pfp->frags++;
+
+	linear_page->frags++;
+}
+
 static struct sk_buff *
 mlx5e_skb_from_cqe_mpwrq_nonlinear(struct mlx5e_rq *rq, struct mlx5e_mpw_info *wi,
 				   struct mlx5_cqe64 *cqe, u16 cqe_bcnt, u32 head_offset,
@@ -2021,15 +2051,22 @@ mlx5e_skb_from_cqe_mpwrq_nonlinear(struct mlx5e_rq *rq, struct mlx5e_mpw_info *w
 
 		if (mlx5e_xdp_handle(rq, prog, mxbuf)) {
 			if (__test_and_clear_bit(MLX5E_RQ_FLAG_XDP_XMIT, rq->flags)) {
-				struct mlx5e_frag_page *pfp;
-
-				for (pfp = head_page; pfp < frag_page; pfp++)
-					pfp->frags++;
-
-				linear_page->frags++;
+				mlx5e_mpwqe_account_pages(head_page, frag_page,
+							  linear_page);
+			} else if (unlikely(old_nr_frags != sinfo->nr_frags)) {
+				/* xdp buffer geometry changed in XDP drop path.
+				 * Doesn't make sense but it is not impossible.
+				 * So this case needs full accounting.
+				 */
+				mlx5e_mpwqe_account_pages(head_page, frag_page,
+							  linear_page);
+				xdp_return_buff(&mxbuf->xdp);
 			}
+
 			return NULL; /* page/packet was consumed by XDP */
 		}
+
+		mlx5e_mpwqe_account_pages(head_page, frag_page, linear_page);
 
 		new_nr_frags = sinfo->nr_frags;
 		nr_frags_free = old_nr_frags - new_nr_frags;
@@ -2044,25 +2081,19 @@ mlx5e_skb_from_cqe_mpwrq_nonlinear(struct mlx5e_rq *rq, struct mlx5e_mpw_info *w
 			rq, mxbuf->xdp.data_hard_start, linear_frame_sz,
 			mxbuf->xdp.data - mxbuf->xdp.data_hard_start, len,
 			mxbuf->xdp.data - mxbuf->xdp.data_meta);
-		if (unlikely(!skb))
+		if (unlikely(!skb)) {
+			xdp_return_buff(&mxbuf->xdp);
 			return NULL;
+		}
 
 		skb_mark_for_recycle(skb);
-		linear_page->frags++;
 
 		if (xdp_buff_has_frags(&mxbuf->xdp)) {
-			struct mlx5e_frag_page *pagep;
-
 			/* sinfo->nr_frags is reset by build_skb, calculate again. */
 			xdp_update_skb_frags_info(skb, new_nr_frags,
 						  sinfo->xdp_frags_size,
 						  truesize,
 						  xdp_buff_get_skb_flags(&mxbuf->xdp));
-
-			pagep = head_page;
-			do
-				pagep->frags++;
-			while (++pagep < frag_page);
 
 			if (len < ETH_HLEN)
 				__pskb_pull_tail(skb, min(ETH_HLEN - len,

@@ -30,34 +30,27 @@ devlink_rate_leaf_get_from_info(struct devlink *devlink, struct genl_info *info)
 	return devlink_rate ?: ERR_PTR(-ENODEV);
 }
 
-/* Repeatedly walks the nested devlink chain while cross device rate nodes are
- * supported and finds the topmost instance where rates should be stored.
- * That instance is locked, referenced and returned.
- * When cross device rate nodes aren't supported the original devlink instance
- * is returned.
- */
+static bool devlink_rates_cross_dev(const struct devlink *devlink)
+{
+	return devlink->ops && devlink->ops->supported_cross_device_rate_nodes;
+}
+
+/* Locks and returns the instance where rates of 'devlink' are stored. */
 static struct devlink *devl_rate_lock(struct devlink *devlink)
 {
-	struct devlink *rate_devlink = devlink, *parent;
+	struct devlink *shd = devlink_shd(devlink);
+	struct devlink *rate_devlink;
 
 	devl_assert_locked(devlink);
 
-	while (rate_devlink->ops &&
-	       rate_devlink->ops->supported_cross_device_rate_nodes) {
-		parent = devlink_nested_in_get_lock(rate_devlink);
-		if (!parent)
-			break;
-		if (rate_devlink != devlink) {
-			/* Unlock intermediate instances. */
-			devl_unlock(rate_devlink);
-			devlink_put(rate_devlink);
-		}
-		rate_devlink = parent;
-	}
+	rate_devlink = shd && devlink_rates_cross_dev(devlink) ? shd : devlink;
+
+	if (rate_devlink != devlink)
+		devl_lock(rate_devlink);
 	return rate_devlink;
 }
 
-/* Unlocks and puts 'rate devlink' if different than 'devlink'. */
+/* Unlocks 'rate devlink' if different than 'devlink'. */
 static void devl_rate_unlock(struct devlink *devlink,
 			     struct devlink *rate_devlink)
 {
@@ -65,7 +58,6 @@ static void devl_rate_unlock(struct devlink *devlink,
 		return;
 
 	devl_unlock(rate_devlink);
-	devlink_put(rate_devlink);
 }
 
 static struct devlink_rate *
@@ -262,6 +254,25 @@ void devlink_rates_notify_register(struct devlink *devlink)
 		if (rate_node->devlink == devlink)
 			devlink_rate_notify(rate_node, DEVLINK_CMD_RATE_NEW);
 	devl_rate_unlock(devlink, rate_devlink);
+}
+
+/* Called at register time, before 'devlink' starts belonging to 'shd'.
+ * Rates created before register are stored locally. When cross device rate
+ * nodes are supported, they must be moved to the shared instance, where they
+ * will be looked up from now on. They can only have parents among themselves,
+ * so the hierarchy stays intact.
+ */
+void devlink_rates_shd_move(struct devlink *devlink, struct devlink *shd)
+{
+	devl_assert_locked(devlink);
+
+	if (!devlink_rates_cross_dev(devlink) ||
+	    list_empty(&devlink->rate_list))
+		return;
+
+	devl_lock(shd);
+	list_splice_tail_init(&devlink->rate_list, &shd->rate_list);
+	devl_unlock(shd);
 }
 
 void devlink_rates_notify_unregister(struct devlink *devlink)

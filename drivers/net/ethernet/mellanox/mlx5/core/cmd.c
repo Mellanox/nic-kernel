@@ -1876,6 +1876,7 @@ void mlx5_cmd_flush(struct mlx5_core_dev *dev)
 	struct mlx5_cmd *cmd = &dev->cmd;
 	int i;
 
+	mutex_lock(&cmd->flush_lock);
 	for (i = 0; i < cmd->vars.max_reg_cmds; i++) {
 		while (down_trylock(&cmd->vars.sem)) {
 			mlx5_cmd_trigger_completions(dev);
@@ -1892,6 +1893,7 @@ void mlx5_cmd_flush(struct mlx5_core_dev *dev)
 	up(&cmd->vars.pages_sem);
 	for (i = 0; i < cmd->vars.max_reg_cmds; i++)
 		up(&cmd->vars.sem);
+	mutex_unlock(&cmd->flush_lock);
 }
 
 static struct mlx5_cmd_msg *alloc_msg(struct mlx5_core_dev *dev, int in_size,
@@ -2106,10 +2108,14 @@ static int cmd_status_err(struct mlx5_core_dev *dev, int err, u16 opcode, u16 op
  */
 int mlx5_cmd_do(struct mlx5_core_dev *dev, void *in, int in_size, void *out, int out_size)
 {
-	int err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, false);
 	u16 op_mod = MLX5_GET(mbox_in, in, op_mod);
 	u16 opcode = in_to_opcode(in);
+	int err;
 
+	/* Read the header first: callers may pass the same buffer as in and
+	 * out, and cmd_exec() then overwrites the inbox with the outbox.
+	 */
+	err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, false);
 	return cmd_status_err(dev, err, opcode, op_mod, out);
 }
 EXPORT_SYMBOL(mlx5_cmd_do);
@@ -2152,10 +2158,12 @@ EXPORT_SYMBOL(mlx5_cmd_exec);
 int mlx5_cmd_exec_polling(struct mlx5_core_dev *dev, void *in, int in_size,
 			  void *out, int out_size)
 {
-	int err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, true);
 	u16 op_mod = MLX5_GET(mbox_in, in, op_mod);
 	u16 opcode = in_to_opcode(in);
+	int err;
 
+	/* Read the header first, see mlx5_cmd_do() */
+	err = cmd_exec(dev, in, in_size, out, out_size, NULL, NULL, true);
 	err = cmd_status_err(dev, err, opcode, op_mod, out);
 	return mlx5_cmd_check(dev, err, in, out);
 }
@@ -2438,11 +2446,13 @@ int mlx5_cmd_init(struct mlx5_core_dev *dev)
 
 	spin_lock_init(&cmd->alloc_lock);
 	spin_lock_init(&cmd->token_lock);
+	mutex_init(&cmd->flush_lock);
 
 	set_wqname(dev);
 	cmd->wq = create_singlethread_workqueue(cmd->wq_name);
 	if (!cmd->wq) {
 		mlx5_core_err(dev, "failed to create command workqueue\n");
+		mutex_destroy(&cmd->flush_lock);
 		return -ENOMEM;
 	}
 
@@ -2457,6 +2467,7 @@ void mlx5_cmd_cleanup(struct mlx5_core_dev *dev)
 
 	mlx5_cmdif_debugfs_cleanup(dev);
 	destroy_workqueue(cmd->wq);
+	mutex_destroy(&cmd->flush_lock);
 }
 
 int mlx5_cmd_enable(struct mlx5_core_dev *dev)

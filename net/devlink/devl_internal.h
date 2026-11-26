@@ -62,6 +62,12 @@ struct devlink {
 	struct rcu_work rwork;
 	struct devlink_rel *rel;
 	struct xarray nested_rels;
+	/* Shared devlink instance this instance belongs to, or NULL.
+	 * Points to self for shared instances. Otherwise, inherited from the
+	 * nested-in instance at register time, if that is already registered.
+	 * Immutable once set and referenced (if != self) until devlink_free().
+	 */
+	struct devlink *shd;
 	char priv[] __aligned(NETDEV_ALIGN);
 };
 
@@ -135,10 +141,6 @@ static inline void devl_dev_unlock(struct devlink *devlink, bool dev_lock)
 typedef void devlink_rel_notify_cb_t(struct devlink *devlink, u32 obj_index);
 typedef void devlink_rel_cleanup_cb_t(struct devlink *devlink, u32 obj_index,
 				      u32 rel_index);
-
-/* Returns the locked+referenced nested-in instance or NULL. */
-struct devlink *__must_check
-devlink_nested_in_get_lock(struct devlink *devlink);
 
 void devlink_rel_nested_in_clear(u32 rel_index);
 int devlink_rel_nested_in_add(u32 *rel_index, u32 devlink_index,
@@ -306,6 +308,7 @@ void devlink_traps_notify_register(struct devlink *devlink);
 void devlink_traps_notify_unregister(struct devlink *devlink);
 void devlink_rates_notify_register(struct devlink *devlink);
 void devlink_rates_notify_unregister(struct devlink *devlink);
+void devlink_rates_shd_move(struct devlink *devlink, struct devlink *shd);
 void devlink_linecards_notify_register(struct devlink *devlink);
 void devlink_linecards_notify_unregister(struct devlink *devlink);
 

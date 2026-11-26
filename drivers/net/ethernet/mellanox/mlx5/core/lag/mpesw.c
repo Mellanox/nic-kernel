@@ -106,19 +106,6 @@ static int mlx5_mpesw_teardown_sd_fdb(struct mlx5_lag *ldev)
 	return 0;
 }
 
-static bool mlx5_lag_has_sd_group(struct mlx5_lag *ldev)
-{
-	struct lag_fn *fn;
-	int i;
-
-	mlx5_ldev_for_each(i, 0, ldev) {
-		fn = mlx5_lag_fn(ldev, i);
-		if (fn->group_id)
-			return true;
-	}
-	return false;
-}
-
 static bool mlx5_phys_mpesw_validate(struct mlx5_lag *ldev,
 				     struct mlx5_core_dev *dev0)
 {

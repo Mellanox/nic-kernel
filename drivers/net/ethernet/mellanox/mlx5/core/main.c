@@ -1548,6 +1548,7 @@ int mlx5_load_one_devl_locked(struct mlx5_core_dev *dev, bool recovery)
 	return 0;
 
 err_attach:
+	mlx5_detach_device(dev, false);
 	clear_bit(MLX5_INTERFACE_STATE_UP, &dev->intf_state);
 	mlx5_unload(dev);
 err_load:
@@ -2011,6 +2012,7 @@ static void remove_one(struct pci_dev *pdev)
 	set_bit(MLX5_BREAK_FW_WAIT, &dev->intf_state);
 	mlx5_drain_fw_reset(dev);
 	mlx5_drain_health_wq(dev);
+	mlx5_health_enter_error_state_drained(dev);
 	mlx5_sriov_disable(pdev, false);
 	mlx5_uninit_one(dev);
 	mlx5_shd_uninit(dev);

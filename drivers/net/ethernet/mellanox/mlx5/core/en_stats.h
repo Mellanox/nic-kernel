@@ -237,6 +237,7 @@ struct mlx5e_sw_stats {
 	u64 tx_tls_skip_no_sync_data;
 	u64 tx_tls_drop_no_sync_data;
 	u64 tx_tls_drop_bypass_req;
+	u64 tx_tls_drop_txq_move;
 
 	u64 rx_tls_decrypted_packets;
 	u64 rx_tls_decrypted_bytes;
@@ -434,6 +435,7 @@ struct mlx5e_sq_stats {
 	u64 tls_skip_no_sync_data;
 	u64 tls_drop_no_sync_data;
 	u64 tls_drop_bypass_req;
+	u64 tls_drop_txq_move;
 #endif
 	/* less likely accessed in data path */
 	u64 csum_none;

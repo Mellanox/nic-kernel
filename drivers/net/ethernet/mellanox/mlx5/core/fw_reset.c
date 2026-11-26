@@ -22,6 +22,8 @@ struct mlx5_fw_reset {
 	struct mlx5_core_dev *dev;
 	struct mlx5_nb nb;
 	struct workqueue_struct *wq;
+	/* Serializes queueing works against setting DROP_NEW_REQUESTS */
+	spinlock_t queue_lock;
 	struct work_struct fw_live_patch_work;
 	struct work_struct reset_request_work;
 	struct work_struct reset_unload_work;
@@ -280,6 +282,22 @@ static int mlx5_sync_reset_clear_reset_requested(struct mlx5_core_dev *dev, bool
 	return 0;
 }
 
+static bool mlx5_fw_reset_queue_work(struct mlx5_fw_reset *fw_reset,
+				     struct work_struct *work)
+{
+	unsigned long flags;
+	bool dropped;
+
+	spin_lock_irqsave(&fw_reset->queue_lock, flags);
+	dropped = test_bit(MLX5_FW_RESET_FLAGS_DROP_NEW_REQUESTS,
+			   &fw_reset->reset_flags);
+	if (!dropped)
+		queue_work(fw_reset->wq, work);
+	spin_unlock_irqrestore(&fw_reset->queue_lock, flags);
+
+	return !dropped;
+}
+
 static void mlx5_sync_reset_reload_work(struct work_struct *work)
 {
 	struct mlx5_fw_reset *fw_reset = container_of(work, struct mlx5_fw_reset,
@@ -306,9 +324,8 @@ static void poll_sync_reset(struct timer_list *t)
 
 	if (fatal_error) {
 		mlx5_core_warn(dev, "Got Device Reset\n");
-		if (!test_bit(MLX5_FW_RESET_FLAGS_DROP_NEW_REQUESTS, &fw_reset->reset_flags))
-			queue_work(fw_reset->wq, &fw_reset->reset_reload_work);
-		else
+		if (!mlx5_fw_reset_queue_work(fw_reset,
+					      &fw_reset->reset_reload_work))
 			mlx5_core_err(dev, "Device is being removed, Drop new reset work\n");
 		return;
 	}
@@ -768,16 +785,18 @@ static void mlx5_sync_reset_events_handle(struct mlx5_fw_reset *fw_reset, struct
 	sync_event_rst_type = sync_fw_update_eqe->sync_rst_state & SYNC_RST_STATE_MASK;
 	switch (sync_event_rst_type) {
 	case MLX5_SYNC_RST_STATE_RESET_REQUEST:
-		queue_work(fw_reset->wq, &fw_reset->reset_request_work);
+		mlx5_fw_reset_queue_work(fw_reset,
+					 &fw_reset->reset_request_work);
 		break;
 	case MLX5_SYNC_RST_STATE_RESET_UNLOAD:
-		queue_work(fw_reset->wq, &fw_reset->reset_unload_work);
+		mlx5_fw_reset_queue_work(fw_reset,
+					 &fw_reset->reset_unload_work);
 		break;
 	case MLX5_SYNC_RST_STATE_RESET_NOW:
-		queue_work(fw_reset->wq, &fw_reset->reset_now_work);
+		mlx5_fw_reset_queue_work(fw_reset, &fw_reset->reset_now_work);
 		break;
 	case MLX5_SYNC_RST_STATE_RESET_ABORT:
-		queue_work(fw_reset->wq, &fw_reset->reset_abort_work);
+		mlx5_fw_reset_queue_work(fw_reset, &fw_reset->reset_abort_work);
 		break;
 	}
 }
@@ -806,7 +825,8 @@ static int fw_reset_event_notifier(struct notifier_block *nb, unsigned long acti
 
 	switch (eqe->sub_type) {
 	case MLX5_GENERAL_SUBTYPE_FW_LIVE_PATCH_EVENT:
-		queue_work(fw_reset->wq, &fw_reset->fw_live_patch_work);
+		mlx5_fw_reset_queue_work(fw_reset,
+					 &fw_reset->fw_live_patch_work);
 		break;
 	case MLX5_GENERAL_SUBTYPE_PCI_SYNC_FOR_FW_UPDATE_EVENT:
 		mlx5_sync_reset_events_handle(fw_reset, eqe);
@@ -868,11 +888,14 @@ void mlx5_fw_reset_events_stop(struct mlx5_core_dev *dev)
 void mlx5_drain_fw_reset(struct mlx5_core_dev *dev)
 {
 	struct mlx5_fw_reset *fw_reset = dev->priv.fw_reset;
+	unsigned long flags;
 
 	if (!fw_reset)
 		return;
 
+	spin_lock_irqsave(&fw_reset->queue_lock, flags);
 	set_bit(MLX5_FW_RESET_FLAGS_DROP_NEW_REQUESTS, &fw_reset->reset_flags);
+	spin_unlock_irqrestore(&fw_reset->queue_lock, flags);
 	cancel_work_sync(&fw_reset->fw_live_patch_work);
 	cancel_work_sync(&fw_reset->reset_request_work);
 	cancel_work_sync(&fw_reset->reset_unload_work);
@@ -907,6 +930,7 @@ int mlx5_fw_reset_init(struct mlx5_core_dev *dev)
 	}
 
 	fw_reset->dev = dev;
+	spin_lock_init(&fw_reset->queue_lock);
 	dev->priv.fw_reset = fw_reset;
 
 	err = devl_params_register(priv_to_devlink(dev),

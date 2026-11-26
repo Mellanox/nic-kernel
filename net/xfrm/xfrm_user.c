@@ -1049,7 +1049,10 @@ static struct xfrm_state *xfrm_state_construct(struct net *net,
 	return x;
 
 error:
+	spin_lock_bh(&x->lock);
 	x->km.state = XFRM_STATE_DEAD;
+	xfrm_dev_state_delete(x);
+	spin_unlock_bh(&x->lock);
 	xfrm_state_put(x);
 error_no_put:
 	*errp = err;
@@ -1082,8 +1085,10 @@ static int xfrm_add_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	xfrm_audit_state_add(x, err ? 0 : 1, true);
 
 	if (err < 0) {
+		spin_lock_bh(&x->lock);
 		x->km.state = XFRM_STATE_DEAD;
 		xfrm_dev_state_delete(x);
+		spin_unlock_bh(&x->lock);
 		__xfrm_state_put(x);
 		goto out;
 	}
@@ -1179,8 +1184,6 @@ static void copy_to_user_state(struct xfrm_state *x, struct xfrm_usersa_info *p)
 	memcpy(&p->id, &x->id, sizeof(p->id));
 	memcpy(&p->sel, &x->sel, sizeof(p->sel));
 	memcpy(&p->lft, &x->lft, sizeof(p->lft));
-	if (x->xso.dev)
-		xfrm_dev_state_update_stats(x);
 	memcpy(&p->curlft, &x->curlft, sizeof(p->curlft));
 	put_unaligned(x->stats.replay_window, &p->stats.replay_window);
 	put_unaligned(x->stats.replay, &p->stats.replay);
@@ -1236,7 +1239,7 @@ static void xso_to_xuo_ifindex(const struct xfrm_dev_offload *xso, int ifindex,
 static void xso_to_xuo(const struct xfrm_dev_offload *xso,
 		       struct xfrm_user_offload *xuo)
 {
-	xso_to_xuo_ifindex(xso, xso->dev->ifindex, xuo);
+	xso_to_xuo_ifindex(xso, xso->ifindex, xuo);
 }
 #endif
 
@@ -1564,11 +1567,34 @@ static int xfrm_dump_sa_done(struct netlink_callback *cb)
 	return 0;
 }
 
+static int refresh_and_dump_state(struct xfrm_state_walk *walk,
+				  struct xfrm_state *x,
+				  struct xfrm_dump_info *info)
+{
+	int err = 0;
+
+	spin_lock_bh(&x->lock);
+	if (x->km.state != XFRM_STATE_DEAD) {
+		xfrm_dev_state_update_stats(x);
+		err = dump_one_state(x, 0, info);
+		if (err && !xfrm_state_walk_rewind(walk, x))
+			err = 0;
+	}
+	spin_unlock_bh(&x->lock);
+
+	return err;
+}
+
 static int xfrm_dump_sa(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct net *net = sock_net(skb->sk);
 	struct xfrm_state_walk *walk = (struct xfrm_state_walk *) &cb->args[1];
+	struct xfrm_state_walk_batch batch;
 	struct xfrm_dump_info info;
+	struct xfrm_state *x;
+	unsigned int i;
+	int err = 0;
+	bool done;
 
 	BUILD_BUG_ON(sizeof(struct xfrm_state_walk) >
 		     sizeof(cb->args) - sizeof(cb->args[0]));
@@ -1582,7 +1608,6 @@ static int xfrm_dump_sa(struct sk_buff *skb, struct netlink_callback *cb)
 		struct nlattr *attrs[XFRMA_MAX+1];
 		struct xfrm_address_filter *filter = NULL;
 		u8 proto = 0;
-		int err;
 
 		err = nlmsg_parse_deprecated(cb->nlh, 0, attrs, XFRMA_MAX,
 					     xfrma_policy, cb->extack);
@@ -1612,7 +1637,16 @@ static int xfrm_dump_sa(struct sk_buff *skb, struct netlink_callback *cb)
 		cb->args[0] = 1;
 	}
 
-	(void) xfrm_state_walk(net, walk, dump_one_state, &info);
+	do {
+		done = xfrm_state_walk_batch(net, walk, &batch);
+		for (i = 0; i < batch.count; i++) {
+			x = batch.states[i];
+			if (!err)
+				err = refresh_and_dump_state(walk, x, &info);
+			xfrm_state_put(x);
+		}
+		cond_resched();
+	} while (!done && !err);
 
 	return skb->len;
 }
@@ -1633,7 +1667,10 @@ static struct sk_buff *xfrm_state_netlink(struct sk_buff *in_skb,
 	info.nlmsg_seq = seq;
 	info.nlmsg_flags = 0;
 
+	spin_lock_bh(&x->lock);
+	xfrm_dev_state_update_stats(x);
 	err = dump_one_state(x, 0, &info);
+	spin_unlock_bh(&x->lock);
 	if (err) {
 		kfree_skb(skb);
 		return ERR_PTR(err);
@@ -3971,6 +4008,8 @@ static int build_expire(struct sk_buff *skb, struct xfrm_state *x, const struct 
 	struct nlmsghdr *nlh;
 	int err;
 
+	xfrm_dev_state_update_stats(x);
+
 	nlh = nlmsg_put(skb, c->portid, 0, XFRM_MSG_EXPIRE, sizeof(*ue), 0);
 	if (nlh == NULL)
 		return -EMSGSIZE;
@@ -4167,7 +4206,10 @@ static int xfrm_notify_sa(struct xfrm_state *x, const struct km_event *c)
 
 		p = nla_data(attr);
 	}
+	spin_lock_bh(&x->lock);
+	xfrm_dev_state_update_stats(x);
 	err = copy_to_user_state_extra(x, p, skb);
+	spin_unlock_bh(&x->lock);
 	if (err)
 		goto out_free_skb;
 

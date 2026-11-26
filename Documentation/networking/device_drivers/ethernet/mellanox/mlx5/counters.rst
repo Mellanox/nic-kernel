@@ -419,9 +419,10 @@ the software port.
      - Error
 
    * - `ch[i]_force_irq`
-     - Number of times NAPI is triggered by XSK wakeups by posting a NOP to
-       ICOSQ.
-     - Acceleration
+     - The number of times the NAPI poll function stopped execution on a CPU
+       due to a change in affinity and forced an interrupt to reschedule NAPI,
+       on channel i.
+     - Informative
 
    * - `rx[i]_congst_umr`
      - The number of times an outstanding UMR request is delayed due to
@@ -702,6 +703,13 @@ the software port.
      - Number of TLS send data that were dropped due to retransmission of TLS
        data.
      - Acceleration
+
+   * - `tx[i]_tls_drop_txq_move`
+     - Number of TLS packets dropped on ring i because their connection still
+       had packets in flight on another ring. Posting them on ring i would
+       break the ordering of the connection's TLS state updates in the
+       device. TCP retransmits the dropped data.
+     - Error
 
    * - `ptp_cq[i]_abort`
      - Number of times a CQE has to be skipped in precision time protocol due to

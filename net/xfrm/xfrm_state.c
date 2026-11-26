@@ -226,7 +226,6 @@ static struct xfrm_state_afinfo __rcu *xfrm_state_afinfo[NPROTO];
 
 static DEFINE_SPINLOCK(xfrm_state_gc_lock);
 static DEFINE_SPINLOCK(xfrm_state_dev_gc_lock);
-static DEFINE_MUTEX(xfrm_state_gc_mutex);
 
 int __xfrm_state_delete(struct xfrm_state *x);
 
@@ -633,10 +632,8 @@ static void xfrm_state_gc_task(struct work_struct *work)
 
 	synchronize_rcu();
 
-	mutex_lock(&xfrm_state_gc_mutex);
 	hlist_for_each_entry_safe(x, tmp, &gc_list, gclist)
 		xfrm_state_gc_destroy(x);
-	mutex_unlock(&xfrm_state_gc_mutex);
 }
 
 static enum hrtimer_restart xfrm_timer_handler(struct hrtimer *me)
@@ -745,6 +742,7 @@ struct xfrm_state *xfrm_state_alloc(struct net *net)
 		INIT_HLIST_NODE(&x->state_cache);
 		INIT_HLIST_NODE(&x->bydst);
 		INIT_HLIST_NODE(&x->bysrc);
+		INIT_HLIST_NODE(&x->gclist);
 		INIT_HLIST_NODE(&x->byspi);
 		INIT_HLIST_NODE(&x->byseq);
 		hrtimer_setup(&x->mtimer, xfrm_timer_handler, CLOCK_BOOTTIME,
@@ -783,20 +781,28 @@ EXPORT_SYMBOL_GPL(xfrm_dev_state_delete);
 void xfrm_dev_state_free(struct xfrm_state *x)
 {
 	struct xfrm_dev_offload *xso = &x->xso;
-	struct net_device *dev = READ_ONCE(xso->dev);
+	struct net_device *dev;
 
-	if (dev && dev->xfrmdev_ops) {
-		spin_lock_bh(&xfrm_state_dev_gc_lock);
-		if (!hlist_unhashed(&x->dev_gclist))
-			hlist_del(&x->dev_gclist);
-		spin_unlock_bh(&xfrm_state_dev_gc_lock);
+	if (!READ_ONCE(xso->dev))
+		return;
 
-		if (dev->xfrmdev_ops->xdo_dev_state_free)
-			dev->xfrmdev_ops->xdo_dev_state_free(dev, x);
-		WRITE_ONCE(xso->dev, NULL);
-		xso->type = XFRM_DEV_OFFLOAD_UNSPECIFIED;
-		netdev_put(dev, &xso->dev_tracker);
+	spin_lock_bh(&x->lock);
+	spin_lock(&xfrm_state_dev_gc_lock);
+	dev = xso->dev;
+	if (!dev || !dev->xfrmdev_ops) {
+		spin_unlock(&xfrm_state_dev_gc_lock);
+		spin_unlock_bh(&x->lock);
+		return;
 	}
+	if (!hlist_unhashed(&x->dev_gclist))
+		hlist_del(&x->dev_gclist);
+	WRITE_ONCE(xso->dev, NULL);
+	spin_unlock(&xfrm_state_dev_gc_lock);
+	spin_unlock_bh(&x->lock);
+
+	if (dev->xfrmdev_ops->xdo_dev_state_free)
+		dev->xfrmdev_ops->xdo_dev_state_free(dev, x);
+	netdev_put(dev, &xso->dev_tracker);
 }
 #endif
 
@@ -967,6 +973,7 @@ int xfrm_dev_state_flush(struct net *net, struct net_device *dev, bool task_vali
 	struct hlist_node *tmp;
 	struct xfrm_dev_offload *xso;
 	int i, err = 0, cnt = 0;
+	HLIST_HEAD(flush_list);
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 	err = xfrm_dev_state_flush_secctx_check(net, dev, task_valid);
@@ -984,7 +991,6 @@ restart:
 				spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 
 				err = xfrm_state_delete(x);
-				xfrm_dev_state_free(x);
 
 				xfrm_audit_state_delete(x, err ? 0 : 1,
 							task_valid);
@@ -1003,22 +1009,31 @@ restart:
 out:
 	spin_unlock_bh(&net->xfrm.xfrm_state_lock);
 
-	mutex_lock(&xfrm_state_gc_mutex);
 	spin_lock_bh(&xfrm_state_dev_gc_lock);
-restart_gc:
 	hlist_for_each_entry_safe(x, tmp, &xfrm_state_dev_gc_list, dev_gclist) {
 		xso = &x->xso;
 
 		if (xso->dev == dev) {
-			spin_unlock_bh(&xfrm_state_dev_gc_lock);
-			xfrm_dev_state_free(x);
-			spin_lock_bh(&xfrm_state_dev_gc_lock);
-			goto restart_gc;
+			if (!refcount_inc_not_zero(&x->refcnt))
+				continue;
+			hlist_del_init(&x->dev_gclist);
+			/* xfrm_dev_state_free() may consume dev_gclist. The
+			 * reference prevents state GC from using gclist until
+			 * this flush removes it and drops the reference.
+			 */
+			hlist_add_head(&x->gclist, &flush_list);
 		}
-
 	}
 	spin_unlock_bh(&xfrm_state_dev_gc_lock);
-	mutex_unlock(&xfrm_state_gc_mutex);
+
+	if (!hlist_empty(&flush_list))
+		synchronize_rcu();
+
+	hlist_for_each_entry_safe(x, tmp, &flush_list, gclist) {
+		hlist_del_init(&x->gclist);
+		xfrm_dev_state_free(x);
+		xfrm_state_put(x);
+	}
 
 	xfrm_flush_gc();
 
@@ -1716,6 +1731,9 @@ struct xfrm_state *xfrm_state_lookup_byspi(struct net *net, __be32 spi,
 
 	spin_lock_bh(&net->xfrm.xfrm_state_lock);
 	list_for_each_entry(w, &net->xfrm.state_all, all) {
+		/* Racy read of km.state: a stale value is harmless. */
+		if (data_race(READ_ONCE(w->state)) != XFRM_STATE_VALID)
+			continue;
 		x = container_of(w, struct xfrm_state, km);
 		if (x->props.family != family ||
 			x->id.spi != spi)
@@ -2380,15 +2398,28 @@ EXPORT_SYMBOL(xfrm_state_check_expire);
 
 void xfrm_state_update_stats(struct net *net)
 {
+	struct xfrm_state_walk_batch batch;
+	struct xfrm_state_walk walk;
 	struct xfrm_state *x;
-	int i;
+	unsigned int i;
+	bool done;
 
-	spin_lock_bh(&net->xfrm.xfrm_state_lock);
-	for (i = 0; i <= net->xfrm.state_hmask; i++) {
-		hlist_for_each_entry(x, xfrm_state_deref_prot(net->xfrm.state_bydst, net) + i, bydst)
-			xfrm_dev_state_update_stats(x);
-	}
-	spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+	xfrm_state_walk_init(&walk, 0, NULL);
+	do {
+		done = xfrm_state_walk_batch(net, &walk, &batch);
+		for (i = 0; i < batch.count; i++) {
+			x = batch.states[i];
+			if (READ_ONCE(x->xso.dev)) {
+				spin_lock_bh(&x->lock);
+				if (x->km.state != XFRM_STATE_DEAD)
+					xfrm_dev_state_update_stats(x);
+				spin_unlock_bh(&x->lock);
+			}
+			xfrm_state_put(x);
+		}
+		cond_resched();
+	} while (!done);
+	xfrm_state_walk_done(&walk, net);
 }
 
 struct xfrm_state *
@@ -2811,6 +2842,66 @@ out:
 	return err;
 }
 EXPORT_SYMBOL(xfrm_state_walk);
+
+bool xfrm_state_walk_batch(struct net *net, struct xfrm_state_walk *walk,
+			   struct xfrm_state_walk_batch *batch)
+{
+	struct xfrm_state_walk *x;
+	struct xfrm_state *state;
+	unsigned int visited = 0;
+	bool done = true;
+
+	batch->count = 0;
+	if (walk->seq != 0 && list_empty(&walk->all))
+		return true;
+
+	spin_lock_bh(&net->xfrm.xfrm_state_lock);
+	if (list_empty(&walk->all))
+		x = list_first_entry(&net->xfrm.state_all,
+				     struct xfrm_state_walk, all);
+	else
+		x = list_first_entry(&walk->all, struct xfrm_state_walk, all);
+	list_for_each_entry_from(x, &net->xfrm.state_all, all) {
+		/* Callers recheck state under x->lock before processing. */
+		if (data_race(READ_ONCE(x->state)) == XFRM_STATE_DEAD)
+			continue;
+		if (visited++ == ARRAY_SIZE(batch->states)) {
+			list_move_tail(&walk->all, &x->all);
+			done = false;
+			goto out;
+		}
+		state = container_of(x, struct xfrm_state, km);
+		if (!xfrm_id_proto_match(state->id.proto, walk->proto))
+			continue;
+		if (!__xfrm_state_filter_match(state, walk->filter))
+			continue;
+		xfrm_state_hold(state);
+		batch->states[batch->count++] = state;
+	}
+	list_del_init(&walk->all);
+out:
+	walk->seq = 1;
+	spin_unlock_bh(&net->xfrm.xfrm_state_lock);
+	return done;
+}
+EXPORT_SYMBOL(xfrm_state_walk_batch);
+
+bool xfrm_state_walk_rewind(struct xfrm_state_walk *walk, struct xfrm_state *x)
+{
+	struct net *net = xs_net(x);
+	bool linked;
+
+	lockdep_assert_held(&x->lock);
+
+	spin_lock(&net->xfrm.xfrm_state_lock);
+	linked = !hlist_unhashed(&x->bydst);
+	if (linked)
+		list_move_tail(&walk->all, &x->km.all);
+	spin_unlock(&net->xfrm.xfrm_state_lock);
+
+	return linked;
+}
+EXPORT_SYMBOL(xfrm_state_walk_rewind);
 
 void xfrm_state_walk_init(struct xfrm_state_walk *walk, u8 proto,
 			  struct xfrm_address_filter *filter)

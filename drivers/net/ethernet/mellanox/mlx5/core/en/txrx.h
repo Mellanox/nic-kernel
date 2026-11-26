@@ -112,6 +112,7 @@ struct mlx5e_xmit_data_frags {
 
 netdev_tx_t mlx5e_xmit(struct sk_buff *skb, struct net_device *dev);
 bool mlx5e_poll_tx_cq(struct mlx5e_cq *cq, int napi_budget);
+bool mlx5e_txqsq_drain(struct mlx5e_txqsq *sq);
 void mlx5e_free_txqsq_descs(struct mlx5e_txqsq *sq);
 
 static inline bool

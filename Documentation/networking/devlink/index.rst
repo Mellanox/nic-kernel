@@ -31,8 +31,8 @@ sure to respect following rules:
 
  - Lock ordering should be maintained. If driver needs to take instance
    lock of both nested and parent instances at the same time, devlink
-   instance lock of the nested instance should be taken first, only then
-   instance lock of the parent instance could be taken.
+   instance lock of the parent instance should be taken first, only then
+   instance lock of the nested instance could be taken.
  - Driver should use object-specific helpers to setup the nested relationship
    before registering the nested devlink instance:
 
@@ -45,6 +45,13 @@ sure to respect following rules:
 
 The nested devlink info is exposed to the userspace over object-specific
 attributes of devlink netlink.
+
+A shared devlink instance (see ``devlink_shd_get()``) is inherited at
+register time by all instances nested in it, directly or indirectly, and
+can be obtained with ``devlink_shd()``. As an exception to the rule above,
+the shared instance lock is taken last, after any other instance lock it
+may be nested with. Hence, it must not be held while taking another
+instance lock or while waiting for any nested instance to be torn down.
 
 Interface documentation
 -----------------------

@@ -87,11 +87,20 @@ static int mlx5e_ktls_destroy_tis_cb(struct mlx5_core_dev *mdev, u32 tisn,
 				out, outlen, callback, context);
 }
 
+/* Bits of mlx5e_ktls_offload_context_tx flags */
+enum {
+	MLX5E_KTLS_TX_RESYNC, /* WQEs lost, see mlx5e_ktls_tx_handle_lost() */
+};
+
+#define MLX5E_KTLS_TX_NO_TXQ (-1)
+
 struct mlx5e_ktls_offload_context_tx {
 	/* fast path */
 	u32 expected_seq;
 	u32 tisn;
 	bool ctx_post_pending;
+	unsigned long flags; /* MLX5E_KTLS_TX_* */
+	int txq_ix; /* that it posts on, see mlx5e_ktls_tx_move() */
 	/* control / resync */
 	struct list_head list_node; /* member of the pool */
 	union mlx5e_crypto_info crypto_info;
@@ -498,6 +507,8 @@ int mlx5e_ktls_add_tx(struct net_device *netdev, struct sock *sk,
 	mlx5e_set_ktls_tx_priv_ctx(tls_ctx, priv_tx);
 
 	priv_tx->ctx_post_pending = true;
+	priv_tx->flags = 0;
+	priv_tx->txq_ix = MLX5E_KTLS_TX_NO_TXQ;
 	atomic64_inc(&priv_tx->sw_stats->tx_tls_ctx);
 
 	return 0;
@@ -533,16 +544,6 @@ static void tx_fill_wi(struct mlx5e_txqsq *sq,
 		.num_bytes  = num_bytes,
 		.resync_dump_frag_page = page,
 	};
-}
-
-static bool
-mlx5e_ktls_tx_offload_test_and_clear_pending(struct mlx5e_ktls_offload_context_tx *priv_tx)
-{
-	bool ret = priv_tx->ctx_post_pending;
-
-	priv_tx->ctx_post_pending = false;
-
-	return ret;
 }
 
 static void
@@ -676,7 +677,7 @@ out:
 static void
 tx_post_resync_params(struct mlx5e_txqsq *sq,
 		      struct mlx5e_ktls_offload_context_tx *priv_tx,
-		      u64 rcd_sn)
+		      u64 rcd_sn, bool force_static)
 {
 	__be64 rn_be = cpu_to_be64(rcd_sn);
 	bool skip_static_post;
@@ -704,7 +705,8 @@ tx_post_resync_params(struct mlx5e_txqsq *sq,
 		return;
 	}
 
-	skip_static_post = !memcmp(rec_seq, &rn_be, rec_seq_sz);
+	skip_static_post = !force_static &&
+			   !memcmp(rec_seq, &rn_be, rec_seq_sz);
 	if (!skip_static_post)
 		memcpy(rec_seq, &rn_be, rec_seq_sz);
 
@@ -769,10 +771,10 @@ void mlx5e_ktls_tx_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 }
 
 static enum mlx5e_ktls_sync_retval
-mlx5e_ktls_tx_handle_ooo(struct mlx5e_ktls_offload_context_tx *priv_tx,
-			 struct mlx5e_txqsq *sq,
-			 int datalen,
-			 u32 seq)
+mlx5e_ktls_tx_resync(struct mlx5e_ktls_offload_context_tx *priv_tx,
+		     struct mlx5e_txqsq *sq,
+		     int datalen,
+		     u32 seq, bool force_static)
 {
 	enum mlx5e_ktls_sync_retval ret;
 	struct tx_sync_info info = {};
@@ -786,7 +788,7 @@ mlx5e_ktls_tx_handle_ooo(struct mlx5e_ktls_offload_context_tx *priv_tx,
 		 */
 		return ret;
 
-	tx_post_resync_params(sq, priv_tx, info.rcd_sn);
+	tx_post_resync_params(sq, priv_tx, info.rcd_sn, force_static);
 
 	for (i = 0; i < info.nr_frags; i++) {
 		unsigned int orig_fsz, frag_offset = 0, n = 0;
@@ -826,6 +828,96 @@ err_out:
 	return MLX5E_KTLS_SYNC_FAIL;
 }
 
+void mlx5e_ktls_tx_hold_skb(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	u16 pi;
+
+	mlx5e_tx_mpwqe_ensure_complete(sq);
+
+	pi = mlx5_wq_cyc_ctr2ix(&sq->wq, sq->pc);
+	sq->db.wqe_info[pi] = (struct mlx5e_tx_wqe_info) {
+		.skb = skb,
+		.num_wqebbs = 1,
+	};
+	mlx5e_post_nop(&sq->wq, sq->sqn, &sq->pc);
+}
+
+/* The skb's WQEs were not executed: resync fully on the next skb. */
+void mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	struct mlx5e_ktls_offload_context_tx *priv_tx;
+	struct tls_context *tls_ctx;
+
+	/* The skb holds the socket; tls_device_down() waits for RCU readers. */
+	tls_ctx = tls_get_ctx(skb->sk);
+	rcu_read_lock();
+	if (rcu_dereference(tls_ctx->netdev) == sq->netdev) {
+		priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
+		set_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags);
+	}
+	rcu_read_unlock();
+}
+
+/* Move the connection to TX queue @txq_ix only if no other skb of its
+ * socket is in flight, under the old TX queue's lock. Returns the TX queue
+ * that the connection owns after the call.
+ */
+static int mlx5e_ktls_tx_move(struct net_device *netdev,
+			      struct mlx5e_ktls_offload_context_tx *priv_tx,
+			      struct sk_buff *skb, int txq_ix)
+{
+	int own = skb_is_decrypted(skb) ? skb->truesize : 0;
+	int old = READ_ONCE(priv_tx->txq_ix);
+	struct netdev_queue *old_txq;
+	int owner;
+
+	if (old == txq_ix)
+		return old;
+
+	if (old == MLX5E_KTLS_TX_NO_TXQ || old >= netdev->real_num_tx_queues) {
+		owner = cmpxchg(&priv_tx->txq_ix, old, txq_ix);
+		return owner == old ? txq_ix : owner;
+	}
+
+	old_txq = netdev_get_tx_queue(netdev, old);
+	if (!__netif_tx_trylock(old_txq))
+		return old;
+
+	owner = READ_ONCE(priv_tx->txq_ix);
+	if (owner == old &&
+	    sk_wmem_alloc_get(skb->sk) < own + SKB_TRUESIZE(1)) {
+		WRITE_ONCE(priv_tx->txq_ix, txq_ix);
+		owner = txq_ix;
+	}
+	__netif_tx_unlock(old_txq);
+
+	return owner;
+}
+
+/* Move the connection along with its socket, when the queue selection
+ * lets the socket move. Returns the connection's TX queue, or -1 if @skb
+ * is not of a connection offloaded to @netdev.
+ */
+int mlx5e_ktls_tx_select_txq(struct net_device *netdev, struct sk_buff *skb,
+			     u16 txq_ix, bool may_move)
+{
+	struct mlx5e_ktls_offload_context_tx *priv_tx;
+	struct tls_context *tls_ctx;
+
+	if (!tls_is_skb_tx_device_offloaded(skb))
+		return -1;
+
+	tls_ctx = tls_get_ctx(skb->sk);
+	if (rcu_dereference_bh(tls_ctx->netdev) != netdev)
+		return -1;
+
+	priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
+	if (!may_move)
+		return READ_ONCE(priv_tx->txq_ix);
+
+	return mlx5e_ktls_tx_move(netdev, priv_tx, skb, txq_ix);
+}
+
 bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state)
@@ -834,12 +926,19 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 	struct mlx5e_sq_stats *stats = sq->stats;
 	struct net_device *tls_netdev;
 	struct tls_context *tls_ctx;
+	bool ooo, resync;
 	int datalen;
 	u32 seq;
 
 	datalen = skb->len - skb_tcp_all_headers(skb);
 	if (!datalen)
 		return true;
+
+	/* Only data that the device encrypts uses the TLS context. */
+	if (!skb_is_decrypted(skb)) {
+		stats->tls_skip_no_sync_data++;
+		return true;
+	}
 
 	mlx5e_tx_mpwqe_ensure_complete(sq);
 
@@ -854,29 +953,42 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 
 	priv_tx = mlx5e_get_ktls_tx_priv_ctx(tls_ctx);
 
-	if (unlikely(mlx5e_ktls_tx_offload_test_and_clear_pending(priv_tx)))
-		mlx5e_ktls_tx_post_param_wqes(sq, priv_tx, false, false);
+	if (unlikely(READ_ONCE(priv_tx->txq_ix) != sq->txq_ix) &&
+	    mlx5e_ktls_tx_move(netdev, priv_tx, skb, sq->txq_ix) !=
+	    sq->txq_ix)
+		goto err_move;
 
+	/* Post pending context params only for an skb that uses them. */
 	seq = ntohl(tcp_hdr(skb)->seq);
-	if (unlikely(priv_tx->expected_seq != seq)) {
+	ooo = priv_tx->expected_seq != seq;
+	/* A loss reported during the resync marks it again. */
+	resync = test_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags) &&
+		 test_and_clear_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags);
+	if (unlikely(ooo || resync)) {
+		/* The TIS may still hold its previous user's params. */
+		bool force_static = resync || priv_tx->ctx_post_pending;
 		enum mlx5e_ktls_sync_retval ret =
-			mlx5e_ktls_tx_handle_ooo(priv_tx, sq, datalen, seq);
+			mlx5e_ktls_tx_resync(priv_tx, sq, datalen, seq,
+					     force_static);
 
-		stats->tls_ooo++;
+		if (ooo)
+			stats->tls_ooo++;
 
 		switch (ret) {
 		case MLX5E_KTLS_SYNC_DONE:
+			priv_tx->ctx_post_pending = false;
 			break;
 		case MLX5E_KTLS_SYNC_SKIP_NO_DATA:
 			stats->tls_skip_no_sync_data++;
-			if (likely(!skb->decrypted))
-				goto out;
 			WARN_ON_ONCE(1);
-			goto err_out;
+			goto err_lost;
 		case MLX5E_KTLS_SYNC_FAIL:
 			stats->tls_drop_no_sync_data++;
-			goto err_out;
+			goto err_lost;
 		}
+	} else if (unlikely(priv_tx->ctx_post_pending)) {
+		priv_tx->ctx_post_pending = false;
+		mlx5e_ktls_tx_post_param_wqes(sq, priv_tx, false, false);
 	}
 
 	priv_tx->expected_seq = seq + datalen;
@@ -886,11 +998,23 @@ bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 	stats->tls_encrypted_packets += skb_is_gso(skb) ? skb_shinfo(skb)->gso_segs : 1;
 	stats->tls_encrypted_bytes   += datalen;
 
-out:
 	return true;
 
-err_out:
+err_move:
+	/* Nothing was posted for the skb, TCP retransmits it. */
+	stats->tls_drop_txq_move++;
+	netdev_warn_once(netdev,
+			 "kTLS TX connection moved to TX queue %d with packets in flight, dropping\n",
+			 sq->txq_ix);
 	dev_kfree_skb_any(skb);
+	return false;
+
+err_lost:
+	/* Resync params may have moved the TIS state to the dropped skb. */
+	set_bit(MLX5E_KTLS_TX_RESYNC, &priv_tx->flags);
+err_out:
+	/* Parameter and DUMP WQEs may have been posted for the skb. */
+	mlx5e_ktls_tx_hold_skb(sq, skb);
 	return false;
 }
 

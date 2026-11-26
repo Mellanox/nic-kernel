@@ -177,7 +177,7 @@ void mlx5e_tc_encap_flows_add(struct mlx5e_priv *priv,
 		return;
 	}
 	e->flags |= MLX5_ENCAP_ENTRY_VALID;
-	mlx5e_rep_queue_neigh_stats_work(priv);
+	mlx5e_rep_queue_neigh_stats_work(netdev_priv(e->out_dev));
 
 	list_for_each_entry(flow, flow_list, tmp_list) {
 		if (!mlx5e_is_offloaded_flow(flow) || !flow_flag_test(flow, SLOW))
@@ -348,7 +348,7 @@ retry:
 
 	/* release starting encap */
 	if (e)
-		mlx5e_encap_put(netdev_priv(e->out_dev), e);
+		mlx5e_encap_put(e->priv, e);
 	if (!next)
 		return next;
 
@@ -401,7 +401,7 @@ void mlx5e_tc_update_neigh_used_value(struct mlx5e_neigh_hash_entry *nhe)
 	 * next one.
 	 */
 	while ((e = mlx5e_get_next_valid_encap(nhe, e)) != NULL) {
-		struct mlx5e_priv *priv = netdev_priv(e->out_dev);
+		struct mlx5e_priv *priv = e->priv;
 		struct encap_flow_item *efi, *tmp;
 		struct mlx5_eswitch *esw;
 		LIST_HEAD(flow_list);
@@ -871,6 +871,7 @@ int mlx5e_attach_encap(struct mlx5e_priv *priv,
 	init_completion(&e->res_ready);
 	entry_created = true;
 	INIT_LIST_HEAD(&e->route_list);
+	e->priv = netdev_priv(mlx5_eswitch_uplink_get_proto_dev(esw, REP_ETH));
 
 	tun_info = mlx5e_dup_tun_info(tun_info);
 	if (!tun_info) {
@@ -1019,6 +1020,24 @@ out_err:
 	return err;
 }
 
+static void mlx5e_tc_tun_encap_dests_detach(struct mlx5e_priv *priv,
+					    struct mlx5e_tc_flow *flow,
+					    struct mlx5_flow_attr *attr)
+{
+	struct mlx5_esw_flow_attr *esw_attr = attr->esw_attr;
+	int out_index;
+
+	for (out_index = 0; out_index < MLX5_MAX_FLOW_FWD_VPORTS; out_index++) {
+		if (!(esw_attr->dests[out_index].flags & MLX5_ESW_DEST_ENCAP))
+			continue;
+
+		mlx5e_detach_encap(priv, flow, attr, out_index);
+		esw_attr->dests[out_index].flags &=
+			~(MLX5_ESW_DEST_ENCAP_VALID |
+			  MLX5_ESW_DEST_CHAIN_WITH_SRC_PORT_CHANGE);
+	}
+}
+
 int mlx5e_tc_tun_encap_dests_set(struct mlx5e_priv *priv,
 				 struct mlx5e_tc_flow *flow,
 				 struct mlx5_flow_attr *attr,
@@ -1026,16 +1045,20 @@ int mlx5e_tc_tun_encap_dests_set(struct mlx5e_priv *priv,
 				 bool *vf_tun)
 {
 	struct mlx5e_tc_flow_parse_attr *parse_attr;
+	struct mlx5e_tc_int_port *dest_int_port;
 	struct mlx5_esw_flow_attr *esw_attr;
 	struct net_device *encap_dev = NULL;
 	struct mlx5e_rep_priv *rpriv;
 	struct mlx5e_priv *out_priv;
 	struct mlx5_eswitch *esw;
 	int out_index;
+	bool slow;
 	int err = 0;
 
 	parse_attr = attr->parse_attr;
 	esw_attr = attr->esw_attr;
+	dest_int_port = esw_attr->dest_int_port;
+	slow = flow_flag_test(flow, SLOW);
 	*vf_tun = false;
 
 	esw = priv->mdev->priv.eswitch;
@@ -1080,6 +1103,17 @@ int mlx5e_tc_tun_encap_dests_set(struct mlx5e_priv *priv,
 
 out:
 	mutex_unlock(&esw->offloads.encap_tbl_lock);
+	if (err) {
+		/* A flow kept for re-offload attaches its dests again */
+		mlx5e_tc_tun_encap_dests_detach(priv, flow, attr);
+		if (esw_attr->dest_int_port != dest_int_port) {
+			mlx5e_tc_int_port_put(mlx5e_get_int_port_priv(priv),
+					      esw_attr->dest_int_port);
+			esw_attr->dest_int_port = dest_int_port;
+		}
+		if (!slow)
+			flow_flag_clear(flow, SLOW);
+	}
 	return err;
 }
 
@@ -1718,9 +1752,9 @@ static void mlx5e_tc_fib_event_work(struct work_struct *work)
 		r->flags |= MLX5E_ROUTE_ENTRY_VALID;
 out:
 	mutex_unlock(&esw->offloads.encap_tbl_lock);
+	mlx5e_put_flow_list(priv, &flow_list);
 	rtnl_unlock();
 
-	mlx5e_put_flow_list(priv, &flow_list);
 	mlx5e_route_put(priv, event_data->r);
 	dev_put(event_data->ul_dev);
 	kfree(event_data);
