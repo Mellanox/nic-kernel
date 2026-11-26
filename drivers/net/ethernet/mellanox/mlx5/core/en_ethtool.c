@@ -2185,12 +2185,83 @@ static int mlx5e_flash_device(struct net_device *dev,
 	return mlx5e_ethtool_flash_device(priv, flash);
 }
 
+/* Write the moderation values in @m (usec, pkts, period mode) to the RX CQ,
+ * or to the TX CQs of all TCs, of channel @c.
+ * Queues with DIM enabled are skipped: restarting DIM sets their period mode,
+ * and the DIM work then overwrites usec/pkts from its own profile.
+ */
+static int mlx5e_set_channel_cq_moder(struct mlx5e_channel *c, bool is_rx,
+				      const struct dim_cq_moder *m)
+{
+	int tc, err;
+
+	if (is_rx)
+		return c->rq.dim ? 0 :
+		       mlx5e_modify_cq_moderation(c->mdev, &c->rq.cq.mcq, m->usec,
+						  m->pkts,
+						  mlx5e_cq_period_mode(m->cq_period_mode));
+
+	for (tc = 0; tc < c->num_tc; tc++) {
+		if (c->sq[tc].dim)
+			continue;
+
+		err = mlx5e_modify_cq_moderation(c->mdev, &c->sq[tc].cq.mcq,
+						 m->usec, m->pkts,
+						 mlx5e_cq_period_mode(m->cq_period_mode));
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
+/* Program the defaults of @cq_period_mode to the non-DIM CQs. Channel
+ * software state is not touched, so on failure the channels already
+ * programmed are restored from it.
+ */
+static int mlx5e_apply_channels_moder(struct mlx5e_priv *priv, bool is_rx,
+				      u8 cq_period_mode)
+{
+	int i, err;
+
+	if (!MLX5_CAP_GEN(priv->mdev, cq_moderation) ||
+	    !MLX5_CAP_GEN(priv->mdev, cq_period_mode_modify))
+		return 0;
+
+	for (i = 0; i < priv->channels.num; i++) {
+		struct mlx5e_channel *c = priv->channels.c[i];
+		struct dim_cq_moder m = is_rx ? c->rx_cq_moder : c->tx_cq_moder;
+
+		if (is_rx)
+			mlx5e_reset_rx_moderation(&m, cq_period_mode, false);
+		else
+			mlx5e_reset_tx_moderation(&m, cq_period_mode, false);
+
+		err = mlx5e_set_channel_cq_moder(c, is_rx, &m);
+		if (err)
+			goto err_restore;
+	}
+
+	return 0;
+
+err_restore:
+	for (; i >= 0; i--) {
+		struct mlx5e_channel *c = priv->channels.c[i];
+
+		mlx5e_set_channel_cq_moder(c, is_rx, is_rx ? &c->rx_cq_moder :
+							     &c->tx_cq_moder);
+	}
+
+	return err;
+}
+
 static int set_pflag_cqe_based_moder(struct net_device *netdev, bool enable,
 				     bool is_rx_cq)
 {
 	struct mlx5e_priv *priv = netdev_priv(netdev);
 	u8 cq_period_mode, current_cq_period_mode;
 	struct mlx5e_params new_params;
+	int err;
 
 	if (enable && !MLX5_CAP_GEN(priv->mdev, cq_period_start_from_cqe))
 		return -EOPNOTSUPP;
@@ -2206,17 +2277,31 @@ static int set_pflag_cqe_based_moder(struct net_device *netdev, bool enable,
 
 	new_params = priv->channels.params;
 	if (is_rx_cq) {
+		err = mlx5e_apply_channels_moder(priv, true, cq_period_mode);
+		if (err)
+			return err;
 		mlx5e_reset_rx_channels_moderation(&priv->channels, cq_period_mode,
 						   false, true);
 		mlx5e_channels_rx_toggle_dim(&priv->channels);
 		MLX5E_SET_PFLAG(&new_params, MLX5E_PFLAG_RX_CQE_BASED_MODER,
 				cq_period_mode);
+		new_params.rx_moder_use_cqe_mode = enable;
+		mlx5e_reset_rx_moderation(&new_params.rx_cq_moderation,
+					  cq_period_mode,
+					  new_params.rx_dim_enabled);
 	} else {
+		err = mlx5e_apply_channels_moder(priv, false, cq_period_mode);
+		if (err)
+			return err;
 		mlx5e_reset_tx_channels_moderation(&priv->channels, cq_period_mode,
 						   false, true);
 		mlx5e_channels_tx_toggle_dim(&priv->channels);
 		MLX5E_SET_PFLAG(&new_params, MLX5E_PFLAG_TX_CQE_BASED_MODER,
 				cq_period_mode);
+		new_params.tx_moder_use_cqe_mode = enable;
+		mlx5e_reset_tx_moderation(&new_params.tx_cq_moderation,
+					  cq_period_mode,
+					  new_params.tx_dim_enabled);
 	}
 
 	/* Update pflags of existing channels without resetting them */
