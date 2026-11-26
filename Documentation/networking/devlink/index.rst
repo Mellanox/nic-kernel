@@ -46,6 +46,13 @@ sure to respect following rules:
 The nested devlink info is exposed to the userspace over object-specific
 attributes of devlink netlink.
 
+A shared devlink instance (see ``devlink_shd_get()``) is inherited at
+register time by all instances nested in it, directly or indirectly, and
+can be obtained with ``devlink_shd()``. Devlink core may take the shared
+instance lock while holding a nested instance lock, without taking the
+locks of intermediate instances. Hence, the shared instance lock must not
+be held while waiting for any nested instance to be torn down.
+
 Interface documentation
 -----------------------
 
