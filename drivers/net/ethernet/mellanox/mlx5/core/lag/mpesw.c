@@ -208,10 +208,10 @@ void mlx5_lag_disable_mpesw(struct mlx5_lag *ldev)
 	if (ldev->mode != MLX5_LAG_MODE_MPESW)
 		return;
 
-	mlx5_mpesw_metadata_cleanup(ldev);
 	mlx5_lag_shared_fdb_destroy(ldev, MLX5_LAG_FILTER_ALL);
 	if (mlx5_lag_has_sd_group(ldev))
 		mlx5_mpesw_restore_sd_fdb(ldev);
+	mlx5_mpesw_metadata_cleanup(ldev);
 
 	/* Pair with the master mark taken at MPESW create for VFs. */
 	if (ldev->virt_lag)
@@ -336,7 +336,7 @@ bool mlx5_lag_is_mpesw(struct mlx5_core_dev *dev)
 	struct mlx5_lag *ldev = mlx5_lag_dev(dev);
 
 	return ldev && ldev->mode == MLX5_LAG_MODE_MPESW &&
-	       __mlx5_lag_dev_is_port(ldev, dev);
+	       (ldev->virt_lag || __mlx5_lag_dev_is_port(ldev, dev));
 }
 EXPORT_SYMBOL(mlx5_lag_is_mpesw);
 
