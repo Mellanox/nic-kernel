@@ -100,8 +100,11 @@ A global mutex (``shd_mutex``) protects the shared instances list during registr
 lock of the shared instance held, thus must not call ``devlink_shd_get()`` nor
 ``devlink_shd_put()``, and must use ``devl_*()`` variants of devlink API.
 
-Similarly to other nested devlink instance relationships, devlink lock of
-the shared instance should be always taken after the devlink lock of PF.
+Unlike other nested devlink instance relationships, devlink lock of the
+shared instance is always taken last, after the devlink lock of the PF or
+of any other instance nested in it. It must not be held while taking
+another instance lock or while waiting for a nested instance to be torn
+down.
 
 Reference Counting
 ------------------
