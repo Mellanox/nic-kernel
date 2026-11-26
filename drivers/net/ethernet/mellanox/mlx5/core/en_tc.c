@@ -1915,6 +1915,26 @@ err_out:
 	return err;
 }
 
+/* Release the decap state before a flow is kept for re-offload, which
+ * attaches it again.
+ */
+static void mlx5e_tc_detach_fdb_flow_decap(struct mlx5e_tc_flow *flow)
+{
+	struct mlx5_esw_flow_attr *esw_attr = flow->attr->esw_attr;
+	struct mlx5e_priv *priv = flow->priv;
+
+	if (esw_attr->int_port) {
+		mlx5e_tc_int_port_put(mlx5e_get_int_port_priv(priv),
+				      esw_attr->int_port);
+		esw_attr->int_port = NULL;
+	}
+
+	mlx5e_detach_decap(priv, flow);
+	mlx5e_detach_decap_route(priv, flow);
+	if (esw_attr->rx_tun_attr)
+		esw_attr->rx_tun_attr->decap_vport = 0;
+}
+
 static int
 mlx5e_tc_add_fdb_flow(struct mlx5e_priv *priv,
 		      struct mlx5e_tc_flow *flow,
@@ -2036,6 +2056,8 @@ mlx5e_tc_add_fdb_flow(struct mlx5e_priv *priv,
 		goto err_out;
 	}
 	flow_flag_set(flow, OFFLOADED);
+	/* Clear the mark of an earlier failed attempt */
+	flow_flag_clear(flow, FAILED);
 
 	return 0;
 
@@ -4611,6 +4633,7 @@ __mlx5e_add_fdb_flow(struct mlx5e_priv *priv,
 		if (!(err == -ENETUNREACH && mlx5_lag_is_multipath(in_mdev)))
 			goto err_free;
 
+		mlx5e_tc_detach_fdb_flow_decap(flow);
 		add_unready_flow(flow);
 	}
 
@@ -5586,6 +5609,8 @@ void mlx5e_tc_reoffload_flows_work(struct work_struct *work)
 	list_for_each_entry_safe(flow, tmp, &rpriv->unready_flows, unready) {
 		if (!mlx5e_tc_add_fdb_flow(flow->priv, flow, NULL))
 			unready_flow_del(flow);
+		else
+			mlx5e_tc_detach_fdb_flow_decap(flow);
 	}
 	mutex_unlock(&rpriv->unready_flows_lock);
 }
