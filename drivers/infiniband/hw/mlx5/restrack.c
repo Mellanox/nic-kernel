@@ -12,10 +12,9 @@
 
 #define MAX_DUMP_SIZE 1024
 
-static int dump_rsc(struct mlx5_core_dev *dev, enum mlx5_sgmt_type type,
+static int dump_rsc(struct mlx5_core_dev *mdev, enum mlx5_sgmt_type type,
 		    int index, void *data, int *data_len)
 {
-	struct mlx5_core_dev *mdev = dev;
 	struct mlx5_rsc_dump_cmd *cmd;
 	struct mlx5_rsc_key key = {};
 	struct page *page;
@@ -57,7 +56,7 @@ free_page:
 	return err;
 }
 
-static int fill_res_raw(struct sk_buff *msg, struct mlx5_ib_dev *dev,
+static int fill_res_raw(struct sk_buff *msg, struct mlx5_core_dev *mdev,
 			enum mlx5_sgmt_type type, u32 key)
 {
 	int len = 0;
@@ -68,7 +67,7 @@ static int fill_res_raw(struct sk_buff *msg, struct mlx5_ib_dev *dev,
 	if (!data)
 		return -ENOMEM;
 
-	err = dump_rsc(dev->mdev, type, key, data, &len);
+	err = dump_rsc(mdev, type, key, data, &len);
 	if (err)
 		goto out;
 
@@ -159,10 +158,10 @@ err:
 
 static int fill_res_cq_entry_raw(struct sk_buff *msg, struct ib_cq *ibcq)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibcq->device);
 	struct mlx5_ib_cq *cq = to_mcq(ibcq);
 
-	return fill_res_raw(msg, dev, MLX5_SGMT_TYPE_PRM_QUERY_CQ, cq->mcq.cqn);
+	return fill_res_raw(msg, cq_to_mdev(cq), MLX5_SGMT_TYPE_PRM_QUERY_CQ,
+			    cq->mcq.cqn);
 }
 
 static int fill_res_qp_entry(struct sk_buff *msg, struct ib_qp *ibqp)
@@ -192,9 +191,7 @@ static int fill_res_qp_entry(struct sk_buff *msg, struct ib_qp *ibqp)
 
 static int fill_res_qp_entry_raw(struct sk_buff *msg, struct ib_qp *ibqp)
 {
-	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
-
-	return fill_res_raw(msg, dev, MLX5_SGMT_TYPE_PRM_QUERY_QP,
+	return fill_res_raw(msg, qp_to_mdev(ibqp), MLX5_SGMT_TYPE_PRM_QUERY_QP,
 			    ibqp->qp_num);
 }
 

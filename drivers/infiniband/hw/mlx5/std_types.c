@@ -155,6 +155,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_QUERY_PORT)(
 {
 	struct mlx5_ib_uapi_query_port info = {};
 	struct mlx5_ib_ucontext *c;
+	struct mlx5_core_dev *mdev;
 	struct mlx5_ib_dev *dev;
 	u32 port_num;
 	int ret;
@@ -166,16 +167,17 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_QUERY_PORT)(
 	c = to_mucontext(ib_uverbs_get_ucontext(attrs));
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
+	mdev = uctx_to_mdev(c);
 
 	if (!rdma_is_port_valid(&dev->ib_dev, port_num))
 		return -EINVAL;
 
-	if (mlx5_eswitch_mode(dev->mdev) == MLX5_ESWITCH_OFFLOADS) {
+	if (mlx5_eswitch_mode(mdev) == MLX5_ESWITCH_OFFLOADS) {
 		ret = fill_switchdev_info(dev, port_num, &info);
 		if (ret)
 			return ret;
-	} else if (mlx5_core_mp_enabled(dev->mdev)) {
+	} else if (mlx5_core_mp_enabled(mdev)) {
 		ret = fill_multiport_info(dev, port_num, &info);
 		if (ret)
 			return ret;
@@ -200,7 +202,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_GET_DATA_DIRECT_SYSFS_PATH)(
 	c = to_mucontext(ib_uverbs_get_ucontext(attrs));
 	if (IS_ERR(c))
 		return PTR_ERR(c);
-	dev = to_mdev(c->ibucontext.device);
+	dev = to_dev(c->ibucontext.device);
 	mutex_lock(&dev->data_direct_lock);
 	data_direct_dev = mlx5_data_direct_get_dev(dev->mdev->data_direct);
 	if (!data_direct_dev) {

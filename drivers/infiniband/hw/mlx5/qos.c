@@ -14,7 +14,7 @@
 
 static bool pp_is_supported(struct ib_device *device)
 {
-	struct mlx5_ib_dev *dev = to_mdev(device);
+	struct mlx5_ib_dev *dev = to_dev(device);
 
 	return (MLX5_CAP_GEN(dev->mdev, qos) &&
 		MLX5_CAP_QOS(dev->mdev, packet_pacing) &&
@@ -27,7 +27,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_PP_OBJ_ALLOC)(
 	u8 rl_raw[MLX5_ST_SZ_BYTES(set_pp_rate_limit_context)] = {};
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(attrs,
 		MLX5_IB_ATTR_PP_OBJ_ALLOC_HANDLE);
-	struct mlx5_ib_dev *dev;
+	struct mlx5_core_dev *mdev;
 	struct mlx5_ib_ucontext *c;
 	struct mlx5_ib_pp *pp_entry;
 	void *in_ctx;
@@ -44,7 +44,7 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_PP_OBJ_ALLOC)(
 	if (!c->devx_uid)
 		return -EINVAL;
 
-	dev = to_mdev(c->ibucontext.device);
+	mdev = uctx_to_mdev(c);
 	pp_entry = kzalloc_obj(*pp_entry);
 	if (!pp_entry)
 		return -ENOMEM;
@@ -63,13 +63,12 @@ static int UVERBS_HANDLER(MLX5_IB_METHOD_PP_OBJ_ALLOC)(
 	uid = (flags & MLX5_IB_UAPI_PP_ALLOC_FLAGS_DEDICATED_INDEX) ?
 		c->devx_uid : MLX5_SHARED_RESOURCE_UID;
 
-	err = mlx5_rl_add_rate_raw(dev->mdev, rl_raw, uid,
+	err = mlx5_rl_add_rate_raw(mdev, rl_raw, uid,
 			(flags & MLX5_IB_UAPI_PP_ALLOC_FLAGS_DEDICATED_INDEX),
 			&pp_entry->index);
 	if (err)
 		goto err;
 
-	pp_entry->mdev = dev->mdev;
 	uobj->object = pp_entry;
 	uverbs_finalize_uobj_create(attrs, MLX5_IB_ATTR_PP_OBJ_ALLOC_HANDLE);
 
@@ -86,9 +85,11 @@ static int pp_obj_cleanup(struct ib_uobject *uobject,
 			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
+	struct mlx5_core_dev *mdev =
+		uctx_to_mdev(to_mucontext(uobject->context));
 	struct mlx5_ib_pp *pp_entry = uobject->object;
 
-	mlx5_rl_remove_rate_raw(pp_entry->mdev, pp_entry->index);
+	mlx5_rl_remove_rate_raw(mdev, pp_entry->index);
 	kfree(pp_entry);
 	return 0;
 }
