@@ -59,6 +59,11 @@ struct mlx5_esw_sched_node {
 	u32 tc_bw[DEVLINK_RATE_TCS_MAX];
 };
 
+static struct devlink *esw_qos_shd(struct mlx5_core_dev *dev)
+{
+	return devlink_shd(priv_to_devlink(dev));
+}
+
 /* Locking notes:
  * QoS changes are normally protected by the shd lock. But on older HW shd
  * might not be created at all, so there needs to be a fallback serialization
@@ -72,49 +77,59 @@ struct mlx5_esw_sched_node {
  */
 static void esw_assert_qos_lock_held(struct mlx5_core_dev *dev)
 {
-	if (dev->shd)
-		devl_assert_locked(dev->shd);
+	struct devlink *shd = esw_qos_shd(dev);
+
+	if (shd)
+		devl_assert_locked(shd);
 	else
 		lockdep_assert_held(&dev->priv.eswitch->state_lock);
 }
 
 static void esw_qos_lock(struct mlx5_core_dev *dev)
 {
-	if (dev->shd)
-		devl_lock(dev->shd);
+	struct devlink *shd = esw_qos_shd(dev);
+
+	if (shd)
+		devl_lock(shd);
 	else
 		mutex_lock(&dev->priv.eswitch->state_lock);
 }
 
 static void esw_qos_unlock(struct mlx5_core_dev *dev)
 {
-	if (dev->shd)
-		devl_unlock(dev->shd);
+	struct devlink *shd = esw_qos_shd(dev);
+
+	if (shd)
+		devl_unlock(shd);
 	else
 		mutex_unlock(&dev->priv.eswitch->state_lock);
 }
 
 static void esw_qos_shd_lock(struct mlx5_core_dev *dev)
 {
-	if (dev->shd)
-		devl_lock(dev->shd);
+	struct devlink *shd = esw_qos_shd(dev);
+
+	if (shd)
+		devl_lock(shd);
 }
 
 static void esw_qos_shd_unlock(struct mlx5_core_dev *dev)
 {
-	if (dev->shd)
-		devl_unlock(dev->shd);
+	struct devlink *shd = esw_qos_shd(dev);
+
+	if (shd)
+		devl_unlock(shd);
 }
 
 static void esw_qos_devlink_lock(struct mlx5_core_dev *dev)
 {
-	if (!dev->shd)
+	if (!esw_qos_shd(dev))
 		mutex_lock(&dev->priv.eswitch->state_lock);
 }
 
 static void esw_qos_devlink_unlock(struct mlx5_core_dev *dev)
 {
-	if (!dev->shd)
+	if (!esw_qos_shd(dev))
 		mutex_unlock(&dev->priv.eswitch->state_lock);
 }
 
@@ -1834,6 +1849,8 @@ mlx5_esw_validate_cross_esw_scheduling(struct mlx5_eswitch *esw,
 				       struct mlx5_esw_sched_node *parent,
 				       struct netlink_ext_ack *extack)
 {
+	struct devlink *shd;
+
 	if (!parent || esw == parent->esw)
 		return 0;
 
@@ -1842,7 +1859,9 @@ mlx5_esw_validate_cross_esw_scheduling(struct mlx5_eswitch *esw,
 				   "Cross E-Switch scheduling is not supported");
 		return -EOPNOTSUPP;
 	}
-	if (!esw->dev->shd || esw->dev->shd != parent->esw->dev->shd) {
+
+	shd = esw_qos_shd(esw->dev);
+	if (!shd || shd != esw_qos_shd(parent->esw->dev)) {
 		NL_SET_ERR_MSG_MOD(extack,
 				   "Cannot add vport to a parent belonging to a different device");
 		return -EOPNOTSUPP;

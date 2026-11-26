@@ -53,6 +53,9 @@ static struct devlink_shd *devlink_shd_create(const char *id,
 		goto err_devlink_free;
 	}
 	shd->priv_size = priv_size;
+	refcount_set(&shd->refcount, 1);
+	/* Shared instances belong to themselves. */
+	WRITE_ONCE(devlink->shd, devlink);
 
 	devl_lock(devlink);
 
@@ -64,7 +67,6 @@ static struct devlink_shd *devlink_shd_create(const char *id,
 	devl_register(devlink);
 	devl_unlock(devlink);
 
-	refcount_set(&shd->refcount, 1);
 	list_add_tail(&shd->list, &shd_list);
 
 	return shd;

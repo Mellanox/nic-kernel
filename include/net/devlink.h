@@ -1599,10 +1599,10 @@ struct devlink_ops {
 				    void *priv_child, void *priv_parent,
 				    struct netlink_ext_ack *extack);
 	/* Indicates if cross-device rate nodes are supported.
-	 * This also requires a shared common ancestor object all devices that
-	 * could share rate nodes are nested in.
+	 * This also requires a shared devlink instance (see devlink_shd()) all
+	 * devices that could share rate nodes belong to.
 	 * If enabled, rate operations may be called on an instance with only
-	 * the common ancestor lock held and *without that instance lock held*.
+	 * the shared instance lock held and *without that instance lock held*.
 	 * It is the driver's responsibility to ensure proper serialization
 	 * with other operations.
 	 */
@@ -1705,6 +1705,7 @@ struct devlink *devlink_shd_get(const char *id,
 void devlink_shd_put(struct devlink *devlink);
 void *devlink_shd_get_priv(struct devlink *devlink);
 struct devlink *shd_priv_to_devlink(void *priv);
+struct devlink *devlink_shd(const struct devlink *devlink);
 
 /**
  * struct devlink_port_ops - Port operations

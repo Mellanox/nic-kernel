@@ -67,22 +67,6 @@ static void __devlink_rel_put(struct devlink_rel *rel)
 		devlink_rel_free(rel);
 }
 
-struct devlink *__must_check devlink_nested_in_get_lock(struct devlink *devlink)
-{
-	devl_assert_locked(devlink);
-	if (!devlink->rel)
-		return NULL;
-	devlink = devlinks_xa_get(devlink->rel->nested_in.devlink_index);
-	if (!devlink)
-		return NULL;
-	devl_lock(devlink);
-	if (devl_is_registered(devlink))
-		return devlink;
-	devl_unlock(devlink);
-	devlink_put(devlink);
-	return NULL;
-}
-
 static void devlink_rel_nested_in_notify_work(struct work_struct *work)
 {
 	struct devlink_rel *rel = container_of(work, struct devlink_rel,
@@ -200,7 +184,9 @@ int devlink_rel_nested_in_add(u32 *rel_index, u32 devlink_index,
  * a notification of a change of this object should be sent
  * over netlink. The parent devlink instance lock needs to be
  * taken during the notification preparation.
- * Since the parent may or may not be locked, 'work' is utilized.
+ * However, since the devlink lock of nested instance is held here,
+ * we would end with wrong devlink instance lock ordering and
+ * deadlock. Therefore the work is utilized to avoid that.
  */
 void devlink_rel_nested_in_notify(struct devlink *devlink)
 {
@@ -401,6 +387,44 @@ struct devlink *devlinks_xa_lookup_get(struct net *net, unsigned long index)
 	return __devlinks_xa_find_get(net, &index, index);
 }
 
+/* Inherit the shared instance from the nested-in instance, if any. */
+static void devlink_shd_inherit(struct devlink *devlink)
+{
+	struct devlink *parent, *shd;
+
+	if (devlink->shd || !devlink->rel)
+		return;
+
+	parent = devlinks_xa_get(devlink->rel->nested_in.devlink_index);
+	if (!parent)
+		return;
+
+	shd = READ_ONCE(parent->shd);
+	if (shd) {
+		refcount_inc(&shd->refcount);
+		devlink_rates_shd_move(devlink, shd);
+		WRITE_ONCE(devlink->shd, shd);
+	}
+	devlink_put(parent);
+}
+
+/**
+ * devlink_shd - Get the shared devlink instance a devlink instance belongs to
+ * @devlink: devlink
+ *
+ * A shared devlink instance belongs to itself. Other instances inherit the
+ * shared instance of the instance they are nested in when registered.
+ * The returned instance is immutable and valid until devlink_free() of
+ * @devlink. No reference is taken, so don't pair with devlink_shd_put().
+ *
+ * Return: shared devlink instance or NULL.
+ */
+struct devlink *devlink_shd(const struct devlink *devlink)
+{
+	return READ_ONCE(devlink->shd);
+}
+EXPORT_SYMBOL_GPL(devlink_shd);
+
 /**
  * devl_register - Register devlink instance
  * @devlink: devlink
@@ -410,6 +434,7 @@ int devl_register(struct devlink *devlink)
 	ASSERT_DEVLINK_NOT_REGISTERED(devlink);
 	devl_assert_locked(devlink);
 
+	devlink_shd_inherit(devlink);
 	xa_set_mark(&devlinks, devlink->index, DEVLINK_REGISTERED);
 	devlink_notify_register(devlink);
 	devlink_rel_nested_in_notify(devlink);
@@ -544,6 +569,8 @@ void devlink_free(struct devlink *devlink)
 	WARN_ON(devlink_rates_check(devlink, NULL, NULL));
 	devl_unlock(devlink);
 	devlink_rel_put(devlink);
+	if (devlink->shd && devlink->shd != devlink)
+		devlink_put(devlink->shd);
 
 	WARN_ON(!list_empty(&devlink->trap_policer_list));
 	WARN_ON(!list_empty(&devlink->trap_group_list));
