@@ -19,6 +19,7 @@ u16 mlx5e_ktls_get_stop_room(struct mlx5_core_dev *mdev, struct mlx5e_params *pa
 bool mlx5e_ktls_handle_tx_skb(struct net_device *netdev, struct mlx5e_txqsq *sq,
 			      struct sk_buff *skb,
 			      struct mlx5e_accel_tx_tls_state *state);
+void mlx5e_ktls_tx_hold_skb(struct mlx5e_txqsq *sq, struct sk_buff *skb);
 void mlx5e_ktls_handle_rx_skb(struct mlx5e_rq *rq, struct sk_buff *skb,
 			      struct mlx5_cqe64 *cqe, u32 *cqe_bcnt);
 
@@ -29,6 +30,17 @@ void mlx5e_ktls_handle_get_psv_completion(struct mlx5e_icosq_wqe_info *wi,
 void mlx5e_ktls_tx_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 					   struct mlx5e_tx_wqe_info *wi,
 					   u32 *dma_fifo_cc);
+void mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb);
+int mlx5e_ktls_tx_select_txq(struct net_device *netdev, struct sk_buff *skb,
+			     u16 txq_ix, bool may_move);
+
+/* The WQEs posted for the skb may have not been executed. */
+static inline void
+mlx5e_ktls_tx_try_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb)
+{
+	if (tls_is_skb_tx_device_offloaded(skb))
+		mlx5e_ktls_tx_handle_lost(sq, skb);
+}
 
 void
 mlx5e_ktls_rx_resync_async_request_cancel(struct mlx5e_icosq_wqe_info *wi);
@@ -67,6 +79,22 @@ mlx5e_ktls_tx_try_handle_resync_dump_comp(struct mlx5e_txqsq *sq,
 					  u32 *dma_fifo_cc)
 {
 	return false;
+}
+
+static inline void
+mlx5e_ktls_tx_hold_skb(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
+
+static inline void
+mlx5e_ktls_tx_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
+
+static inline void
+mlx5e_ktls_tx_try_handle_lost(struct mlx5e_txqsq *sq, struct sk_buff *skb) {}
+
+static inline int
+mlx5e_ktls_tx_select_txq(struct net_device *netdev, struct sk_buff *skb,
+			 u16 txq_ix, bool may_move)
+{
+	return -1;
 }
 
 static inline bool

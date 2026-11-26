@@ -277,7 +277,11 @@ enum tls_offload_ctx_dir {
 	TLS_OFFLOAD_CTX_DIR_TX,
 };
 
+/* Keep the socket's TX queue while it has packets in flight. */
+#define TLSDEV_F_STICKY_TXQ	BIT(0)
+
 struct tlsdev_ops {
+	u32 flags; /* TLSDEV_F_* */
 	int (*tls_dev_add)(struct net_device *netdev, struct sock *sk,
 			   enum tls_offload_ctx_dir direction,
 			   struct tls_crypto_info *crypto_info,
