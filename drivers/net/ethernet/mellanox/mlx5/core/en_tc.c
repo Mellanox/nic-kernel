@@ -3947,7 +3947,8 @@ alloc_branch_attr(struct mlx5e_tc_flow *flow,
 
 	return err;
 out_err:
-	kfree(*cond_attr);
+	kvfree(attr->parse_attr);
+	kfree(attr);
 	*cond_attr = NULL;
 	return err;
 }
