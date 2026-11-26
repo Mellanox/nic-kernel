@@ -2729,6 +2729,22 @@ bool mlx5_lag_is_sriov(struct mlx5_core_dev *dev)
 }
 EXPORT_SYMBOL(mlx5_lag_is_sriov);
 
+bool mlx5_lag_has_sd_group(struct mlx5_lag *ldev)
+{
+	struct lag_func *pf;
+	int i;
+
+	mlx5_ldev_for_each(i, 0, ldev) {
+		pf = mlx5_lag_pf(ldev, i);
+		if (pf->group_id)
+			return true;
+	}
+	return false;
+}
+
+/* An active LAG over an SD group is SD for all its members, including
+ * the non-SD ones.
+ */
 bool mlx5_lag_is_sd(struct mlx5_core_dev *dev)
 {
 	struct mlx5_lag *ldev;
@@ -2737,7 +2753,12 @@ bool mlx5_lag_is_sd(struct mlx5_core_dev *dev)
 
 	spin_lock_irqsave(&lag_lock, flags);
 	ldev = mlx5_lag_dev(dev);
-	res  = ldev && __mlx5_lag_is_sd(ldev, dev);
+	if (!ldev)
+		res = false;
+	else if (__mlx5_lag_is_active(ldev))
+		res = mlx5_lag_has_sd_group(ldev);
+	else
+		res = __mlx5_lag_is_sd(ldev, dev);
 	spin_unlock_irqrestore(&lag_lock, flags);
 
 	return res;
